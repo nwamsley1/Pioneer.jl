@@ -43,7 +43,7 @@ function post_design_matrix!(search_data::SearchDataStructures,
         params.deconvolution_solver,
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
-        params.max_iter_outer, params.max_diff))
+        params.max_iter_outer, deconv_tol(search_data, params.max_diff)))
     if converged
         update_precursor_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
         zero_negligible_weights!(weights, Hs.n)
@@ -82,7 +82,7 @@ function score_psms!(
         nmatches / (nmatches + nmisses),
         last_val,
         Hs.n,
-        Float32(sum(getIntensityArray(spectra, scan_idx))),
+        Float32(sum(last(getPeaks!(getDecodeBuffer(search_data), spectra, scan_idx)))),
         scan_idx;
         block_size = 500000,
         default_top3_ll = get_default_top3_ll(mem))
@@ -763,14 +763,14 @@ function _quad_process_scan!(
     weights::Vector{Float32},
     precursor_weights::AbstractPrecursorMap{Float32},
     residuals::Vector{Float32},
-    scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}}
+    scan_idx_to_prec_idx::Dictionary{UInt32, Vector{UInt32}},
+    intensity_model,
 )
     scan_idx ∉ scan_idxs && return
 
     msn = getMsOrder(spectra, scan_idx)
     msn ∉ params.spec_order && return
 
-    nce_model = getNceModel(search_context, ms_file_idx)
     mem       = getMassErrorModel(search_context, ms_file_idx)
     spec_lib  = getSpecLib(search_context)
     ion_list  = getFragmentLookupTable(spec_lib)
@@ -790,8 +790,7 @@ function _quad_process_scan!(
     fused_scratch  = getFusedScratch(search_data)
     id_to_col      = getIdToCol(search_data)
 
-    scan_mz  = getMzArray(spectra, scan_idx)
-    scan_int = getIntensityArray(spectra, scan_idx)
+    scan_mz, scan_int = getPeaks!(getDecodeBuffer(search_data), spectra, scan_idx)
     scan_rt  = Float32(getRetentionTime(spectra, scan_idx))
     peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
                                       mem, scan_mz, scan_int, scan_rt)
@@ -811,14 +810,15 @@ function _quad_process_scan!(
         Hs, getTuningUnscoredPsms(search_data), id_to_col, fused_scratch,
         corr_mz, obs_low, obs_high, peak_mz_len,
         isotopes_buf, prec_trans_buf,
-        ion_list, nce_model,
+        ion_list, intensity_model,
         precs_vec, 1:length(precs_vec),
         prec_mzs, prec_charges, prec_sulfs, prec_irts,
         getIsoSplines(search_data), quad_fn, mem,
         scan_int, 0f0, Float32(Inf),           # scan_irt / irt_tol — skipped by kind
         (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
         4,                                      # n_frag_isotopes — overridden to 0:3 via max_frag_iso_idx(FusedQuadEst)
-        (UInt8(0), UInt8(0))                    # isotope_err_bounds — skipped by kind
+        (UInt8(0), UInt8(0));                   # isotope_err_bounds — skipped by kind
+        scan_ev = getCollisionEnergyEv(spectra, scan_idx)
     )
 
     nmatches ≤ 2 && (reset!(id_to_col); reset!(Hs); return)
@@ -846,7 +846,7 @@ function _quad_process_scan!(
         getMu(search_data),
         getObserved(search_data),
         params.max_iter_outer,
-        params.max_diff)
+        deconv_tol(search_data, params.max_diff))
 
     # Record results (reads Hs.colptr + matched_at(Hs, j) per column).
     _quad_record_scan_results!(
@@ -906,6 +906,9 @@ function perform_quad_transmission_search(
 
     thread_tasks = partition_scans(spectra, Threads.nthreads())
     scan_idxs = Set(keys(scan_idx_to_prec_idx))
+    frag_lookup = getFragmentLookupTable(getSpecLib(search_context))
+    intensity_model = prepare_fragment_intensity_model(
+        frag_lookup, getNceModel(search_context, ms_file_idx))
 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
@@ -934,7 +937,8 @@ function perform_quad_transmission_search(
                     weights,
                     precursor_weights,
                     residuals,
-                    scan_idx_to_prec_idx
+                    scan_idx_to_prec_idx,
+                    intensity_model,
                 )
             end
             
@@ -1080,20 +1084,22 @@ Saves plot to quad_plot_dir/quad_models directory.
 
 function plot_quad_model(quad_model::QuadTransmissionModel, window_width::Float64,
                           results::QuadTuningSearchResults, fname::String;
-                          initial_model::Union{Nothing, RazoQuadModel} = nothing)
+                          initial_model::Union{Nothing, RazoQuadModel} = nothing,
+                          note::String = "fallback")
     padding = 2
     half_width = padding + window_width/2
     plot_bins = LinRange(-half_width, half_width, 200)
 
-    quad_func = getQuadTransmissionFunction(quad_model, 0.0f0, 2.0f0)
+    # Razo edges are absolute (width ignored); the square model needs the real window width.
+    quad_func = getQuadTransmissionFunction(quad_model, 0.0f0, Float32(window_width))
     fit_label = quad_model isa RazoQuadModel ? "Razo (LM)" :
-        "$(nameof(typeof(quad_model))) (fallback)"
+        "$(nameof(typeof(quad_model))) ($note)"
 
     title_str = if quad_model isa RazoQuadModel
         p_ = quad_model.params
         "$fname\nRazo: al=$(round(p_.al,digits=2)) ar=$(round(p_.ar,digits=2)) bl=$(round(p_.bl,digits=1)) br=$(round(p_.br,digits=1))"
     else
-        "$fname (fallback)"
+        "$fname ($note)"
     end
     p = plot(plot_bins, quad_func.(plot_bins), lw=2, alpha=0.85, color=:navy,
              title=title_str, titlefontsize=8, label=fit_label, xlabel="m/z offset",
@@ -1376,6 +1382,12 @@ function fit_quad_model(psms::DataFrame, window_width::Float64;
         ϵ3=1e-5,
         max_iter=500
     )
-    return fitted_params, initial_params
+    residual_rmse = sqrt(sum((sm_yt[i] - F(fitted_params, sm_x0[i], sm_x1[i]))^2 for i in eachindex(sm_yt)) / n_pts)
+    coverage = min(1.0, max(0.0, -min(minimum(sm_x0),minimum(sm_x1))) / (window_width/2),
+                   max(0.0, max(maximum(sm_x0),maximum(sm_x1))) / (window_width/2))
+    at_bound = any(((fitted_params.al, 0.2, window_width), (fitted_params.ar, 0.2, window_width),
+                    (fitted_params.bl, 1e-3, 24.0), (fitted_params.br, 1e-3, 24.0))) do (value, low, high)
+        min(abs(value-low), abs(high-value)) <= 0.01 * (high-low)
+    end
+    return fitted_params, initial_params, (coverage, residual_rmse, NaN, Float64(at_bound))
 end
-

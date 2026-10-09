@@ -61,7 +61,7 @@ end
 """
     Locate the isotope spline XML file bundled with the application.
 """
-isotope_spline_path() = asset_path("IsotopeSplines_10kDa_21isotopes.xml")
+isotope_spline_path() = asset_path("IsotopeSplines_10kDa_10isotopes.xml")
 
 
 """
@@ -107,9 +107,8 @@ results_dir/
 │   │       └── quad_model_plots.pdf
 │   ├── rt_alignment_plots/
 │   │   └── rt_alignment_plots.pdf
-│   ├── mass_error_plots/
-│   │   └── mass_error_plots.pdf
-│   └── QC_PLOTS.pdf
+│   └── mass_error_plots/
+│       └── mass_error_plots.pdf
 ├── precursors_long.arrow
 ├── precursors_long.tsv
 ├── precursors_wide.arrow
@@ -179,15 +178,16 @@ function SearchDIA(params_path::String)
             end
 
             # Find all Arrow files in MS data directory
-            MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file) 
+            # .arrow files, .tdfs directories (TimsSlices timsTOF slices) and .scxs directories (SciexWiff SCIEX scans)
+            MS_TABLE_PATHS = [joinpath(MS_DATA_DIR, file)
                             for file in readdir(MS_DATA_DIR)
-                            if isfile(joinpath(MS_DATA_DIR, file)) && 
-                               match(r"\.arrow$", file) != nothing]
+                            if is_ms_data_path(joinpath(MS_DATA_DIR, file))]
 
             if length(MS_TABLE_PATHS) <= 0
-                @user_error "No .arrow files found in ms_data directory: " * MS_DATA_DIR
+                @user_error "No .arrow files or .tdfs / .scxs directories found in ms_data directory: " * MS_DATA_DIR
                 return
             end
+            check_ms_data_vendors(MS_TABLE_PATHS)
 
             nothing
         end
@@ -197,7 +197,14 @@ function SearchDIA(params_path::String)
         # === Initialize spectral library and search context ===
         @user_info "Loading Spectral Library..."
         lib_timing = @timed begin
-            SPEC_LIB = loadSpectralLibrary(SPEC_LIB_DIR, params)
+            frag_index = choose_fragment_index(SPEC_LIB_DIR, MS_TABLE_PATHS)
+            frag_index.width === nothing ||
+                @user_info "Fragment index: $(frag_index.width) Da partitions" *
+                    (frag_index.window === nothing ? " (MS2 isolation width unknown)" :
+                     " (MS2 isolation windows ~$(round(frag_index.window; digits = 1)) m/z)")
+            SPEC_LIB = loadSpectralLibrary(SPEC_LIB_DIR, params; fragment_index = frag_index)
+            check_library_ion_mobility(MS_TABLE_PATHS,
+                getInvIonMobility(getPrecursors(SPEC_LIB)) !== nothing, SPEC_LIB_DIR)
             nothing
         end
 
@@ -245,7 +252,7 @@ function SearchDIA(params_path::String)
             ("Chromatogram Integration", IntegrateChromatogramSearch()),
             ("Protein Inference", ProteinInferenceSearch()),
             ("Protein Scoring", ProteinScoringSearch()),
-            ("Quantification & Output", MaxLFQSearch())
+            ("Quantification & Output", ProteinQuantificationSearch())
         ])
 
         # Execute each search phase and record timing + peak RSS delta
@@ -406,6 +413,20 @@ function print_summary_statistics(total_time, total_memory, peak_memory, total_g
         n_prec_rows !== nothing && @user_print rpad("Precursor rows (long):", 28) * "$n_prec_rows"
         n_pg_rows   !== nothing && @user_print rpad("Protein-group rows (long):", 28) * "$n_pg_rows"
         @user_print rpad("Output directory:", 28) * "$out_dir"
+    end
+    # Per-run identified vs quantified counts, from run_summary.tsv.
+    run_summary = joinpath(out_dir, "run_summary.tsv")
+    if isfile(run_summary)
+        rs = CSV.read(run_summary, DataFrame; select = [:file_name, :precursors_identified,
+            :precursors_quantified, :protein_groups_identified, :protein_groups_quantified])
+        @user_print "\nPer run (identified / quantified):"
+        @user_print repeat("-", 102)
+        @user_print rpad("File", 50) * lpad("Precursors", 24) * lpad("Protein groups", 24)
+        for r in eachrow(rs)
+            @user_print rpad(first(r.file_name, 49), 50) *
+                lpad("$(r.precursors_identified) / $(r.precursors_quantified)", 24) *
+                lpad("$(r.protein_groups_identified) / $(r.protein_groups_quantified)", 24)
+        end
     end
     @user_print "\n" * repeat("=", 102)
 end

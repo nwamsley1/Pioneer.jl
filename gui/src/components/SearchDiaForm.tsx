@@ -18,7 +18,7 @@ import { BROWSE, BROWSE_BLOCK, HINT, LABEL, LABEL_TIGHT, SEG_TRACK, seg } from '
 import type { LibraryInfo } from '../lib/backend'
 import { isPrositModel, unlocalizedMods } from '../lib/types'
 import type { SearchParams } from '../lib/types'
-import { fileStem } from '../lib/validate'
+import { fileStem, ltrPath } from '../lib/validate'
 import type { Note } from '../lib/validate'
 
 const CARD: React.CSSProperties = {
@@ -119,12 +119,16 @@ function PathRow({
 function MsFileList({
   params,
   onAdd,
+  onAddTdfs,
   onRemove,
+  onClear,
   onToggleBatch,
 }: {
   params: SearchParams
   onAdd: () => void
+  onAddTdfs: () => void
   onRemove: (index: number) => void
+  onClear: () => void
   onToggleBatch: () => void
 }) {
   const files = params.msDataFiles
@@ -165,7 +169,7 @@ function MsFileList({
                     textAlign: 'left',
                   }}
                 >
-                  {f}
+                  {ltrPath(f)}
                 </div>
                 {batch && (
                   <div style={{ ...HINT, marginTop: 2 }}>
@@ -210,41 +214,79 @@ function MsFileList({
               strokeLinecap="round"
             />
           </svg>
-          {files.length ? 'Add more files' : 'Choose files'}
+          {files.length ? 'Add .arrow' : 'Choose .arrow'}
         </button>
+        <button type="button" className="pio-browse" onClick={onAddTdfs} style={BROWSE_BLOCK}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+          </svg>
+          Add .tdfs / .scxs
+        </button>
+        {files.length > 1 && (
+          <button
+            type="button"
+            className="pio-browse"
+            onClick={onClear}
+            title="Remove every file from the list"
+            style={BROWSE_BLOCK}
+          >
+            Clear all
+          </button>
+        )}
         <span style={HINT}>
           {files.length
             ? batch
               ? `${files.length} file${files.length > 1 ? 's' : ''}, searched separately \u2014 ${files.length} run${files.length > 1 ? 's' : ''} queued.`
               : `${files.length} file${files.length > 1 ? 's' : ''}, searched together \u2014 1 run queued.`
-            : 'Pick the .arrow files to search.'}
+            : 'Thermo: .arrow files. SCIEX: .arrow files or .scxs runs. Bruker timsTOF: .tdfs runs (select the folder).'}
         </span>
       </div>
       {files.length > 0 && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 14,
-            marginTop: 12,
-            paddingTop: 12,
-            borderTop: '1px solid #EEF1F4',
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
-              Search each file separately
-            </div>
-            <div style={{ ...HINT, marginTop: 2 }}>
-              {batch
-                ? 'One run per file, each with its own results folder and nothing shared between them.'
-                : 'One run over the whole list, sharing FDR and match-between-runs across it.'}
-            </div>
-          </div>
-          <Toggle on={batch} fieldKey="msDataBatch" onClick={onToggleBatch} />
-        </div>
+        <BatchToggle on={batch} scope="list" onToggle={onToggleBatch} />
       )}
+    </div>
+  )
+}
+
+/** Whether the MS data -- a chosen list or a folder -- is one experiment or
+ *  one run per file. */
+function BatchToggle({
+  on,
+  scope,
+  onToggle,
+}: {
+  on: boolean
+  scope: 'list' | 'folder'
+  onToggle: () => void
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 14,
+        marginTop: 12,
+        paddingTop: 12,
+        borderTop: '1px solid #EEF1F4',
+      }}
+    >
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
+          Search each file separately
+        </div>
+        <div style={{ ...HINT, marginTop: 2 }}>
+          {on
+            ? `One run per ${scope === 'folder' ? '.arrow file or .tdfs / .scxs run in the folder' : 'file'}, each with its own results folder and nothing shared between them.`
+            : `One run over the whole ${scope}, sharing FDR and match-between-runs across it.`}
+        </div>
+      </div>
+      <Toggle on={on} fieldKey="msDataBatch" onClick={onToggle} />
     </div>
   )
 }
@@ -315,8 +357,11 @@ interface Props {
   onBrowse: (key: 'msData' | 'library' | 'results') => void
   /** Add files to the list, via the multi-select picker. */
   onAddMsFiles: () => void
+  /** Add Bruker .tdfs / SCIEX .scxs runs (folders), via the multi-select folder picker. */
+  onAddMsTdfs: () => void
   /** Drop one file from the list, by index. */
   onRemoveMsFile: (index: number) => void
+  onClearMsFiles: () => void
   /** Flip between one run per file and one run over the whole list. */
   onToggleMsBatch: () => void
   onOpenLoad: () => void
@@ -332,7 +377,9 @@ export function SearchDiaForm({
   onToggle,
   onBrowse,
   onAddMsFiles,
+  onAddMsTdfs,
   onRemoveMsFile,
+  onClearMsFiles,
   onToggleMsBatch,
   onOpenLoad,
   onGoToBuild,
@@ -363,7 +410,7 @@ export function SearchDiaForm({
             <label style={LABEL}>MS data</label>
             <div style={{ ...SEG_TRACK, marginBottom: 10 }}>
               <button type="button" onClick={() => onParam('msDataMode', 'folder')} style={seg(!byFiles)}>
-                One folder
+                Folder
               </button>
               <button type="button" onClick={() => onParam('msDataMode', 'files')} style={seg(byFiles)}>
                 Chosen files
@@ -373,19 +420,24 @@ export function SearchDiaForm({
               <MsFileList
                 params={params}
                 onAdd={onAddMsFiles}
+                onAddTdfs={onAddMsTdfs}
                 onRemove={onRemoveMsFile}
+                onClear={onClearMsFiles}
                 onToggleBatch={onToggleMsBatch}
               />
             ) : (
-              <PathRow
-                label=""
-                fieldKey="msData"
-                value={params.msData}
-                placeholder="/path/to/ms/data"
-                note={notes.msData}
-                onChange={onParam}
-                onBrowse={() => onBrowse('msData')}
-              />
+              <>
+                <PathRow
+                  label=""
+                  fieldKey="msData"
+                  value={params.msData}
+                  placeholder="/path/to/ms/data"
+                  note={notes.msData}
+                  onChange={onParam}
+                  onBrowse={() => onBrowse('msData')}
+                />
+                <BatchToggle on={params.msDataBatch} scope="folder" onToggle={onToggleMsBatch} />
+              </>
             )}
           </div>
           <PathRow

@@ -22,13 +22,17 @@ Search method for annotating integrated passing precursor tables with inferred
 protein groups and protein-quant eligibility flags.
 """
 struct ProteinInferenceSearch <: SearchMethod end
+uses_per_file_spectra(::ProteinInferenceSearch) = false   # works from the PSM files; per-file hooks are empty
 
 mutable struct ProteinInferenceSearchResults <: SearchResults
-    protein_ambiguity_candidates::Dict{UInt32, Vector{ProteinKey}}
+    protein_ambiguity_candidates::Dict{UInt32, Vector{PGKey}}
     protein_peptide_opportunities::Dict{
-        ProteinKey,
+        PGKey,
         ProteinPeptideOpportunityCounts
     }
+    # Protein groups are carried as integer pg_ids (`:inferred_protein_group`, `:protein_name`);
+    # protein_group_names[pg_id] is the group's name, and names sort in pg_id order.
+    protein_group_names::Vector{String}
 end
 
 struct ProteinInferenceSearchParameters <: SearchParameters
@@ -42,8 +46,9 @@ get_parameters(::ProteinInferenceSearch, params::Any) = ProteinInferenceSearchPa
 
 function init_search_results(::ProteinInferenceSearchParameters, search_context::SearchContext)
     return ProteinInferenceSearchResults(
-        Dict{UInt32, Vector{ProteinKey}}(),
-        Dict{ProteinKey, ProteinPeptideOpportunityCounts}()
+        Dict{UInt32, Vector{PGKey}}(),
+        Dict{PGKey, ProteinPeptideOpportunityCounts}(),
+        String[]
     )
 end
 
@@ -80,11 +85,14 @@ function summarize_results!(
     if isempty(indexed_paths)
         empty!(results.protein_ambiguity_candidates)
         empty!(results.protein_peptide_opportunities)
+        empty!(results.protein_group_names)
         store_results!(search_context, ProteinInferenceSearch, results)
         return nothing
     end
 
-    passing_refs = [PSMFileReference(path) for (_, path) in indexed_paths]
+    paths = String[path for (_, path) in indexed_paths]
+    sidecar_index = index_sidecar_paths(paths)
+    passing_refs = [PSMFileReference(path; sidecar_paths=sidecar_index[path]) for path in paths]
     inference_summary = run_protein_inference!(search_context;
         passing_refs = passing_refs,
         global_inference = params.global_inference)
@@ -92,6 +100,7 @@ function summarize_results!(
         inference_summary.protein_ambiguity_candidates
     results.protein_peptide_opportunities =
         inference_summary.protein_peptide_opportunities
+    results.protein_group_names = inference_summary.protein_group_names
     store_results!(search_context, ProteinInferenceSearch, results)
 
     return nothing

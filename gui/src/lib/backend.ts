@@ -32,6 +32,15 @@ export interface ExitEvent {
   message: string
 }
 
+/** One step of a multi-step job failed; the job continues with the rest. */
+export interface StepFailedEvent {
+  job_id: string
+  step: number
+  total: number
+  code: number | null
+  message: string
+}
+
 export const pioneerInfo = (): Promise<PioneerInfo> => invoke('pioneer_info')
 
 export const appVersion = (): Promise<string> => invoke('app_version')
@@ -69,6 +78,11 @@ export const readConfig = (path: string): Promise<string> => invoke('read_config
  *  ConvertRAW stages a whole format's worth into one. See `paths::stage_files`. */
 export const stageFiles = (jobId: string, subdir: string, files: string[]): Promise<string> =>
   invoke('stage_files', { jobId, subdir, files })
+
+/** The `.arrow` files directly inside a folder, full paths in name order: what
+ *  a folder searched file-by-file fans out over. */
+export const listArrowFiles = (dir: string): Promise<string[]> =>
+  invoke('list_arrow_files', { dir })
 
 /** The downloadable-library catalog, as the JSON that DownloadSpecLib prints.
  *  Captured rather than streamed: it is data, not run output. */
@@ -142,6 +156,9 @@ export const onJobLine = (cb: (e: LineEvent) => void): Promise<UnlistenFn> =>
 
 export const onJobExit = (cb: (e: ExitEvent) => void): Promise<UnlistenFn> =>
   listen<ExitEvent>('job-exit', (e) => cb(e.payload))
+
+export const onJobStepFailed = (cb: (e: StepFailedEvent) => void): Promise<UnlistenFn> =>
+  listen<StepFailedEvent>('job-step-failed', (e) => cb(e.payload))
 
 /** Where pickers open.
  *
@@ -256,6 +273,22 @@ export async function pickFolder(title: string): Promise<string | null> {
   if (typeof picked !== 'string') return null
   rememberDir(picked, true)
   return picked
+}
+
+/** Native folder picker allowing several folders. Returns [] when cancelled. */
+export async function pickFolders(title: string): Promise<string[]> {
+  const picked = await open({ directory: true, multiple: true, title, defaultPath: lastDir() })
+  if (!Array.isArray(picked) || picked.length === 0) return []
+  rememberDir(picked[0], true)
+  return picked
+}
+
+/** The run a picked file stands for. A timsTOF `.tdfs` or SCIEX `.scxs` run is a folder, which a file dialog cannot
+ *  select, so choosing any file inside one (its `slices.arrow` / `scans.arrow`, say) means the run itself. Anything
+ *  else is returned as is. */
+export function asRunPath(file: string): string {
+  const parent = file.trim().replace(/[\\/][^\\/]*$/, '')
+  return /\.(tdfs|scxs)$/i.test(parent) ? parent : file
 }
 
 /** Where to write a new library.

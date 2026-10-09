@@ -96,26 +96,26 @@ end
 # Public API
 #############################################################################
 
-function partitionScansToThreads(spectra::AbstractArray,
+function partitionScansToThreads(peak_counts::AbstractVector{<:Integer},
                                 rt::AbstractVector{Float32},
                                 prec_mz::AbstractVector{Union{Missing, Float32}},
                                 ms_order::AbstractVector{UInt8},
                                 n_threads::Int,
                                 tasks_per_thread::Int)
-    total_peaks = sum(length.(spectra))
-    scan_indices = Int64[x for x in 1:length(spectra) if ms_order[x] == 2]
+    total_peaks = sum(peak_counts)
+    scan_indices = Int64[x for x in 1:length(peak_counts) if ms_order[x] == 2]
     _sort_scans_by_mz_in_rt_bins!(scan_indices, rt, prec_mz)
     return _distribute_scans_to_threads(scan_indices, n_threads), total_peaks
 end
 
-function partitionScansToThreadsMS1(spectra::AbstractArray,
+function partitionScansToThreadsMS1(peak_counts::AbstractVector{<:Integer},
                                 rt::AbstractVector{Float32},
                                 prec_mz::AbstractVector{Union{Missing, Float32}},
                                 ms_order::AbstractVector{UInt8},
                                 n_threads::Int,
                                 tasks_per_thread::Int)
-    total_peaks = sum(length.(spectra))
-    scan_indices = Int64[x for x in 1:length(spectra) if ms_order[x] == 1]
+    total_peaks = sum(peak_counts)
+    scan_indices = Int64[x for x in 1:length(peak_counts) if ms_order[x] == 1]
     return _distribute_scans_to_threads(scan_indices, n_threads), total_peaks
 end
 
@@ -125,7 +125,7 @@ Returns virtual indices (1, 2, 3...) properly distributed to threads based on
 the underlying scan properties (RT, m/z) but respecting the IndexedMassSpecData view.
 """
 function partitionScansToThreadsIndexed(
-    spectra::AbstractArray,
+    peak_counts::AbstractVector{<:Integer},
     rt::AbstractVector{Float32},
     prec_mz::AbstractVector{Union{Missing, Float32}},
     ms_order::AbstractVector{UInt8},
@@ -133,7 +133,7 @@ function partitionScansToThreadsIndexed(
     n_threads::Int,
     tasks_per_thread::Int
 )
-    total_peaks = sum(length.(spectra))
+    total_peaks = sum(peak_counts)
     scan_indices = Int64[i for i in eachindex(ms_order) if ms_order[i] == 2]
     @debug_l2 "partitionScansToThreadsIndexed: Found $(length(scan_indices)) MS2 scans out of $(length(ms_order)) total"
     _sort_scans_by_mz_in_rt_bins!(scan_indices, rt, prec_mz)
@@ -146,7 +146,7 @@ end
 Specialized partitioning for IndexedMassSpecData MS1 scans.
 """
 function partitionScansToThreadsMS1Indexed(
-    spectra::AbstractArray,
+    peak_counts::AbstractVector{<:Integer},
     rt::AbstractVector{Float32},
     prec_mz::AbstractVector{Union{Missing, Float32}},
     ms_order::AbstractVector{UInt8},
@@ -154,7 +154,7 @@ function partitionScansToThreadsMS1Indexed(
     n_threads::Int,
     tasks_per_thread::Int
 )
-    total_peaks = sum(length.(spectra))
+    total_peaks = sum(peak_counts)
     scan_indices = Int64[i for i in eachindex(ms_order) if ms_order[i] == 1]
     return _distribute_scans_to_threads(scan_indices, n_threads), total_peaks
 end

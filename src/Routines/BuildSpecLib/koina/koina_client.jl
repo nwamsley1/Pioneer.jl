@@ -273,10 +273,27 @@ function koina_request(client::SyntheticKoinaClient, json::String, model_url::St
         return _synthetic_chronologer_response(client, sequences)
     elseif occursin("Altimeter", model_url) || occursin("altimeter", model_url)
         return _synthetic_altimeter_response(client, sequences)
+    elseif occursin("_ccs_", model_url) || occursin("IM2Deep", model_url)
+        return _synthetic_ccs_response(client, sequences)
     else
-        throw(ArgumentError("SyntheticKoinaClient only supports Altimeter and " *
-                            "Chronologer endpoints; got model_url=$model_url"))
+        throw(ArgumentError("SyntheticKoinaClient only supports Altimeter, " *
+                            "Chronologer and CCS endpoints; got model_url=$model_url"))
     end
+end
+
+function _synthetic_ccs_response(::SyntheticKoinaClient, sequences::Vector{String})
+    # CCS in a plausible peptide range (~300..600 Å²) deterministically.
+    ccs_data = Float64[300.0 + Float64(_stable_unit(s, 2)) * 300.0 for s in sequences]
+    return Dict{String,Any}(
+        "outputs" => Any[
+            Dict{String,Any}(
+                "name" => "ccs",
+                "shape" => Any[length(sequences), 1],
+                "datatype" => "FP32",
+                "data" => ccs_data,
+            )
+        ]
+    )
 end
 
 # Hash a string to a stable Float32 in [0, 1). Used for deterministic synthesis.

@@ -16,67 +16,62 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    splevl(x, knots, c, k)
+    prepare_spline_fractions(x, knots)
 
-Evaluate cubic B-spline at point x using the iterative de Boor algorithm.
-Knots `knots`, coefficients `c`, degree `k` (must be 3).
-
-Replaces the recursive Cox-de Boor approach (B() + sum) with a single-pass
-triangular iteration: O(k²) = 6 multiply-adds vs 32 recursive calls.
+Find the cubic spline span and calculate its six de Boor interpolation
+fractions once for reuse across fragment coefficient tuples. The active knot
+spans must have nonzero widths.
 """
-@inline function splevl(x::T, knots::NTuple{N,T}, c::NTuple{M,T}, k::Int) where {M,N,T<:AbstractFloat}
-    # Find knot span: j where knots[j] ≤ x < knots[j+1]
+@inline function prepare_spline_fractions(
+        x::T, knots::NTuple{N,T}) where {N,T<:AbstractFloat}
     j = 0
-    @inbounds for idx in 1:(N-1)
-        if knots[idx] ≤ x < knots[idx+1]
+    @inbounds for idx in 1:(N - 1)
+        if knots[idx] ≤ x < knots[idx + 1]
             j = idx
             break
         end
     end
+    j == 0 && return PreparedSplineFractions(UInt8(0), ntuple(_ -> zero(T), Val(6)))
 
-    # x outside all knot spans → all basis functions are zero
-    j == 0 && return zero(T)
+    @inline getk(i) = @inbounds knots[clamp(i, 1, N)]
+    @inline alpha(num, denom) = num / denom
 
-    # Safe coefficient access: zero outside [1, M]
-    @inline _getc(i) = (1 ≤ i ≤ M) ? @inbounds(c[i]) : zero(T)
-    # Safe knot access: clamp to [1, N]
-    # Out-of-bounds accesses only occur when multiplied by zero coefficients
-    @inline _getk(i) = @inbounds knots[clamp(i, 1, N)]
-
-    # Initialize d[1..4] with active coefficients (zero-padded outside range)
-    d1 = _getc(j - 3)
-    d2 = _getc(j - 2)
-    d3 = _getc(j - 1)
-    d4 = _getc(j)
-
-    # de Boor triangular iterations, fully unrolled for k=3
-    # r = 1: three updates
-    denom = _getk(j + 3) - _getk(j)
-    α = ifelse(denom == zero(T), zero(T), (x - _getk(j)) / denom)
-    d4 = (one(T) - α) * d3 + α * d4
-
-    denom = _getk(j + 2) - _getk(j - 1)
-    α = ifelse(denom == zero(T), zero(T), (x - _getk(j - 1)) / denom)
-    d3 = (one(T) - α) * d2 + α * d3
-
-    denom = _getk(j + 1) - _getk(j - 2)
-    α = ifelse(denom == zero(T), zero(T), (x - _getk(j - 2)) / denom)
-    d2 = (one(T) - α) * d1 + α * d2
-
-    # r = 2: two updates
-    denom = _getk(j + 2) - _getk(j)
-    α = ifelse(denom == zero(T), zero(T), (x - _getk(j)) / denom)
-    d4 = (one(T) - α) * d3 + α * d4
-
-    denom = _getk(j + 1) - _getk(j - 1)
-    α = ifelse(denom == zero(T), zero(T), (x - _getk(j - 1)) / denom)
-    d3 = (one(T) - α) * d2 + α * d3
-
-    # r = 3: one update
-    denom = _getk(j + 1) - _getk(j)
-    α = ifelse(denom == zero(T), zero(T), (x - _getk(j)) / denom)
-    d4 = (one(T) - α) * d3 + α * d4
-
-    return d4
+    return PreparedSplineFractions(
+        UInt8(j),
+        (
+            alpha(x - getk(j),     getk(j + 3) - getk(j)),
+            alpha(x - getk(j - 1), getk(j + 2) - getk(j - 1)),
+            alpha(x - getk(j - 2), getk(j + 1) - getk(j - 2)),
+            alpha(x - getk(j),     getk(j + 2) - getk(j)),
+            alpha(x - getk(j - 1), getk(j + 1) - getk(j - 1)),
+            alpha(x - getk(j),     getk(j + 1) - getk(j)),
+        ),
+    )
 end
 
+
+"""
+    splevl_prepared(coefficients, prepared)
+
+Evaluate four spline coefficients using a previously prepared knot span and
+interpolation fractions. The cubic de Boor iteration is fully unrolled.
+"""
+@inline function splevl_prepared(
+        c::NTuple{4,T}, prepared::PreparedSplineFractions{T}) where {T<:AbstractFloat}
+    j = Int(prepared.span)
+    j == 0 && return zero(T)
+    a = prepared.alpha
+
+    @inline getc(i) = (1 ≤ i ≤ 4) ? @inbounds(c[i]) : zero(T)
+    d1 = getc(j - 3)
+    d2 = getc(j - 2)
+    d3 = getc(j - 1)
+    d4 = getc(j)
+
+    d4 = (one(T) - a[1]) * d3 + a[1] * d4
+    d3 = (one(T) - a[2]) * d2 + a[2] * d3
+    d2 = (one(T) - a[3]) * d1 + a[3] * d2
+    d4 = (one(T) - a[4]) * d3 + a[4] * d4
+    d3 = (one(T) - a[5]) * d2 + a[5] * d3
+    return (one(T) - a[6]) * d3 + a[6] * d4
+end

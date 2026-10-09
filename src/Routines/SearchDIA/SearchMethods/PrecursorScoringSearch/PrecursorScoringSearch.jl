@@ -25,6 +25,7 @@ integrator. Protein inference + protein-group scoring are now downstream
 (`ProteinInferenceSearch`, `ProteinScoringSearch`).
 """
 struct PrecursorScoringSearch <: SearchMethod end
+uses_per_file_spectra(::PrecursorScoringSearch) = false   # works from the PSM files; per-file hooks are empty
 
 # Note: FileReferences, SearchResultReferences, and FileOperations are already
 # included by importScripts.jl - no need to include them here
@@ -45,45 +46,26 @@ struct PrecursorScoringSearchResults <: SearchResults
 end
 
 """
-    FORCE_OOM
-
-Developer toggle: force the out-of-memory scoring path even when PSMs would
-fit in memory. Used to test/profile the OOM path without a deliberately
-oversized dataset. Production runs leave this `false`.
-"""
-const FORCE_OOM = false
-
-"""
 Parameters for scoring search.
 """
 struct PrecursorScoringSearchParameters <: SearchParameters
-    # In-memory PSM memory budget; OOM path triggers when bytes-per-row * Q
-    # exceeds this.
-    max_psm_memory_mb::Float64
-
-    # PSMs per bin for empirical q-value/PEP interpolation in get_qvalue_spline.
-    # Smaller = finer-grained but noisier per-bin FDR estimates; larger =
-    # smoother but coarser.
-    pep_bin_size::Int64
-
     q_value_threshold::Float32
 
     # When false, skip post-integration donor/counterfactual feature
     # computation and transfer rescoring. Driven by global.match_between_runs.
     match_between_runs::Bool
+    calibrate_huber::Bool
 
     function PrecursorScoringSearchParameters(params::PioneerParameters)
-        ml_params = params.optimization.machine_learning
         global_params = params.global_settings
 
         mbr = hasproperty(global_params, :match_between_runs) ?
                 Bool(global_params.match_between_runs) : true
 
         new(
-            Float64(ml_params.max_psm_memory_mb),
-            Int64(ml_params.pep_bin_size),
             _resolve_q_value_threshold(global_params),
             mbr,
+            get(params.optimization.chromatogram_integration, :deconvolution_solver, "huber") == "huber",
         )
     end
 end
@@ -100,7 +82,7 @@ function init_search_results(::PrecursorScoringSearchParameters, search_context:
         Ref(undef),  # precursor_qval_interp
         Ref(undef),  # precursor_pep_interp
         Ref{Union{Nothing, RunSimilarityAtlas}}(nothing),
-        joinpath(getDataOutDir(search_context), "merged_quant.arrow")
+        joinpath(getDataOutDir(search_context), "temp_data", "merged_quant.arrow")
     )
 end
 
@@ -137,20 +119,23 @@ end
 Estimate the maximum number of rows that fit in `memory_mb` given the schema of `sample_file`.
 """
 function estimate_max_rows(memory_mb::Float64, sample_file::String)
-    tbl = Arrow.Table(sample_file)
-    bytes_per_row = 0
-    for name in Tables.columnnames(tbl)
-        col = Tables.getcolumn(tbl, name)
-        T = eltype(col)
-        T_inner = Base.nonmissingtype(T)
-        if isbitstype(T_inner)
-            bytes_per_row += sizeof(T_inner)
-        else
-            bytes_per_row += 64  # conservative estimate for strings / non-bits types
+    # Only column types are needed; the file is unmapped afterwards.
+    bytes_per_row = with_arrow_table(sample_file) do tbl
+        total = 0
+        for name in Tables.columnnames(tbl)
+            col = Tables.getcolumn(tbl, name)
+            T = eltype(col)
+            T_inner = Base.nonmissingtype(T)
+            if isbitstype(T_inner)
+                total += sizeof(T_inner)
+            else
+                total += 64  # conservative estimate for strings / non-bits types
+            end
+            if T !== T_inner
+                total += 1  # missing indicator
+            end
         end
-        if T !== T_inner
-            bytes_per_row += 1  # missing indicator
-        end
+        total
     end
     bytes_per_row = max(bytes_per_row, 1)
     return max(floor(Int64, memory_mb * 1024 * 1024 / bytes_per_row), 1000)
@@ -330,11 +315,6 @@ function summarize_results!(
 
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
 
-    # Set up output folders. PSM intermediates all live in `main_search_psms/`
-    # since 2026-05-20 — MainSearch writes fold-split files there,
-    # PrecursorScoring reads/merges/MBR-folds in place, and only the
-    # post-FDR `passing_psms/` is a separate (and strictly smaller) output.
-    main_search_psms_folder = joinpath(temp_folder, "main_search_psms")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
     !isdir(passing_psms_folder) && mkdir(passing_psms_folder)
 
@@ -363,79 +343,67 @@ function summarize_results!(
     end
 
     step1_time = @elapsed begin
-        max_psms = estimate_max_rows(params.max_psm_memory_mb, first(valid_fold_paths))
-        @debug_l1 "Memory budget $(params.max_psm_memory_mb) MB → max_psms = $max_psms"
         _pmark(:setup)
         score_precursor_isotope_traces(
-            main_search_psms_folder,
-            valid_fold_paths,
-            getPrecursors(getSpecLib(search_context)),
-            getFragmentLookupTable(getSpecLib(search_context)),
-            max_psms,
-            params.q_value_threshold,
-            FORCE_OOM;
+            valid_fold_paths;
             match_between_runs = params.match_between_runs,
+            ion_mobility = has_ion_mobility(search_context),
         )
     end
     _pmark(:scoring)
-    #@debug_l1 "Step 1 completed in $(round(step1_time, digits=2)) seconds"
+    @debug_l1 "ScoringSearch Pass-1 scoring complete: $(round(step1_time, digits = 2))s"
 
-    # Step 1b: Merge fold files back into single files per MS run
-    # After ML scoring, we merge fold0 and fold1 files back together
-    # This simplifies downstream processing which expects one file per MS run
+    @debug_l1 "ScoringSearch prediction attachment and fold merge starting: runs=$(length(valid_file_data))"
+    merge_started = last_merge_log = time()
+    sidecar_index = index_sidecar_paths(valid_fold_paths)
+    @debug_l1 "ScoringSearch fold sidecar discovery complete: folds=$(length(valid_fold_paths)) elapsed=$(round(time() - merge_started, digits=2))s"
+    merge_read = merge_attach = merge_concatenate = merge_write = merge_cleanup = 0.0
+    merged_rows = 0
+    n_deleted = 0
     merged_psm_paths = String[]
-    fold_paths_to_delete = String[]
-    for (idx, base_path) in valid_file_data
-        fold0_path = "$(base_path)_fold0.arrow"
-        fold1_path = "$(base_path)_fold1.arrow"
+    for (run_number, (idx, base_path)) in enumerate(valid_file_data)
         merged_path = "$(base_path).arrow"
-
-        # Collect data from both folds after Pass-1 scoring. The MBR-on and
-        # MBR-off paths both merge the frozen OOF score into the fold files
-        # before this step.
-        fold_dfs = DataFrame[]
-        fold_refs = PSMFileReference[]
-        function _load_fold(path)
-            ref = PSMFileReference(path)
-            push!(fold_refs, ref)
-            df = load_with_sidecars(ref)
-            if hasproperty(df, :trace_prob_prepass)
-                df[!, :trace_prob] = df[!, :trace_prob_prepass]
-            end
-            return df
-        end
-        isfile(fold0_path) && push!(fold_dfs, _load_fold(fold0_path))
-        isfile(fold1_path) && push!(fold_dfs, _load_fold(fold1_path))
-
-        if !isempty(fold_dfs)
-            # Merge and write combined file
-            combined_df = vcat(fold_dfs...)
-            writeArrow(merged_path, combined_df)
+        merged = _merge_scored_folds!(
+            ["$(base_path)_fold0.arrow", "$(base_path)_fold1.arrow"], merged_path;
+            sidecar_index,
+        )
+        if merged !== nothing
             push!(merged_psm_paths, merged_path)
-
-            # Update search context with merged path
+            # The merge unmapped its sources, so delete them now rather than after every
+            # run is merged: peak extra disk is one run's folds, not the whole experiment's.
+            cleanup_started = time()
+            foreach(safeRm, merged.cleanup_paths)
+            merge_cleanup += time() - cleanup_started
+            n_deleted += length(merged.cleanup_paths)
+            merged_rows += merged.rows
+            merge_read += merged.read_seconds
+            merge_attach += merged.attach_seconds
+            merge_concatenate += merged.concatenate_seconds
+            merge_write += merged.write_seconds
             setSecondPassPsms!(getMSData(search_context), idx, merged_path)
-
-            # Collect fold file paths and their sidecars for batch deletion
-            for ref in fold_refs
-                fp = file_path(ref)
-                isfile(fp) && push!(fold_paths_to_delete, fp)
-                for s in ref.sidecars
-                    isfile(s.path) && push!(fold_paths_to_delete, s.path)
-                end
-            end
+        end
+        if run_number % 100 == 0 || time() - last_merge_log >= 60
+            @debug_l1 "ScoringSearch fold merge: runs=$run_number/$(length(valid_file_data)) " *
+                "rows=$merged_rows elapsed=$(round(time() - merge_started, digits = 2))s " *
+                "read=$(round(merge_read, digits=2))s attach=$(round(merge_attach, digits=2))s " *
+                "concatenate=$(round(merge_concatenate, digits=2))s write=$(round(merge_write, digits=2))s"
+            last_merge_log = time()
         end
     end
+    @debug_l1 "ScoringSearch prediction attachment and fold merge complete: " *
+        "runs=$(length(merged_psm_paths)) rows=$merged_rows elapsed=$(round(time() - merge_started, digits = 2))s " *
+        "read=$(round(merge_read, digits=2))s attach=$(round(merge_attach, digits=2))s " *
+        "concatenate=$(round(merge_concatenate, digits=2))s write=$(round(merge_write, digits=2))s"
 
-    # Release all mmap handles with a single GC, then batch-delete (Windows EACCES fix)
-    GC.gc(false)
-    for fpath in fold_paths_to_delete
-        safeRm(fpath)
-    end
+    @debug_l1 "ScoringSearch fold cleanup complete: files=$n_deleted $(round(merge_cleanup, digits = 2))s"
 
     # Create references for second pass PSMs (now using merged files)
+    @debug_l1 "ScoringSearch merged-file metadata starting: files=$(length(merged_psm_paths))"
+    metadata_started = time()
     second_pass_paths = merged_psm_paths
-    second_pass_refs = [PSMFileReference(path) for path in second_pass_paths]
+    merged_sidecars = index_sidecar_paths(second_pass_paths)
+    second_pass_refs = [PSMFileReference(path; sidecar_paths=merged_sidecars[path]) for path in second_pass_paths]
+    @debug_l1 "ScoringSearch merged-file metadata complete: $(round(time() - metadata_started, digits = 2))s"
 
     # Step 2: Aggregate trace-level to precursor-level probabilities (per-file)
     step2_time = @elapsed begin
@@ -468,7 +436,6 @@ function summarize_results!(
             :prec_prob,
             results.merged_quant_path;
             compute_pep = true,
-            min_pep_points_per_bin = params.pep_bin_size,
             fdr_scale_factor = fdr_scale,
             temp_prefix = "preglobal_qval_sidecar",
         )
@@ -515,8 +482,14 @@ function summarize_results!(
 
         # A3: Compute global q-value AND global PEP dicts from global_prob dict (NO file I/O)
         _pmark(:run_similarity)
+        phase_started = time()
+        @debug_l1 "Global precursor q-values starting: precursors=$(length(global_prob_dict))"
         global_qval_dict = build_global_qval_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
+        @debug_l1 "Global precursor q-values complete: elapsed=$(round(time() - phase_started, digits=2))s"
+        phase_started = time()
+        @debug_l1 "Global precursor PEP starting: precursors=$(length(global_prob_dict))"
         global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
+        @debug_l1 "Global precursor PEP complete: elapsed=$(round(time() - phase_started, digits=2))s"
         results.precursor_global_qval_dict[] = global_qval_dict
 
         # A4-A5: Reuse the frozen run-level q-value spline + PEP interpolation.
@@ -550,11 +523,22 @@ function summarize_results!(
                 (:global_qval, params.q_value_threshold),
                 (:qval, params.q_value_threshold),
             ])
+        empty!(search_context.huber_calibration_winners)
+        if params.calibrate_huber
+            winners = search_context.huber_calibration_winners
+            resize!(winners, n_precursors)
+            fill!(winners, HuberCalibrationWinner(-Inf32, 0, 0))
+            initial_filter = initial_filter |>
+                ("collect_global_huber_winners" => (df -> collect_huber_winners!(winners, df)))
+        end
+        phase_started = time()
+        @debug_l1 "Initial precursor q-value filter starting: files=$(length(annotated_refs))"
         passing_refs = apply_pipeline_batch(
             annotated_refs,
             initial_filter,
             passing_psms_folder,
         )
+        @debug_l1 "Initial precursor q-value filter complete: files=$(length(passing_refs)) rows=$(sum(row_count, passing_refs; init=0)) elapsed=$(round(time() - phase_started, digits=2))s"
     end
 
     if params.match_between_runs && !isempty(passing_refs)
@@ -589,7 +573,6 @@ function summarize_results!(
                 passing_refs,
                 :prec_prob,
                 results.merged_quant_path;
-                min_pep_points_per_bin = params.pep_bin_size,
                 fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
                 temp_prefix = "recalc_sidecar",
             )

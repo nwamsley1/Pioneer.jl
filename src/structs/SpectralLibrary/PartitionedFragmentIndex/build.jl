@@ -15,20 +15,143 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+"Initial partition (1-based) of a precursor m/z: `partition_width` bins from the smallest precursor m/z."
+@inline _initial_partition(pmz, min_prec_mz, partition_width, n_initial) =
+    clamp(floor(Int, (pmz - min_prec_mz) / partition_width) + 1, 1, n_initial)
+
+"""
+    resolve_local_id_type(requested, prec_mzs, partition_width) -> (id_type, n_over, n_bins)
+
+Local precursor ID type of the fragment index. `requested` is `"UInt16"`, `"UInt32"` or `"auto"`. With `"auto"`,
+UInt32 is chosen only when some `partition_width` bin of precursor m/z holds more precursors than a UInt16 partition
+can (`MAX_LOCAL_PRECS`), i.e. when the ID width rather than `partition_width` would set the partition layout (UInt16
+would split those bins, e.g. 5 Da into ~2.5 Da on a 10 M-precursor library). Returns the type, the number of bins
+over the limit, and the number of bins.
+"""
+function resolve_local_id_type(requested::AbstractString, prec_mzs::AbstractVector{<:Real}, partition_width::Real)
+    requested in ("auto", "UInt16", "UInt32") ||
+        throw(ArgumentError("frag_index_local_id_type must be \"auto\", \"UInt16\" or \"UInt32\" (got \"$requested\")"))
+    isempty(prec_mzs) && return (requested == "UInt32" ? UInt32 : UInt16), 0, 0
+    lo, hi = extrema(prec_mzs)
+    n = max(1, ceil(Int, (hi - lo) / partition_width))
+    counts = zeros(Int, n)
+    for pmz in prec_mzs
+        counts[_initial_partition(pmz, lo, partition_width, n)] += 1
+    end
+    n_over = count(>(MAX_LOCAL_PRECS), counts)
+    id_type = requested == "UInt16" ? UInt16 : requested == "UInt32" ? UInt32 : (n_over > 0 ? UInt32 : UInt16)
+    return id_type, n_over, n
+end
+
+"""
+    IndexFragSelection
+
+Each precursor's fragment-index fragments: its first `max_rank` (8) fragments that pass the index ion-type filters,
+in the library's rank order, as `SimpleFrag`s carrying the GLOBAL precursor id and the rank bitmask
+`1 << (rank-1)`. Independent of the partition width and of the RT binning, so one selection serves every index a
+library is built with (`build_partitioned_index_from_selection`). Precursor `pid`'s fragments are
+`frags[offsets[pid]:offsets[pid+1]-1]`.
+"""
+struct IndexFragSelection
+    frags::Vector{SimpleFrag{Float32}}
+    offsets::Vector{Int}
+    prec_mzs::Vector{Float32}
+end
+
+"""
+    _visit_index_frags(f, frag_lookup, detailed_frags, pid, (y_start_index, b_start_index, include_p_index)) -> Int
+
+Calls `f(rank, dfrag)` for precursor `pid`'s index fragments in rank order: its fragments that pass the index
+ion-type filters, at most 8 (the UInt8 rank bitmask). Returns how many it visited.
+"""
+@inline function _visit_index_frags(f, frag_lookup, detailed_frags, pid, filt::Tuple{UInt8, UInt8, Bool})
+    y_start_index, b_start_index, include_p_index = filt
+    rank = 0
+    for fi in getPrecFragRange(frag_lookup, pid)
+        dfrag = detailed_frags[fi]
+        # Apply fragment index ion-type filters
+        if isY(dfrag)
+            getIonPosition(dfrag) < y_start_index && continue
+        elseif isB(dfrag)
+            getIonPosition(dfrag) < b_start_index && continue
+        elseif isP(dfrag)
+            include_p_index || continue
+        end
+        isIso(dfrag) && continue
+        rank == 8 && break
+        rank += 1
+        f(rank, dfrag)
+    end
+    return rank
+end
+
+"""
+    select_index_fragments(spec_lib; y_start_index=UInt8(4), b_start_index=UInt8(3), include_p_index=false)
+        -> IndexFragSelection
+
+The fragments every partitioned index of `spec_lib` is built from (see `IndexFragSelection`). Threaded over
+precursors: a counting pass sizes each precursor's slot, a second pass fills it.
+"""
+function select_index_fragments(
+    spec_lib::SpectralLibrary;
+    y_start_index::UInt8 = UInt8(4),
+    b_start_index::UInt8 = UInt8(3),
+    include_p_index::Bool = false,
+)
+    precursors = getPrecursors(spec_lib)
+    frag_lookup = getFragmentLookupTable(spec_lib)
+    detailed_frags = getFragments(frag_lookup)
+    prec_mzs = Vector{Float32}(getMz(precursors))
+    prec_irts = getIrt(precursors)
+    n_precursors = length(prec_mzs)
+    filt = (y_start_index, b_start_index, include_p_index)
+
+    counts = zeros(Int, n_precursors)
+    Threads.@threads :static for pid in UInt32(1):UInt32(n_precursors)
+        counts[pid] = _visit_index_frags((_, _) -> nothing, frag_lookup, detailed_frags, pid, filt)
+    end
+    offsets = Vector{Int}(undef, n_precursors + 1)
+    offsets[1] = 1
+    for pid in 1:n_precursors
+        offsets[pid + 1] = offsets[pid] + counts[pid]
+    end
+    frags = Vector{SimpleFrag{Float32}}(undef, offsets[end] - 1)
+    Threads.@threads :static for pid in UInt32(1):UInt32(n_precursors)
+        pmz = prec_mzs[pid]; pirt = prec_irts[pid]; o = offsets[pid] - 1
+        _visit_index_frags(frag_lookup, detailed_frags, pid, filt) do rank, dfrag
+            frags[o + rank] = SimpleFrag{Float32}(
+                getMz(dfrag),
+                pid,
+                pmz,
+                pirt,
+                UInt8(0),
+                UInt8(1) << UInt8(rank - 1),  # bitmask: rank 1→bit0, rank 2→bit1, ...
+            )
+        end
+    end
+    return IndexFragSelection(frags, offsets, prec_mzs)
+end
+
 """
     build_partitioned_index_from_lib(spec_lib; partition_width=5.0f0,
         frag_bin_tol_ppm=2.5f0, rt_bin_tol=3.0f0,
         y_start_index=UInt8(4), b_start_index=UInt8(3),
-        include_p_index=false)
+        include_p_index=false, id_type=UInt16)
 
 Build a LocalPartitionedFragmentIndex from scratch using the spectral library's
 DetailedFrag data. Each partition gets its own independently-constructed index
 with LocalFragment entries (UInt16 local_id + UInt8 score = 4 bytes).
 
+`id_type = UInt32` builds a `LocalPartitionedFragmentIndex32` instead (`LocalFragment32`, 8 bytes): partitions are
+then never split, so they keep the nominal `partition_width`.
+
 Per-fragment score is a bitmask `1 << (rank-1)`, capped at 8 ranks (UInt8).
 
-Precursor IDs are remapped to partition-local UInt16 values (1..N, N ≤ 65535).
-Partitions that would exceed 65535 unique precursors are automatically split.
+Precursor IDs are remapped to partition-local values (1..N; N ≤ 65535 for UInt16).
+Partitions that would exceed that many unique precursors are automatically split.
+
+One index: `select_index_fragments`, then `build_partitioned_index_from_selection`. To build several indexes of one
+library (widths, main and presearch), select once and build each from the selection.
 """
 function build_partitioned_index_from_lib(
     spec_lib::SpectralLibrary;
@@ -39,14 +162,33 @@ function build_partitioned_index_from_lib(
     y_start_index::UInt8 = UInt8(4),
     b_start_index::UInt8 = UInt8(3),
     include_p_index::Bool = false,
+    id_type::Type{<:Unsigned} = UInt16,
 )
-    precursors = getPrecursors(spec_lib)
-    frag_lookup = getFragmentLookupTable(spec_lib)
-    detailed_frags = getFragments(frag_lookup)
-    prec_mzs = getMz(precursors)
-    prec_irts = getIrt(precursors)
+    sel = select_index_fragments(spec_lib; y_start_index = y_start_index, b_start_index = b_start_index,
+                                 include_p_index = include_p_index)
+    return build_partitioned_index_from_selection(sel; partition_width = partition_width,
+        frag_bin_tol_ppm = frag_bin_tol_ppm, frag_bin_tol_mda = frag_bin_tol_mda, rt_bin_tol = rt_bin_tol,
+        id_type = id_type)
+end
+
+"""
+    build_partitioned_index_from_selection(sel; partition_width, frag_bin_tol_ppm, frag_bin_tol_mda, rt_bin_tol, id_type)
+
+The partitioned index of one width from a precomputed `IndexFragSelection`; see `build_partitioned_index_from_lib`.
+Partitions are built in parallel. Each partition's fragments are laid out exactly as the serial builder did
+(precursors in partition order, each precursor's fragments in rank order), so the index is identical.
+"""
+function build_partitioned_index_from_selection(
+    sel::IndexFragSelection;
+    partition_width::Float32 = 5.0f0,
+    frag_bin_tol_ppm::Float32 = 0.0f0,
+    frag_bin_tol_mda::Float32 = 2.0f0,
+    rt_bin_tol::Float32 = 3.0f0,
+    id_type::Type{<:Unsigned} = UInt16,
+)
+    max_local = max_local_precs(id_type)
+    prec_mzs = sel.prec_mzs
     n_precursors = length(prec_mzs)
-    max_rank = 8
 
     # ── Step 1: Assign precursors to initial partitions by prec_mz ───────────
     min_prec_mz = Float32(Inf)
@@ -63,14 +205,14 @@ function build_partitioned_index_from_lib(
     initial_partition_pids = [UInt32[] for _ in 1:n_initial]
     for pid in UInt32(1):UInt32(n_precursors)
         pmz = prec_mzs[pid]
-        k = clamp(floor(Int, (pmz - min_prec_mz) / partition_width) + 1, 1, n_initial)
+        k = _initial_partition(pmz, min_prec_mz, partition_width, n_initial)
         push!(initial_partition_pids[k], pid)
     end
 
-    # ── Step 2: Split partitions exceeding MAX_LOCAL_PRECS (balanced halving) ─
+    # ── Step 2: Split partitions exceeding max_local (balanced halving) ───────
     final_partition_pids = Vector{UInt32}[]
     function _split_balanced!(out::Vector{Vector{UInt32}}, pids::Vector{UInt32}, prec_mzs)
-        if length(pids) <= MAX_LOCAL_PRECS
+        if length(pids) <= max_local
             push!(out, pids)
         else
             sort!(pids, by = pid -> prec_mzs[pid])
@@ -87,74 +229,28 @@ function build_partitioned_index_from_lib(
         @debug_l2 "build_partitioned_index: split to $(n_partitions) partitions ($(n_partitions - n_initial) extra from UInt16 limit)"
     end
 
-    # ── Step 3: Build SimpleFrags + local ID mapping per partition ────────────
-    partition_frags = [SimpleFrag{Float32}[] for _ in 1:n_partitions]
-    partition_local_to_global = [UInt32[] for _ in 1:n_partitions]
-    global_to_local = Dict{UInt32, UInt16}()
-
-    for k in 1:n_partitions
+    # ── Steps 3-4, per partition in parallel: the partition's SimpleFrags with local IDs (precursors in
+    # partition order, each precursor's fragments in rank order), then its LocalPartition ──────────────
+    PT = local_partition_type(id_type){Float32}
+    partitions = Vector{PT}(undef, n_partitions)
+    Threads.@threads :dynamic for k in 1:n_partitions
         pids = final_partition_pids[k]
-        empty!(global_to_local)
-        local_to_global = zeros(UInt32, length(pids))
+        l2g = Vector{UInt32}(pids)                   # local_id i → global prec_id
+        n_local = id_type(length(l2g))
+        frags_k = Vector{SimpleFrag{Float32}}(undef, sum(pid -> sel.offsets[pid + 1] - sel.offsets[pid], pids; init = 0))
+        j = 0
         for (i, pid) in enumerate(pids)
-            lid = UInt16(i)
-            global_to_local[pid] = lid
-            local_to_global[i] = pid
-        end
-
-        for pid in pids
-            pmz = prec_mzs[pid]
-            pirt = prec_irts[pid]
-            frag_range = getPrecFragRange(frag_lookup, pid)
-            lid = global_to_local[pid]
-
-            rank = 0
-            for fi in frag_range
-                dfrag = detailed_frags[fi]
-
-                # Apply fragment index ion-type filters
-                if isY(dfrag)
-                    getIonPosition(dfrag) < y_start_index && continue
-                elseif isB(dfrag)
-                    getIonPosition(dfrag) < b_start_index && continue
-                elseif isP(dfrag)
-                    include_p_index || continue
-                end
-                isIso(dfrag) && continue
-
-                rank += 1
-                rank > max_rank && break
-
-                push!(partition_frags[k], SimpleFrag{Float32}(
-                    getMz(dfrag),
-                    UInt32(lid),
-                    pmz,
-                    pirt,
-                    UInt8(0),
-                    UInt8(1) << UInt8(rank - 1),  # bitmask: rank 1→bit0, rank 2→bit1, ...
-                ))
+            for fi in sel.offsets[pid]:(sel.offsets[pid + 1] - 1)
+                f = sel.frags[fi]
+                frags_k[j += 1] = SimpleFrag{Float32}(f.mz, UInt32(i), f.prec_mz, f.prec_irt, f.prec_charge, f.score)
             end
         end
 
-        partition_local_to_global[k] = local_to_global
-    end
-
-    total_frags = sum(length, partition_frags)
-    @debug_l2 "build_partitioned_index: $(total_frags) total fragments across $(n_partitions) partitions"
-
-    # ── Step 4: Build LocalPartition per partition ────────────────────────────
-    partitions = Vector{LocalPartition{Float32}}(undef, n_partitions)
-
-    for k in 1:n_partitions
-        frags_k = partition_frags[k]
-        l2g = partition_local_to_global[k]
-        n_local = UInt16(length(l2g))
-
         if isempty(frags_k)
-            partitions[k] = LocalPartition{Float32}(
+            partitions[k] = PT(
                 SoAFragBins{Float32}(Float32[], Float32[], UInt32[], UInt32[]),
                 FragIndexBin{Float32}[],
-                LocalFragment[],
+                local_fragment_type(id_type)[],
                 l2g,
                 n_local,
                 UInt16[],
@@ -165,6 +261,7 @@ function build_partitioned_index_from_lib(
         partitions[k] = _build_local_partition(frags_k, l2g, n_local,
                                                 frag_bin_tol_ppm, frag_bin_tol_mda, rt_bin_tol)
     end
+    @debug_l2 "build_partitioned_index: $(length(sel.frags)) total fragments across $(n_partitions) partitions"
 
     # Compute per-partition prec_mz bounds
     partition_bounds = Vector{Tuple{Float32, Float32}}(undef, n_partitions)
@@ -184,25 +281,26 @@ function build_partitioned_index_from_lib(
         end
     end
 
-    return LocalPartitionedFragmentIndex{Float32}(partitions, partition_bounds, n_partitions)
+    return local_index_type(id_type){Float32}(partitions, partition_bounds, n_partitions)
 end
 
 """
 Build a LocalPartition from SimpleFrags whose prec_id field already contains
-local UInt16 IDs (stored as UInt32). Produces LocalFragment entries.
+local IDs (stored as UInt32). Produces LocalFragment entries (LocalPartition32 /
+LocalFragment32 when `n_local` is a UInt32).
 """
 function _build_local_partition(
     frag_ions::Vector{SimpleFrag{Float32}},
     local_to_global::Vector{UInt32},
-    n_local::UInt16,
+    n_local::I,
     frag_bin_tol_ppm::Float32,
     frag_bin_tol_mda::Float32,
     rt_bin_tol::Float32,
-)
+) where {I<:Unsigned}
     sort!(frag_ions, by = x -> getIRT(x))
 
     n = length(frag_ions)
-    local_fragments = Vector{LocalFragment}(undef, n)
+    local_fragments = Vector{local_fragment_type(I)}(undef, n)
     rt_bins = Vector{FragIndexBin{Float32}}(undef, n)
     soa = SoAFragBins{Float32}(
         Vector{Float32}(undef, n),
@@ -255,7 +353,7 @@ function _build_local_partition(
     rb_final = rt_bins[1:rt_bin_idx]
     skip_hints = _compute_skip_hints(soa, rb_final)
 
-    return LocalPartition{Float32}(
+    return local_partition_type(I){Float32}(
         soa,
         rb_final,
         local_fragments,
@@ -266,21 +364,22 @@ function _build_local_partition(
 end
 
 """
-Build fragment m/z bins producing LocalFragment entries (UInt16 local IDs).
+Build fragment m/z bins producing LocalFragment / LocalFragment32 entries.
 Writes bin metadata into SoA parallel arrays. Returns updated frag_bin_idx.
 
 If `frag_bin_tol_ppm > 0`, uses ppm-width bins (legacy). Otherwise uses
 fixed mDa-width bins via `frag_bin_tol_mda` (default 2.0 mDa).
 """
 function _build_local_frag_bins!(
-    local_fragments::Vector{LocalFragment},
+    local_fragments::Vector{F},
     soa::SoAFragBins{Float32},
     frag_bin_idx::Int,
     frag_ions::Vector{SimpleFrag{Float32}},
     start::Int, stop::Int,
     frag_bin_tol_ppm::Float32,
     frag_bin_tol_mda::Float32,
-)
+) where {F<:AbstractLocalFragment}
+    I = local_id_type(F)
     use_ppm = frag_bin_tol_ppm > 0.0f0
     mda_tol = frag_bin_tol_mda * 0.001f0  # convert mDa to Da
     start_idx = start
@@ -306,8 +405,8 @@ function _build_local_frag_bins!(
             soa.last_bins[frag_bin_idx] = UInt32(bin_stop)
             for idx in start_idx:bin_stop
                 sf = frag_ions[idx]
-                local_fragments[idx] = LocalFragment(
-                    UInt16(getPrecID(sf)), getScore(sf))
+                local_fragments[idx] = F(
+                    I(getPrecID(sf)), getScore(sf))
             end
             start_idx = i
             start_mz = getMZ(frag_ions[i])
@@ -324,8 +423,8 @@ function _build_local_frag_bins!(
     soa.last_bins[frag_bin_idx] = UInt32(stop)
     for idx in start_idx:stop
         sf = frag_ions[idx]
-        local_fragments[idx] = LocalFragment(
-            UInt16(getPrecID(sf)), getScore(sf))
+        local_fragments[idx] = F(
+            I(getPrecID(sf)), getScore(sf))
     end
 
     return frag_bin_idx

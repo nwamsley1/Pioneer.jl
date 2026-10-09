@@ -3,8 +3,7 @@
 # For each PSM accepted by the MS2 mass-error fit, look up the nearest MS1 scan
 # and find the closest peak to the precursor's predicted M+0/M+1/M+2 m/z within
 # ±MS1_DIAG_WINDOW_PPM. Record observed-vs-theoretical ppm residuals and write a
-# per-file histogram. Diagnostic only — does not fit a model or affect downstream
-# search behavior.
+# per-file histogram. These observations also fit the production MS1 model.
 
 const MS1_DIAG_WINDOW_PPM = 100.0f0
 const MS1_DIAG_TOL_K_MAD  = 5.0f0
@@ -54,38 +53,20 @@ For each (scan_idx, precursor_idx) row in `psms` (typically the MS2-accepted
 PSMs from ParameterTuningSearch), find the nearest MS1 scan by RT and record
 the ppm residual of the closest peak to the precursor's M+0, M+1, M+2 isotopes
 within ±MS1_DIAG_WINDOW_PPM. Returns a flat vector of signed ppm residuals
-(positive = observed peak above theoretical m/z).
+(positive = observed peak above theoretical m/z). Optional `qc_coordinates` receives
+matching theoretical m/z and scan RT values for within-file residual checks;
+`qc_precursor_ids` receives precursor IDs for grouping whole peptide sequences.
 """
-function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file_idx::Integer)
+function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file_idx::Integer;
+    qc_coordinates::Union{Nothing,Tuple{Vector{Float32},Vector{Float32}}}=nothing,
+    qc_precursor_ids::Union{Nothing,Vector{UInt32}}=nothing)
     n = nrow(psms)
     n == 0 && return Float32[]
 
-    n_scans = length(spectra)
-    ms1_scan_idxs = Int[]
-    ms1_scan_rts  = Float32[]
-    for s in 1:n_scans
-        if getMsOrder(spectra, s) == 1
-            push!(ms1_scan_idxs, s)
-            push!(ms1_scan_rts,  Float32(getRetentionTime(spectra, s)))
-        end
-    end
-    isempty(ms1_scan_idxs) && return Float32[]
-
-    n_ms1 = length(ms1_scan_rts)
-    scan_to_ms1 = Vector{Int32}(undef, n_scans)
-    @inbounds for s in 1:n_scans
-        scan_rt = Float32(getRetentionTime(spectra, s))
-        pos = searchsortedfirst(ms1_scan_rts, scan_rt)
-        scan_to_ms1[s] = if pos == 1
-            Int32(ms1_scan_idxs[1])
-        elseif pos > n_ms1
-            Int32(ms1_scan_idxs[end])
-        else
-            d_after  = abs(ms1_scan_rts[pos]   - scan_rt)
-            d_before = abs(ms1_scan_rts[pos-1] - scan_rt)
-            d_before <= d_after ? Int32(ms1_scan_idxs[pos-1]) : Int32(ms1_scan_idxs[pos])
-        end
-    end
+    # Nearest MS1 scan per scan (nearest MS1 frame at the row's own mobility on ion-mobility data);
+    # shared with MainSearch's add_ms1_lookup_features!.
+    scan_to_ms1 = build_scan_to_ms1(spectra)
+    all(iszero, scan_to_ms1) && return Float32[]
 
     precursors  = getPrecursors(getSpecLib(search_context))
     prec_mzs     = getMz(precursors)
@@ -96,12 +77,13 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
 
     cached_mz::Vector{Float32} = Float32[]
     cached_ms1_idx::Int = -1
+    decode_buf = PeakDecodeBuffer()
 
     @inbounds for i in 1:n
         ms1_idx = Int(scan_to_ms1[Int(psms.scan_idx[i])])
         if ms1_idx != cached_ms1_idx
             cached_ms1_idx = ms1_idx
-            cached_mz = _ms1_diag_clean_mz(getMzArray(spectra, ms1_idx))
+            cached_mz = _ms1_diag_clean_mz(first(getPeaks!(decode_buf, spectra, ms1_idx)))
         end
         pid = UInt32(psms.precursor_idx[i])
         prec_mz  = Float32(prec_mzs[pid])
@@ -112,6 +94,11 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
             hit, obs_mz = _ms1_diag_find_peak(cached_mz, target, MS1_DIAG_WINDOW_PPM)
             if hit
                 push!(residuals, (obs_mz - target) / target * 1f6)
+                if qc_coordinates !== nothing
+                    push!(qc_coordinates[1], target)
+                    push!(qc_coordinates[2], Float32(getRetentionTime(spectra, ms1_idx)))
+                end
+                qc_precursor_ids !== nothing && push!(qc_precursor_ids, pid)
             end
         end
     end

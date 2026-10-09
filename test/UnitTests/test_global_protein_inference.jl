@@ -14,8 +14,8 @@ isdefined(Main, :infer_proteins) || include(joinpath(package_root, "src", "utils
 # and merging the resulting peptide → protein dicts. The merge keeps the most
 # recent assignment when a peptide appears in multiple files (the real
 # pipeline's per-file path overwrites in arrival order — this matches that).
-function _simulate_per_file_inference(files::Vector{<:Tuple{Vector{ProteinKey}, Vector{PeptideKey}}})
-    merged = Dictionary{PeptideKey, ProteinKey}()
+function _simulate_per_file_inference(files::Vector{<:Tuple{Vector{ProteinKey{String}}, Vector{PeptideKey{String}}}})
+    merged = Dictionary{PeptideKey{String}, ProteinKey{String}}()
     for (proteins, peptides) in files
         result = infer_proteins(proteins, peptides)
         for (k, v) in pairs(result.peptide_to_protein)
@@ -27,7 +27,7 @@ end
 
 # Helper: simulate global inference by unioning all (protein, peptide) tuples
 # across files into a single Set, then running infer_proteins once.
-function _simulate_global_inference(files::Vector{<:Tuple{Vector{ProteinKey}, Vector{PeptideKey}}})
+function _simulate_global_inference(files::Vector{<:Tuple{Vector{ProteinKey{String}}, Vector{PeptideKey{String}}}})
     UniqueKey = Tuple{ProteinKey, PeptideKey}
     s = Set{UniqueKey}()
     for (proteins, peptides) in files
@@ -35,8 +35,8 @@ function _simulate_global_inference(files::Vector{<:Tuple{Vector{ProteinKey}, Ve
             push!(s, (proteins[i], peptides[i]))
         end
     end
-    proteins_vec = Vector{ProteinKey}(undef, length(s))
-    peptides_vec = Vector{PeptideKey}(undef, length(s))
+    proteins_vec = Vector{ProteinKey{String}}(undef, length(s))
+    peptides_vec = Vector{PeptideKey{String}}(undef, length(s))
     let i = 0
         for (p, q) in s
             i += 1

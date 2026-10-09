@@ -16,11 +16,13 @@ using Pioneer: H2O, PROTON, C13_C12_MASS_DIFF
 using Pioneer: InterpolationTypeAlias
 using Pioneer: DetailedFrag, SimpleFrag, LibraryFragmentLookup
 using Pioneer: DEBUG_CONSOLE_LEVEL
+using Pioneer: RunSummaryStats, accumulate_run_summary!, add_protein_group_counts!
 using Pioneer: IsotopeSplineModel
 using Pioneer: getPrecursorIsotopeSet, getFragIsotopes!
 using Pioneer: getHigh, Counter, IndexFragment
 using Pioneer: UniformSpline
 using Pioneer: ProteinKey, PeptideKey, InferenceResult
+using Pioneer: StringGroupNames, ProteinGroupRegistry, group_members, merge_group, group_isless
 using Pioneer: PeptideMod, matchVarMods, add_pair_indices!
 using Pioneer: digest_sequence, normalize_digest_specificity
 using Pioneer: getFixedMods!, countVarModCombinations
@@ -60,7 +62,7 @@ using DataFrames, Dictionaries, Distributions
 import DataStructures  # qualified to avoid reset! conflict
 using FASTX, Interpolations, JSON, JLD2
 using LinearAlgebra, LightXML
-using Measures, NumericalIntegration, Optim
+using Measures, NumericalIntegration
 using Plots, Polynomials, ProgressBars
 using Tables, StatsPlots, SentinelArrays
 using Random, StaticArrays, StatsBase, SpecialFunctions, Statistics

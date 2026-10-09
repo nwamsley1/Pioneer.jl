@@ -31,6 +31,11 @@ const MBR_MAX_NEGATIVE_TRAIN_PER_FOLD = 1_875_000
 const PASS1_SIDECAR_SUFFIX = ".pass1_sidecar.arrow"
 const MBR_SIDECAR_SUFFIX = ".mbr_sidecar.arrow"
 const RECOVERY_SIDECAR_SUFFIX = ".recovery_sidecar.arrow"
+# A staged MBR integration input is a row selection of a scored PSM table rather than a copy:
+# `{staged path}.mbr_rows.arrow` holds the selected source rows (`source_row`, ascending) and
+# names the source table and its sidecars in its metadata. Readers before integration go through
+# `load_staged_psms`; integration writes the real table at the staged path and removes the selection.
+const MBR_SELECTION_SUFFIX = ".mbr_rows.arrow"
 
 # Training-only counterfactual evidence retained from the MBR transfer model.
 # The raw score and counterfactual block index are transient; the remapped
@@ -109,9 +114,32 @@ const _MBRIrtPool = NamedTuple{
 const EMPTY_MBR_IRT_POOL = (pids = UInt32[], irts = Float32[])
 _empty_mbr_irt_pool() = EMPTY_MBR_IRT_POOL
 
+# `run_passed_by_file` (and `_MBRReceiverRunClusters.passed_by_file`) hold only the receiver
+# runs of the file being featurised: `compute_postintegration_mbr_features!` builds them from
+# that file and attaches them. Keeping one ~2 MB BitSet per run for the whole experiment grew
+# linearly with the file count, while each file only ever queries its own runs.
 struct _MBRCounterfactualEligibility
     global_passed::BitSet
     run_passed_by_file::Dict{UInt32, BitSet}
+end
+
+_MBRCounterfactualEligibility(global_passed::BitSet) =
+    _MBRCounterfactualEligibility(global_passed, Dict{UInt32, BitSet}())
+
+"""
+    _mbr_run_passed_by_file(precursor_idx, ms_file_idx, qval, q_value_threshold)
+
+Precursors passing the run-level q-value gate, per run, for one table. Every run present in
+the table gets an entry, even if nothing in it passes.
+"""
+function _mbr_run_passed_by_file(precursor_idx, ms_file_idx, qval, q_value_threshold::Float32)
+    passed_by_file = Dict{UInt32, BitSet}()
+    @inbounds for row in eachindex(precursor_idx)
+        passed = get!(() -> BitSet(), passed_by_file, UInt32(ms_file_idx[row]))
+        q = Float32(qval[row])
+        isfinite(q) && q <= q_value_threshold && push!(passed, Int(precursor_idx[row]))
+    end
+    return passed_by_file
 end
 
 struct _MBRPartnerPools
@@ -181,6 +209,7 @@ struct _MBRDonorEntry
     log2_intensity_explained::Float32
     irt_residual::Float32
     irt_obs::Float32
+    im_obs::Float32
     n_scans::Float32
     integrated_frag_sqrt::NTuple{8, Float32}
     frag_corr_bitvec::UInt8
@@ -188,10 +217,135 @@ struct _MBRDonorEntry
     ms_file_idx::UInt32
 end
 
+struct _MBRDonorLookup
+    file_order::Vector{UInt32}
+    top_scores::NTuple{2, UInt32}
+    lowest_weights::NTuple{3, UInt32}
+end
+
+"""
+    _MBRDonorRecord, _MBRDonorRecordIM
+
+A `_MBRDonorEntry` as stored on disk: without `precursor_idx`, which is the key of the group
+the record belongs to, and (`_MBRDonorRecord`, 64 bytes instead of 72) without `im_obs` when
+every donor's is exactly `0f0`, as on data without ion mobility. `_MBRDonorRecordIM` keeps it
+(68 bytes). Both convert back to the identical `_MBRDonorEntry`.
+"""
+struct _MBRDonorRecord
+    trace_prob::Float32
+    weight::Float32
+    log2_intensity_explained::Float32
+    irt_residual::Float32
+    irt_obs::Float32
+    n_scans::Float32
+    integrated_frag_sqrt::NTuple{8, Float32}
+    frag_corr_bitvec::UInt8
+    frag_corr_bitvec_rank::UInt16
+    ms_file_idx::UInt32
+end
+
+struct _MBRDonorRecordIM
+    trace_prob::Float32
+    weight::Float32
+    log2_intensity_explained::Float32
+    irt_residual::Float32
+    irt_obs::Float32
+    im_obs::Float32
+    n_scans::Float32
+    integrated_frag_sqrt::NTuple{8, Float32}
+    frag_corr_bitvec::UInt8
+    frag_corr_bitvec_rank::UInt16
+    ms_file_idx::UInt32
+end
+
+_MBRDonorRecord(d::_MBRDonorEntry) = _MBRDonorRecord(d.trace_prob, d.weight,
+    d.log2_intensity_explained, d.irt_residual, d.irt_obs, d.n_scans, d.integrated_frag_sqrt,
+    d.frag_corr_bitvec, d.frag_corr_bitvec_rank, d.ms_file_idx)
+_MBRDonorRecordIM(d::_MBRDonorEntry) = _MBRDonorRecordIM(d.trace_prob, d.weight,
+    d.log2_intensity_explained, d.irt_residual, d.irt_obs, d.im_obs, d.n_scans,
+    d.integrated_frag_sqrt, d.frag_corr_bitvec, d.frag_corr_bitvec_rank, d.ms_file_idx)
+@inline _MBRDonorEntry(r::_MBRDonorRecord, pid::UInt32) = _MBRDonorEntry(r.trace_prob, pid,
+    r.weight, r.log2_intensity_explained, r.irt_residual, r.irt_obs, 0.0f0, r.n_scans,
+    r.integrated_frag_sqrt, r.frag_corr_bitvec, r.frag_corr_bitvec_rank, r.ms_file_idx)
+@inline _MBRDonorEntry(r::_MBRDonorRecordIM, pid::UInt32) = _MBRDonorEntry(r.trace_prob, pid,
+    r.weight, r.log2_intensity_explained, r.irt_residual, r.irt_obs, r.im_obs, r.n_scans,
+    r.integrated_frag_sqrt, r.frag_corr_bitvec, r.frag_corr_bitvec_rank, r.ms_file_idx)
+
+"""
+    _MBRDonorGroup
+
+One precursor's donors in a `_MBRDonorStore`: a read-only vector of `_MBRDonorEntry`, rebuilt
+from the stored records on access.
+"""
+struct _MBRDonorGroup{R} <: AbstractVector{_MBRDonorEntry}
+    records::Vector{R}
+    first::Int            # records[first + i] is donor i
+    len::Int
+    pid::UInt32
+end
+Base.size(group::_MBRDonorGroup) = (group.len,)
+Base.IndexStyle(::Type{<:_MBRDonorGroup}) = IndexLinear()
+@inline function Base.getindex(group::_MBRDonorGroup, i::Int)
+    @boundscheck checkbounds(group, i)
+    return _MBRDonorEntry(@inbounds(group.records[group.first + i]), group.pid)
+end
+
+"""
+    _MBRDonorStore
+
+Integrated donors grouped by precursor in one memory-mapped file of compact records. At
+experiment scale the donors outgrow memory (one per passing (precursor, run): ~636 million at
+12,800 runs), so they are read through file-backed pages the operating system can drop and
+reload, instead of private memory that has to be paged out. `ranges[pid]` locates that
+precursor's donors in `entries`, in the order an in-memory
+`Dict{UInt32, Vector{_MBRDonorEntry}}` would hold them.
+"""
+struct _MBRDonorStore{R}
+    ranges::Dict{UInt32, UnitRange{Int}}
+    entries::Vector{R}
+    path::String          # backing file; "" when there are no entries
+end
+
+const _MBRDonorEntries = Union{Dict{UInt32, Vector{_MBRDonorEntry}}, _MBRDonorStore}
+
+@inline _donor_group(store::_MBRDonorStore, pid::UInt32, range::UnitRange{Int}) =
+    _MBRDonorGroup(store.entries, first(range) - 1, length(range), pid)
+Base.get(store::_MBRDonorStore, pid::UInt32, default) =
+    (range = get(store.ranges, pid, nothing); range === nothing ? default : _donor_group(store, pid, range))
+Base.getindex(store::_MBRDonorStore, pid::UInt32) = _donor_group(store, pid, store.ranges[pid])
+Base.length(store::_MBRDonorStore) = length(store.ranges)
+Base.isempty(store::_MBRDonorStore) = isempty(store.ranges)
+Base.values(store::_MBRDonorStore) = (_donor_group(store, pid, range) for (pid, range) in store.ranges)
+Base.pairs(store::_MBRDonorStore) = (pid => _donor_group(store, pid, range) for (pid, range) in store.ranges)
+
+struct _MBRDonorIndex{E<:_MBRDonorEntries}
+    entries::E
+    lookups::Dict{UInt32, _MBRDonorLookup}
+    file_ids::Vector{UInt32}
+end
+
+struct _MBRReceiverDonors{I<:_MBRDonorIndex}
+    index::I
+    receiver_file::UInt32
+    ranked_files::Vector{Tuple{Float32, UInt32}}
+    equal_similarity::Bool
+    finite_similarity::Bool
+end
+
+const _MBRDonorCollection = Union{_MBRDonorEntries, _MBRDonorIndex, _MBRReceiverDonors}
+
+Base.length(index::_MBRDonorIndex) = length(index.entries)
+Base.values(index::_MBRDonorIndex) = values(index.entries)
+Base.getindex(index::_MBRDonorIndex, pid::UInt32) = index.entries[pid]
+
 const MBR_RECEIVER_FEATURES = Symbol[
     :trace_prob_infold,
     :fitted_manhattan_distance,
     :irt_error,
+    # Mobility residual of the receiver itself, (predicted 1/K0 - observed) / sigma, signed. A transfer placed
+    # at the right retention time but the wrong mobility is invisible to every other feature here.
+    # Identically zero on data without ion mobility, where it is left out of the model (MBR_ION_MOBILITY_FEATURES).
+    :im_error,
     :poisson,
     :err_norm,
     :weight,
@@ -231,6 +385,8 @@ const MBR_PAIRED_FEATURE_STEMS = String[
     "MBR_worst_irt_diff",
     "MBR_best_observed_irt_diff",
     "MBR_worst_observed_irt_diff",
+    "MBR_best_observed_im_diff",
+    "MBR_worst_observed_im_diff",
     "MBR_single_donor",
     "MBR_best_hellinger_source_prob",
     "MBR_best_temporal_frag_hellinger",
@@ -275,15 +431,11 @@ end
         _mbr_false_feature("MBR_best_is_missing", counterfactual_idx)
 end
 
-# Sidecar column names resolved ONCE at load time. The per-row writers in
-# compute_postintegration_mbr_features! index these positionally; previously every one of ~104
-# writes per row rebuilt its Symbol through `Symbol(stem * "_true")` — a String allocation plus an
-# intern, ~41M of them over a 6-file Olsen run.
+# Resolve sidecar column names once for positional writes in the feature loop.
 const MBR_N_PAIRED = length(MBR_PAIRED_FEATURE_STEMS)
 
-# Flat and block-major: block 0 is the true pairing, block i is counterfactual i, so the position of
-# (block, feature) is `block * MBR_N_PAIRED + feature`. Built in the same order the old
-# `enumerate(MBR_PAIRED_FEATURE_STEMS)` loops used, so the sidecar schema is unchanged.
+# Block 0 is the true pairing; block i is counterfactual i.
+# Column position is block * MBR_N_PAIRED + feature.
 const MBR_PAIRED_COLUMN_NAMES = Symbol[
     (_mbr_true_feature(stem) for stem in MBR_PAIRED_FEATURE_STEMS)...,
     (
@@ -303,6 +455,14 @@ const MBR_FTR_FEATURES_TRUE = Symbol[
     MBR_RECEIVER_FEATURES...,
     MBR_SHARED_FEATURES...,
     (_mbr_true_feature(stem) for stem in MBR_MODEL_PAIRED_FEATURE_STEMS)...,
+]
+
+# Transfer-model features (true-pairing names) that carry signal only on ion-mobility data and are constant
+# elsewhere; searches without ion mobility leave them out (see _mbr_available_feature_sets).
+const MBR_ION_MOBILITY_FEATURES = Symbol[
+    :im_error,
+    _mbr_true_feature("MBR_best_observed_im_diff"),
+    _mbr_true_feature("MBR_worst_observed_im_diff"),
 ]
 
 function _mbr_ftr_features_false(counterfactual_idx::Int)

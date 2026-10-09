@@ -58,29 +58,28 @@ Reusable backing stores for the LightGBM feature matrices built per MS file.
 
 MainSearch's file loop is sequential (`execute_search`), so one buffer set is
 reused across every file instead of allocating a fresh `Matrix{Float32}` each
-time. The matrices are population-scaled — a 12M-PSM file is ~720 MB for the
-whole-file matrix plus ~360 MB for the held-out fold slice — so the churn grows
-with file count while the working set does not.
+time. No matrix ever holds a whole file: rows are filled straight from the PSM
+table's columns (`rows_matrix!`), and prediction runs in fixed-size batches
+(`predict_rows!`), so the working set stays bounded however many PSMs a file has.
 
 One buffer per distinct matrix, so no two simultaneously-live matrices ever
 share memory:
-- `all`    — whole-file matrix (n_total × nfeat)
-- `train`  — sub-sampled training slice (≤ max_train × nfeat)
-- `test`   — held-out fold slice (n_test × nfeat)
-- `infold` — full training-fold slice, only used when `compute_infold = true`
+- `train` — sub-sampled training rows (≤ max_train × nfeat)
+- `batch` — one prediction batch (≤ `LGBM_PREDICT_BATCH_ROWS` × nfeat)
 
-Buffers grow monotonically (`resize!` only when a bigger file appears). Size
-every buffer *before* wrapping any matrix from it: `resize!` may move the data,
+Buffers grow monotonically (`resize!` only when a bigger matrix is needed). Size
+a buffer *before* wrapping any matrix from it: `resize!` may move the data,
 which would leave a live wrap dangling.
 """
 struct LGBMMatrixBuffers
-    all::Vector{Float32}
     train::Vector{Float32}
-    test::Vector{Float32}
-    infold::Vector{Float32}
+    batch::Vector{Float32}
 end
 
-LGBMMatrixBuffers() = LGBMMatrixBuffers(Float32[], Float32[], Float32[], Float32[])
+LGBMMatrixBuffers() = LGBMMatrixBuffers(Float32[], Float32[])
+
+"Rows per LightGBM prediction batch (`predict_rows!`): ~100 MB at 49 features."
+const LGBM_PREDICT_BATCH_ROWS = 500_000
 
 """
     _size_matrix_buffer!(buf, n, m)
@@ -126,35 +125,101 @@ function feature_matrix!(buf::Vector{Float32}, df::AbstractDataFrame, features::
     return matrix
 end
 
-"""
-    gather_rows!(buf, src, idx) -> Matrix{Float32}
+#############################################################################
+# Row-indexed fills and batched prediction
+#############################################################################
 
-Materialize `src[idx, :]` into `buf` rather than a freshly allocated matrix.
-LightGBM needs a contiguous matrix of exactly those rows, so the copy is
-unavoidable — the allocation is not. Bit-identical to the slice: a plain
-`Float32` copy in the same order.
-"""
-function gather_rows!(
-    buf::Vector{Float32},
-    src::AbstractMatrix{Float32},
-    idx::AbstractVector{<:Integer},
-)
-    n = length(idx)
-    m = size(src, 2)
-    _size_matrix_buffer!(buf, n, m)
-    dest = _wrap_matrix_buffer(buf, n, m)
-    # Validate the row indices once so the copy loop below can be @inbounds.
-    n_src = size(src, 1)
-    @inbounds for i in 1:n
-        r = idx[i]
-        (1 <= r <= n_src) || throw(BoundsError(src, (r, 1)))
+# Same per-type conversion as `_fill_column!` (Float32(v); missing -> 0.0f0), with the rows chosen by an index
+# vector, so a row matrix holds exactly the values `feature_matrix(df)[rows, :]` would.
+function _fill_rows!(M::Matrix{Float32}, j::Int, col::AbstractVector{T},
+                     rows::AbstractVector{<:Integer}) where {T<:Real}
+    @inbounds for k in eachindex(rows)
+        M[k, j] = Float32(col[rows[k]])
     end
-    @inbounds for j in 1:m
-        for i in 1:n
-            dest[i, j] = src[idx[i], j]
+end
+
+function _fill_rows!(M::Matrix{Float32}, j::Int, col::AbstractVector{<:Union{Missing, T}},
+                     rows::AbstractVector{<:Integer}) where {T<:Real}
+    @inbounds for k in eachindex(rows)
+        v = col[rows[k]]
+        M[k, j] = v === missing ? 0.0f0 : Float32(v)
+    end
+end
+
+_fill_rows!(::Matrix{Float32}, ::Int, col::AbstractVector, ::AbstractVector{<:Integer}) =
+    throw(ArgumentError("Unsupported feature type $(eltype(col)) for LightGBM"))
+
+"""
+    fill_rows!(M, cols, rows) -> M
+
+Write row `k` of `M` from row `rows[k]` of each feature column (`cols[j]` -> column `j`).
+`M` must be `length(rows) × length(cols)`. Columns are filled in parallel, as in `feature_matrix!`.
+"""
+function fill_rows!(M::Matrix{Float32}, cols::Vector{AbstractVector}, rows::AbstractVector{<:Integer})
+    size(M) == (length(rows), length(cols)) ||
+        throw(DimensionMismatch("matrix is $(size(M)), rows × features is $((length(rows), length(cols)))"))
+    # Validate the row indices once so the fill loops can be @inbounds.
+    if !isempty(rows) && !isempty(cols)
+        lo, hi = extrema(rows)
+        n_src = length(cols[1])
+        (1 <= lo && hi <= n_src) || throw(BoundsError(cols[1], lo < 1 ? lo : hi))
+        all(c -> length(c) == n_src, cols) || throw(DimensionMismatch("feature columns differ in length"))
+    end
+    Threads.@threads for j in eachindex(cols)
+        _fill_rows!(M, j, cols[j], rows)
+    end
+    return M
+end
+
+"""
+    rows_matrix!(buf, cols, rows) -> Matrix{Float32}
+
+The feature rows `rows` as a `length(rows) × length(cols)` matrix wrapped from `buf` (grown if needed).
+Keep `buf` alive (`GC.@preserve`) while the returned matrix is in use.
+"""
+function rows_matrix!(buf::Vector{Float32}, cols::Vector{AbstractVector}, rows::AbstractVector{<:Integer})
+    n, m = length(rows), length(cols)
+    _size_matrix_buffer!(buf, n, m)
+    return fill_rows!(_wrap_matrix_buffer(buf, n, m), cols, rows)
+end
+
+"`rows_matrix!` into a freshly allocated matrix."
+rows_matrix(cols::Vector{AbstractVector}, rows::AbstractVector{<:Integer}) =
+    fill_rows!(Matrix{Float32}(undef, length(rows), length(cols)), cols, rows)
+
+"""
+    predict_rows!(out, predict, buf, cols, rows; batch_rows = LGBM_PREDICT_BATCH_ROWS) -> out
+
+Score the PSMs `rows` without materializing them all at once: fill at most `batch_rows` of them into one matrix
+wrapped from `buf`, call `predict(matrix)`, and write prediction `k` of a batch to `out[i]` where `rows[i]` is
+that batch's row `k`. So `out[i]` is the score of PSM `rows[i]` (`out` aligned with `rows`), whatever the batch
+size. `predict` must return one value per matrix row, in row order (a vector or an n × 1 matrix).
+
+Each batch is wrapped with its own exact shape, `n × m` over the front of `buf`: a view of the first `n` rows of
+a larger matrix would not be contiguous, and LightGBM's predict needs a dense `Matrix`.
+"""
+function predict_rows!(out::AbstractVector{Float64}, predict, buf::Vector{Float32},
+                       cols::Vector{AbstractVector}, rows::AbstractVector{<:Integer};
+                       batch_rows::Int = LGBM_PREDICT_BATCH_ROWS)
+    length(out) == length(rows) || throw(DimensionMismatch("out has $(length(out)) entries for $(length(rows)) rows"))
+    batch_rows > 0 || throw(ArgumentError("batch_rows must be positive"))
+    isempty(rows) && return out
+    m = length(cols)
+    _size_matrix_buffer!(buf, min(batch_rows, length(rows)), m)    # once, before any wrap
+    GC.@preserve buf begin
+        for lo in 1:batch_rows:length(rows)
+            hi = min(lo + batch_rows - 1, length(rows))
+            batch = view(rows, lo:hi)
+            X = fill_rows!(_wrap_matrix_buffer(buf, length(batch), m), cols, batch)
+            pred = predict(X)
+            length(pred) == length(batch) ||
+                throw(DimensionMismatch("predict returned $(length(pred)) values for $(length(batch)) rows"))
+            @inbounds for k in eachindex(batch)
+                out[lo + k - 1] = pred[k]
+            end
         end
     end
-    return dest
+    return out
 end
 
 function build_lightgbm_classifier(; num_iterations::Integer = 100,
@@ -226,6 +291,18 @@ function _prepare_labels(labels)
     return label_vec
 end
 
+# Only for completed matrix fits whose training datasets are owned by this booster.
+function _detach_lightgbm_training_data!(model::LightGBM.LGBMClassification)
+    trained = model.booster
+    isempty(trained.datasets) && return model
+    # LightGBM.jl reloads only the trees when copying a booster.
+    model.booster = deepcopy(trained)
+    Base.finalize(trained)
+    foreach(Base.finalize, trained.datasets)
+    empty!(trained.datasets)
+    return model
+end
+
 function fit_lightgbm_model(model::LightGBM.LGBMClassification,
                             feature_data::AbstractDataFrame,
                             labels::AbstractVector;
@@ -241,6 +318,7 @@ function fit_lightgbm_model(model::LightGBM.LGBMClassification,
     end
 
     LightGBM.fit!(model, X, y_int; verbosity = -1)
+    _detach_lightgbm_training_data!(model)
     return LightGBMModel(model, features, nothing)
 end
 

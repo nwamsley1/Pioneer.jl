@@ -418,9 +418,8 @@ For each precursor, this maps the MainSearch seed scan into the local trace and
 calls `integrate_chrom` (WH smoothing -> second-derivative bounds -> baseline
 subtraction -> trapezoidal integration). Results are written into
 `peak_area`, `new_best_scan`, `points_integrated`, and the integration-boundary
-scan indices, along with `peak_area_unsubtracted` -- the area over the same
-window before baseline subtraction, which is what the not-quantifiable rule in
-`integrate_chrom` tests against.
+scan indices, along with `quant_withheld` -- whether the not-quantifiable
+rule in `integrate_chrom` withheld this row's area.
 """
 function integrate_precursors(chromatograms::DataFrame,
                              isotope_trace_type::IsotopeTraceType,
@@ -432,15 +431,23 @@ function integrate_precursors(chromatograms::DataFrame,
                              points_integrated::AbstractVector{UInt32},
                              integration_start_scan::AbstractVector{UInt32},
                              integration_stop_scan::AbstractVector{UInt32},
-                             peak_area_unsubtracted::AbstractVector{Float32};
+                             quant_withheld::AbstractVector{Bool};
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
+                             im_half_scans::Int = 0,
                              )
     n_pad = Int64(0)
     rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
     scan_idx_all = chromatograms[!, :scan_idx]::AbstractVector{UInt32}
     intensity_all = chromatograms[!, :intensity]::AbstractVector{Float32}
     fraction_all = chromatograms[!, :precursor_fraction_transmitted]::AbstractVector{Float32}
+    # 2D path: only when the caller attached the grid coordinates AND gave a band. On slice data the
+    # rows of one precursor span both cycles and mobility scans, so the 1D integrator would see a
+    # jagged multi-valued trace -- see integrate_chrom_2d for why this is not optional there.
+    use_2d = im_half_scans > 0 &&
+        hasproperty(chromatograms, :cycle_idx) && hasproperty(chromatograms, :im_scan)
+    cycle_all = use_2d ? chromatograms[!, :cycle_idx]::AbstractVector{UInt32} : UInt32[]
+    im_all = use_2d ? chromatograms[!, :im_scan]::AbstractVector{UInt16} : UInt16[]
 
     chrom_index, max_chrom_len = build_chrom_index(chromatograms, isotope_trace_type)
     N = max_chrom_len + (2*n_pad)
@@ -459,8 +466,9 @@ function integrate_precursors(chromatograms::DataFrame,
     n_thread_slots = Threads.maxthreadid()
     ws_by_thread = [WHWorkspace(N) for _ in 1:n_thread_slots]
     state_by_thread = [Chromatogram(zeros(Float32, N), zeros(Float32, N), 0) for _ in 1:n_thread_slots]
+    sc2d_by_thread = [Chrom2DScratch() for _ in 1:n_thread_slots]
 
-    function run_integration_batch!(batch_id::Int, ws::WHWorkspace, state::Chromatogram)
+    function run_integration_batch!(batch_id::Int, ws::WHWorkspace, state::Chromatogram, sc2d::Chrom2DScratch)
         for chunk_idx in task_ranges[batch_id]
             chunk = all_chunks[chunk_idx]
             for i in chunk
@@ -489,9 +497,30 @@ function integrate_precursors(chromatograms::DataFrame,
                     @view(scan_idx_all[chrom_range]), apex_scan
                 )
 
+                if use_2d
+                    peak_area[i], new_best_scan[i], points_integrated[i],
+                        integration_start_scan[i], integration_stop_scan[i],
+                        quant_withheld[i] =
+                        integrate_chrom_2d(
+                        @view(rt_all[chrom_range]),
+                        @view(scan_idx_all[chrom_range]),
+                        @view(cycle_all[chrom_range]),
+                        @view(im_all[chrom_range]),
+                        @view(intensity_all[chrom_range]),
+                        apex_scan,
+                        im_half_scans,
+                        sc2d,
+                        ws,
+                        state,
+                        λ,
+                    )
+                    reset!(state)
+                    continue
+                end
+
                 peak_area[i], new_best_scan[i], points_integrated[i],
                     integration_start_scan[i], integration_stop_scan[i],
-                    _, _, peak_area_unsubtracted[i], _ =
+                    _, _, quant_withheld[i], _ =
                     integrate_chrom(
                     @view(rt_all[chrom_range]),
                     @view(scan_idx_all[chrom_range]),
@@ -513,7 +542,7 @@ function integrate_precursors(chromatograms::DataFrame,
 
     Threads.@threads :static for batch_id in 1:n_tasks
         tid = Threads.threadid()
-        run_integration_batch!(batch_id, ws_by_thread[tid], state_by_thread[tid])
+        run_integration_batch!(batch_id, ws_by_thread[tid], state_by_thread[tid], sc2d_by_thread[tid])
     end
 
     # Clamp NaN and negative values to zero for downstream processing
@@ -535,7 +564,7 @@ function integrate_precursors(chromatograms::DataFrame,
                              points_integrated::AbstractVector{UInt32},
                              integration_start_scan::AbstractVector{UInt32},
                              integration_stop_scan::AbstractVector{UInt32},
-                             peak_area_unsubtracted::AbstractVector{Float32};
+                             quant_withheld::AbstractVector{Bool};
                              λ::Float32 = 1.0f0,
                              )
     return integrate_precursors(
@@ -549,7 +578,7 @@ function integrate_precursors(chromatograms::DataFrame,
         points_integrated,
         integration_start_scan,
         integration_stop_scan,
-        peak_area_unsubtracted;
+        quant_withheld;
         λ = λ,
     )
 end
@@ -1078,12 +1107,6 @@ function _add_mbr_integrated_kernel!(
     psm_peak_area,
     psm_isotopes,
 )
-    # DIAGNOSTIC (PIONEER_MBR_PHASE_DIAG=1): per-phase bytes/time inside this function, accumulated
-    # across files. Chromatogram Integration allocates 77.7 GB on this branch vs 4.3 GB without MBR;
-    # this attributes that to the four index-building phases vs the per-row write loop.
-    _diag = get(ENV, "PIONEER_MBR_PHASE_DIAG", "0") == "1"
-    _t0 = time(); _a0 = Base.gc_bytes()
-
     # Chromatograms are sorted [:precursor_idx, :rt] (SeperateTraces: [:precursor_idx,
     # :isotopes_captured, :rt]) by sort_chromatograms_for_integration! at
     # IntegrateChromatogramsSearch.jl:354, BEFORE this runs at :386. So every precursor's rows are
@@ -1126,14 +1149,6 @@ function _add_mbr_integrated_kernel!(
         end
     end
 
-    if _diag
-        MBR_PHASE_DIAG[:rows_by_pid_bytes] += Base.gc_bytes() - _a0
-        MBR_PHASE_DIAG[:rows_by_pid_ms] += round(Int, (time() - _t0) * 1000)
-        MBR_PHASE_DIAG[:n_chrom_rows] += n_chrom
-        MBR_PHASE_DIAG[:n_psm_rows] += n
-        MBR_PHASE_DIAG[:n_pids] += n_groups
-        _t0 = time(); _a0 = Base.gc_bytes()
-    end
 
     # SeperateTraces stores rows grouped by isotope set, so scan_idx is not monotonic across a
     # precursor. Reproduce the old per-precursor sort with ONE Int32 permutation (4 B/row) instead
@@ -1149,22 +1164,6 @@ function _add_mbr_integrated_kernel!(
         nothing
     end
 
-    if _diag
-        # Read the phase timers FIRST. The monotonicity check below is an O(n_chrom) diagnostic; when
-        # it ran before this read it was timed as part of the phase and inflated the reported cost of
-        # this block by ~8.4 s -- a diagnostic measuring itself.
-        MBR_PHASE_DIAG[:neighbors_bytes] += Base.gc_bytes() - _a0
-        MBR_PHASE_DIAG[:neighbors_ms] += round(Int, (time() - _t0) * 1000)
-        # Assumption check for the combined-trace fast path: the stored order must be scan order.
-        if scan_order === nothing
-            bad = 0
-            @inbounds for g in 1:n_groups, r in (Int(group_lo[g]) + 1):Int(group_hi[g])
-                UInt32(scan_column[r]) <= UInt32(scan_column[r - 1]) && (bad += 1)
-            end
-            MBR_PHASE_DIAG[:nonmonotonic_rows] += bad
-        end
-        _t0 = time(); _a0 = Base.gc_bytes()
-    end
 
     # Correlation features are a function of the precursor's whole chromatogram group, so compute
     # one per group into a concretely-typed vector (was Dict{UInt32, NamedTuple}, abstract).
@@ -1195,11 +1194,6 @@ function _add_mbr_integrated_kernel!(
         )
     end
 
-    if _diag
-        MBR_PHASE_DIAG[:correlation_bytes] += Base.gc_bytes() - _a0
-        MBR_PHASE_DIAG[:correlation_ms] += round(Int, (time() - _t0) * 1000)
-        _t0 = time(); _a0 = Base.gc_bytes()
-    end
 
     # Bind every column touched in the loop ONCE. `df[row, ::Symbol]` and `df.col` each do a
     # Dict{Symbol,Int} lookup and return an abstractly-typed column, so the ~34 accesses per row
@@ -1327,42 +1321,71 @@ function _add_mbr_integrated_kernel!(
                 _chrom_hellinger_score_from_sqrt(fragment_sqrt, fitted_sqrt)
         end
     end
-    if _diag
-        MBR_PHASE_DIAG[:perrow_bytes] += Base.gc_bytes() - _a0
-        MBR_PHASE_DIAG[:perrow_ms] += round(Int, (time() - _t0) * 1000)
-        MBR_PHASE_DIAG[:n_files] += 1
-        _mbr_phase_diag_report()
-    end
     return passing_psms
 end
 
-# Accumulators for the phase diagnostic above. Printed after every file so a crash mid-run still
-# leaves usable numbers.
-const MBR_PHASE_DIAG = Dict{Symbol, Int}(
-    :rows_by_pid_bytes => 0, :rows_by_pid_ms => 0,
-    :neighbors_bytes => 0,   :neighbors_ms => 0,
-    :correlation_bytes => 0, :correlation_ms => 0,
-    :perrow_bytes => 0,      :perrow_ms => 0,
-    :n_chrom_rows => 0, :n_psm_rows => 0, :n_pids => 0, :n_neighbors => 0, :n_files => 0,
-    :nonmonotonic_rows => 0,
-)
+#==========================================================
+Right-tail extension of the extraction window
+==========================================================#
+# Very abundant precursors tail to the right past the symmetric RT window, which cuts the
+# tail off and anchors the linear baseline on it. The top CHROM_RHS_TOP_FRAC of precursors,
+# ranked by their maximum best-PSM weight across all files, get their window extended to
+# psm_rt + CHROM_RHS_MULT * tol on the right in every file; the left edge is unchanged.
+# Chosen on a streptavidin pull-down (truncated right edges 47 -> 16 of 153), with MTAC and
+# Olsen three-proteome fold changes, CVs and IDs unchanged. Extending every precursor
+# compressed ratios and cost IDs, so the extension is deliberately limited to the top few %.
+const CHROM_RHS_TOP_FRAC = 0.05f0
+const CHROM_RHS_MULT = 3.0f0
 
-function _mbr_phase_diag_report()
-    d = MBR_PHASE_DIAG
-    gb(x) = round(x / 2^30, digits = 2)
-    tot = d[:rows_by_pid_bytes] + d[:neighbors_bytes] + d[:correlation_bytes] + d[:perrow_bytes]
-    pct(x) = tot > 0 ? round(100 * x / tot, digits = 1) : 0.0
-    @user_info """
-    MBR phase diagnostic (cumulative over $(d[:n_files]) file(s)):
-      chrom rows=$(d[:n_chrom_rows])  psm rows=$(d[:n_psm_rows])  pids=$(d[:n_pids])  neighbors entries=$(d[:n_neighbors])
-      combined-mode non-scan-ordered rows (MUST be 0): $(d[:nonmonotonic_rows])
-      rows_by_pid  + rows_by_trace : $(gb(d[:rows_by_pid_bytes])) GB  $(d[:rows_by_pid_ms]) ms  ($(pct(d[:rows_by_pid_bytes]))%)
-      neighbors Dict + sort!       : $(gb(d[:neighbors_bytes])) GB  $(d[:neighbors_ms]) ms  ($(pct(d[:neighbors_bytes]))%)
-      correlation_by_pid           : $(gb(d[:correlation_bytes])) GB  $(d[:correlation_ms]) ms  ($(pct(d[:correlation_bytes]))%)
-      per-row write loop           : $(gb(d[:perrow_bytes])) GB  $(d[:perrow_ms]) ms  ($(pct(d[:perrow_bytes]))%)
-      TOTAL in this function       : $(gb(tot)) GB"""
+# Libraries up to this many precursors keep the per-precursor max weight in a dense Vector
+# (<= 4 MB); larger ones use a Dict, whose size follows the precursors actually observed
+# (1.5% of an 8.5M-precursor library across 15 Astral runs).
+const RHS_DENSE_MAX_PRECURSORS = 2^20
+
+"""
+    init_precursor_max_weight!(search_context) -> AbstractPrecursorMap{Float32}
+
+Create the per-precursor max-weight accumulator that build_rt_indices! fills while it
+reads each file's final passing-PSM table.
+"""
+function init_precursor_max_weight!(search_context::SearchContext)
+    n = search_context.n_precursors
+    m = n <= RHS_DENSE_MAX_PRECURSORS ? DensePrecMap{Float32}(n) :
+                                        SparsePrecMap{Float32}(sizehint = 1 << 18)
+    search_context.precursor_max_weight[] = m
+    return m
+end
+
+# Function barrier: specialises on the concrete map and column types.
+function accumulate_max_weight!(m::AbstractPrecursorMap{Float32}, pids, ws)
+    @inbounds for i in eachindex(pids)
+        p = UInt32(pids[i])
+        # floatmin keeps zero-weight precursors (e.g. MBR rows) in the pool: both backings
+        # treat an exact zero as unset. Positive weights are unchanged.
+        w = max(Float32(ws[i]), floatmin(Float32))
+        w > m[p] && (m[p] = w)
+    end
     return nothing
 end
+
+"""
+    select_rhs_precursors(m, q) -> (selected, n_observed, threshold)
+
+Precursors whose max weight is at or above the (1 - q) quantile over all observed
+precursors. Targets and decoys are pooled: the label is never read.
+"""
+function select_rhs_precursors(m::AbstractPrecursorMap{Float32}, q::Float32)
+    vals = Float32[v for (_, v) in active_keys(m)]
+    isempty(vals) && return Set{UInt32}(), 0, Inf32
+    k = clamp(ceil(Int, (1 - q) * length(vals)), 1, length(vals))
+    threshold = partialsort!(vals, k)
+    selected = Set{UInt32}(UInt32(p) for (p, v) in active_keys(m) if v >= threshold)
+    return selected, length(vals), threshold
+end
+
+# (psm_rt, right-window multiplier) for a precursor; RT-only maps (Huber calibration) get 1.
+@inline rt_and_rhs(m::Dict{UInt32, Float32}, k::UInt32) = (get(m, k, NaN32), 1.0f0)
+@inline rt_and_rhs(m::Dict{UInt32, NTuple{2, Float32}}, k::UInt32) = get(m, k, (NaN32, 1.0f0))
 
 #==========================================================
 Chromatogram Building Functions
@@ -1406,16 +1429,56 @@ function withinQuadrupoleBounds(
     return mz_low ≤ prec_mz ≤ mz_high
 end
 
+# Empirical ion-mobility window for chromatogram extraction: a slice is extracted for a precursor only when its
+# IM scan lies within this half-width (1/K0) of the IM scan of the precursor's best PSM (the mobility analogue of
+# the per-precursor RT window). Converted to IM scans per file by `im_half_width_scans`.
+# Measured 2026-09-23 (HYE 50 ng, ~84k precursors per file, +/-96-scan extraction): the best PSM sits on the
+# mobility apex (75% exactly, 94% within one 8-scan slice, mean offset -0.5 scans); the window holds 97% of the
+# weight within +/-96 scans, and the ~2% of apexes beyond it are further than any mobility peak is wide (median
+# FWHM 0.018 1/K0), i.e. co-isolated signal, not a clipped peak. On the ramps measured so far (0.00085-0.000865
+# 1/K0 per scan) this is 64-65 scans; a narrower mobility range packs more scans into the same 1/K0.
+const CHROM_IM_WINDOW_K0 = 0.055f0
+
+# Half-width of the mobility INTEGRATION band, in 1/K0, for the 2D integrator (integrate_chrom_2d).
+# Distinct from CHROM_IM_WINDOW_K0, which is the wider window the weights are COLLECTED over.
+# Measured on twelve-file HYE runs: mobility FWHM is 0.018 1/K0 at the median and the ordering of band
+# widths is identical on the 15-min and 5-min gradients, so this is a physical constant, not a
+# per-dataset tuning knob. +/-0.021 is the setting Nathan chose; narrower is slightly more accurate and
+# slightly less precise (+/-0.007 gives yeast 0.89 / E. coli 73.5% against 0.86 / 69.3% here).
+const CHROM_IM_BAND_K0 = 0.021f0
+
+"""
+    im_half_width_scans(half_width_k0, spectra, search_context, ms_file_idx) -> Int
+
+A mobility half-width in 1/K0 as a whole number of IM scans for this file, rounded UP so the window never
+covers less than asked for. Uses the instrument's scan-to-1/K0 slope (`getImSlope`, from the `.tdfs`
+calibration); files without one (Arrow packet files) use the slope of the file's z2 IM line.
+0 when neither is available.
+"""
+function im_half_width_scans(half_width_k0::Float32, spectra::MassSpecData, search_context::SearchContext,
+                             ms_file_idx::Integer)
+    slope = getImSlope(spectra)
+    if slope === nothing
+        model = getImModel(search_context, ms_file_idx)
+        slope = haskey(model, 0) ? abs(model[0][2]) : (isempty(model) ? 0f0 : abs(first(values(model))[2]))
+    end
+    return im_half_width_scans(half_width_k0, Float32(slope))
+end
+im_half_width_scans(half_width_k0::Float32, slope::Float32) = slope > 0 ? ceil(Int, half_width_k0 / slope) : 0
+
 """
     collect_rt_window_precursors!(precs_temp, rt_index, rt_start_idx, rt_stop_idx,
                                    precursors_passing, prec_mzs, prec_charges,
                                    prec_sulfur_counts, iso_splines, quad_func,
                                    precursor_transmission, isotope_err_bounds,
                                    min_fraction_transmitted, precursor_rt_map,
-                                   scan_rt, rt_binned_tol, rt_tol_fallback) -> Int
+                                   scan_rt, rt_binned_tol, rt_tol_fallback,
+                                   [im_scan, precursor_im_map, im_window_scans]) -> Int
 
 Walk the RT-bin range, applying quad-window, precursors_passing allowlist,
 per-precursor RT, isotope_err_bounds, and min_fraction_transmitted filters.
+With `precursor_im_map` (ion-mobility data) also drops precursors whose best PSM's
+IM scan is more than `im_window_scans` from the slice's `im_scan`.
 Writes the surviving precursor ids into `precs_temp[1:n]` and returns `n`.
 
 Extracted from the classic `RTIndexedTransitionSelection` path so
@@ -1435,14 +1498,20 @@ function collect_rt_window_precursors!(
     precursor_transmission::Vector{Float32},
     isotope_err_bounds::Tuple{I, I},
     min_fraction_transmitted::Float32,
-    precursor_rt_map::Union{Dict{UInt32, Float32}, Nothing},
+    precursor_rt_map::Union{Dict{UInt32, Float32}, Dict{UInt32, NTuple{2, Float32}}, Nothing},
     scan_rt::Float32,
     rt_binned_tol::Union{RTBinnedTolerance, Nothing},
-    rt_tol_fallback::Float32) where {I<:Integer}
+    rt_tol_fallback::Float32,
+    im_scan::Float32 = 0f0,
+    precursor_im_map::Union{Dict{UInt32, Float32}, Nothing} = nothing,
+    im_window_scans::Float32 = 0f0) where {I<:Integer}
 
     min_prec_mz, max_prec_mz = getQuadrupoleBounds(quad_transmission_func)
     size = 0
     has_rt_filter = precursor_rt_map !== nothing
+    # Empirical IM window: the slice's IM scan must lie within im_window_scans of the precursor's best PSM's
+    # IM scan (packet data with a map). Precursors without an entry are not restricted.
+    has_im_window = precursor_im_map !== nothing && im_window_scans > 0f0
 
     for rt_bin_idx in rt_start_idx:rt_stop_idx
         precs = rt_index.rt_bins[rt_bin_idx].prec
@@ -1453,11 +1522,16 @@ function collect_rt_window_precursors!(
             (!isnothing(precursors_passing) && prec_idx ∉ precursors_passing) && continue
 
             if has_rt_filter
-                prec_rt_val = get(precursor_rt_map, prec_idx, NaN32)
+                prec_rt_val, rhs_mult = rt_and_rhs(precursor_rt_map, prec_idx)
                 if !isnan(prec_rt_val)
                     prec_tol = rt_binned_tol !== nothing ? get_rt_tol(rt_binned_tol, prec_rt_val) : rt_tol_fallback
-                    abs(scan_rt - prec_rt_val) > prec_tol && continue
+                    d = scan_rt - prec_rt_val            # > 0: scan is after the PSM apex
+                    ((d > prec_tol * rhs_mult) | (-d > prec_tol)) && continue
                 end
+            end
+            if has_im_window
+                prec_im_val = get(precursor_im_map, prec_idx, NaN32)
+                !isnan(prec_im_val) && abs(im_scan - prec_im_val) > im_window_scans && continue
             end
 
             prec_charge = prec_charges[prec_idx]
@@ -1484,6 +1558,21 @@ function collect_rt_window_precursors!(
     return size
 end
 
+"""
+    spectra_has_base_peak(spectra) -> Bool
+
+Whether per-scan base-peak intensities can be read (checked once per file, not per scan).
+"""
+function spectra_has_base_peak(spectra::MassSpecData)
+    length(spectra) == 0 && return false
+    try
+        getBasePeakIntensity(spectra, 1)
+        return true
+    catch
+        return false
+    end
+end
+
 function extract_chromatograms(
     spectra::MassSpecData,
     passing_psms::DataFrame,
@@ -1491,7 +1580,8 @@ function extract_chromatograms(
     search_context::SearchContext,
     params::IntegrateChromatogramSearchParameters,
     ms_file_idx::Int64,
-    chrom_type::CHROMATOGRAM
+    chrom_type::CHROMATOGRAM;
+    rhs_extended::Set{UInt32} = Set{UInt32}(),
 )
     if typeof(chrom_type)==typeof(MS2CHROM())
         ms_order_select = 2
@@ -1505,13 +1595,27 @@ function extract_chromatograms(
     # This eliminates race conditions when multiple threads call passing_psms[!, :precursor_idx]
     precursor_set = Set(passing_psms[!, :precursor_idx])  # shared read-only across threads (was N copies)
 
-    # Build precursor RT map for per-precursor symmetric window filtering
+    # Per-precursor RT and right-window multiplier (CHROM_RHS_MULT for rhs_extended, else 1)
     _pids = passing_psms[!, :precursor_idx]::Vector{UInt32}
     _rts = passing_psms[!, :rt]::Vector{Float32}
-    precursor_rt_map = Dict{UInt32, Float32}()
+    precursor_rt_map = Dict{UInt32, NTuple{2, Float32}}()
     sizehint!(precursor_rt_map, length(_pids))
     for i in eachindex(_pids)
-        precursor_rt_map[_pids[i]] = _rts[i]
+        precursor_rt_map[_pids[i]] = (_rts[i], _pids[i] in rhs_extended ? CHROM_RHS_MULT : 1.0f0)
+    end
+    # Per-precursor IM centre (the best PSM's IM scan) for the empirical mobility window; mobility data only.
+    _im_scans = getImScans(spectra)
+    im_window_scans = _im_scans === nothing ? 0 :
+        im_half_width_scans(CHROM_IM_WINDOW_K0, spectra, search_context, ms_file_idx)
+    precursor_im_map = if _im_scans === nothing || im_window_scans == 0 || !hasproperty(passing_psms, :scan_idx)
+        nothing
+    else
+        _scans = passing_psms[!, :scan_idx]
+        m = Dict{UInt32, Float32}(); sizehint!(m, length(_pids))
+        for i in eachindex(_pids)
+            m[_pids[i]] = Float32(_im_scans[_scans[i]])
+        end
+        m
     end
 
     # One entry per scan, shared across threads. partition_scans gives each thread a DISJOINT
@@ -1535,6 +1639,8 @@ function extract_chromatograms(
                 ms_file_idx,
                 chrom_type;
                 scan_tic = scan_tic,
+                precursor_im_map = precursor_im_map,
+                im_window_scans = Float32(im_window_scans),
             )
         end
     end
@@ -1561,7 +1667,7 @@ function build_chromatograms(
     spectra::MassSpecData,
     scan_range::Vector{Int64},
     precursors_passing::Set{UInt32},
-    precursor_rt_map::Dict{UInt32, Float32},
+    precursor_rt_map::Dict{UInt32, NTuple{2, Float32}},
     rt_index::retentionTimeIndex,
     search_context::SearchContext,
     search_data::SearchDataStructures,
@@ -1569,6 +1675,8 @@ function build_chromatograms(
     ms_file_idx::Int64,
     ::MS2CHROM;
     scan_tic::Union{Nothing, Vector{Float32}} = nothing,
+    precursor_im_map::Union{Dict{UInt32, Float32}, Nothing} = nothing,
+    im_window_scans::Float32 = 0f0,
 )
     # Fused-kernel working arrays.
     Hs = getHsFused(search_data)
@@ -1576,6 +1684,7 @@ function build_chromatograms(
     colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
+    decode_buf = getDecodeBuffer(search_data)
     spectral_scores = getMainSearchSpectralScores(search_data)
     collect_mbr_evidence = params.match_between_runs
     fused_scratch = getFusedScratch(search_data)
@@ -1611,6 +1720,8 @@ function build_chromatograms(
     irt_tol = getIrtErrors(search_context)[ms_file_idx]
     has_rt_tol = haskey(getRtTolerances(search_context), ms_file_idx)
     rt_binned_tol = has_rt_tol ? getRtTolerance(search_context, ms_file_idx) : nothing
+    # Files converted without a basePeakIntensity column fall back to the flat Huber ceiling.
+    has_base_peak = spectra_has_base_peak(spectra)
     rt_irt_model = getRtIrtModel(search_context, ms_file_idx)
     nce_model = getNceModel(search_context, ms_file_idx)
     mass_error_model = getMassErrorModel(search_context, ms_file_idx)
@@ -1622,6 +1733,9 @@ function build_chromatograms(
     prec_sulfur_arr = getSulfurCount(precursors)
     prec_irt_arr = getIrt(precursors)
     frag_lookup = getFragmentLookupTable(spec_lib)
+    intensity_model = prepare_fragment_intensity_model(frag_lookup, nce_model)
+
+    im_scans = getImScans(spectra)
 
     kind = FusedRTIndexed(params.prec_estimation, UInt8(params.max_frag_rank))
 
@@ -1631,6 +1745,7 @@ function build_chromatograms(
         msn ∉ params.spec_order && continue
 
         rt = getRetentionTime(spectra, scan_idx)
+        im_scan = im_scans === nothing ? 0f0 : Float32(im_scans[scan_idx])
         # The total ion current is a property of the SCAN, not of any one precursor. Record it
         # once per scan; it used to be copied onto every chromatogram row of the scan.
         #
@@ -1656,7 +1771,9 @@ function build_chromatograms(
             rt_tol_local = irt_tol / max(local_slope, 0.01f0)
         end
 
-        rt_bin_start_new = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol_local, lt=(r,x)->r.lb<x) - 1, 1)
+        # A scan at rt must reach precursors whose apex is up to CHROM_RHS_MULT * tol earlier
+        # (right-tail extension), so only the lower bin edge moves.
+        rt_bin_start_new = max(searchsortedfirst(rt_index.rt_bins, rt - rt_tol_local * CHROM_RHS_MULT, lt=(r,x)->r.lb<x) - 1, 1)
         rt_bin_stop_new = min(searchsortedlast(rt_index.rt_bins, rt + rt_tol_local, lt=(x,r)->r.ub>x) + 1, length(rt_index.rt_bins))
 
         prec_mz_new = getCenterMz(spectra, scan_idx)
@@ -1680,7 +1797,8 @@ function build_chromatograms(
             precursors_passing, prec_mz_arr, prec_charge_arr, prec_sulfur_arr,
             getIsoSplines(search_data), quad_func, prec_trans_buf,
             params.isotope_err_bounds, params.min_fraction_transmitted,
-            precursor_rt_map, Float32(rt), rt_binned_tol, rt_tol_local)
+            precursor_rt_map, Float32(rt), rt_binned_tol, rt_tol_local,
+            im_scan, precursor_im_map, im_window_scans)
 
         if prec_temp_size == 0
             reset!(id_to_col); reset!(Hs)
@@ -1688,8 +1806,7 @@ function build_chromatograms(
         end
 
         # 2. Pre-correct peak m/z for the scan.
-        scan_mz  = getMzArray(spectra, scan_idx)
-        scan_int = getIntensityArray(spectra, scan_idx)
+        scan_mz, scan_int = getPeaks!(decode_buf, spectra, scan_idx)
         peak_mz_len = prepare_scan_peaks!(corr_mz, obs_low, obs_high,
                                           mass_error_model, scan_mz, scan_int,
                                           Float32(rt))
@@ -1701,14 +1818,15 @@ function build_chromatograms(
             Hs, unscored_psms, id_to_col, fused_scratch,
             corr_mz, obs_low, obs_high, peak_mz_len,
             isotopes_buf, prec_trans_buf,
-            frag_lookup, nce_model,
+            frag_lookup, intensity_model,
             precs_temp, 1:prec_temp_size,
             prec_mz_arr, prec_charge_arr, prec_sulfur_arr, prec_irt_arr,
             getIsoSplines(search_data), quad_func, mass_error_model,
             scan_int, 0f0, Float32(Inf),
             (getLowMz(spectra, scan_idx), getHighMz(spectra, scan_idx)),
             params.n_frag_isotopes,
-            params.isotope_err_bounds)
+            params.isotope_err_bounds;
+            scan_ev = getCollisionEnergyEv(spectra, scan_idx))
 
         if nmatches > 2
             # Resize weight buffers for new columns.
@@ -1726,11 +1844,15 @@ function build_chromatograms(
 
             initialize_weights!(id_to_col, weights, precursor_weights)
 
+            max_weight = has_base_peak ?
+                huber_max_weight(getBasePeakIntensity(spectra, scan_idx)) :
+                HUBER_DEFAULT_MAX_WEIGHT
             solve_deconvolution!(
                 calibrated_chromatogram_deconvolution_solver(search_context, params.deconvolution_solver),
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
-                params.max_iter_outer, params.max_diff)
+                params.max_iter_outer, deconv_tol(search_data, params.max_diff);
+                max_weight = max_weight)
             # Only the 16 rank-1..8 fragment intensities are read back from spectral_scores here
             # (MS2MBRChromObject has no other score field), so the five aggregate metrics
             # getDistanceMetrics computes are not calculated.
@@ -1857,6 +1979,7 @@ function build_chromatograms(
     colnorm2 = getColNorm2(search_data)
     precursor_weights = getPrecursorWeights(search_data)
     residuals = getResiduals(search_data)
+    decode_buf = getDecodeBuffer(search_data)
     chromatograms = Vector{MS1ChromObject}(undef, 500000)  # Initial size
     ion_templates = Vector{Isotope{Float32}}(undef, 100000)
     ion_matches = [PrecursorMatch{Float32}() for _ in range(1, 10000)]
@@ -1959,8 +2082,7 @@ function build_chromatograms(
             ion_misses,
             ion_templates,
             ion_idx,
-            getMzArray(spectra, scan_idx),
-            getIntensityArray(spectra, scan_idx),
+            getPeaks!(decode_buf, spectra, scan_idx)...,
             mem,
             getHighMz(spectra, scan_idx)
         )
@@ -2007,7 +2129,7 @@ function build_chromatograms(
                 calibrated_chromatogram_deconvolution_solver(search_context, params.deconvolution_solver),
                 Hs, residuals, weights, colnorm2,
                 getMu(search_data), getObserved(search_data),
-                params.max_iter_outer, params.max_diff
+                params.max_iter_outer, deconv_tol(search_data, params.max_diff)
             )
 
             # NEW: Distribute grouped coefficients back to individual precursors
@@ -2086,11 +2208,8 @@ Chromatogram Building Functions
 Process final PSMs after integration.
 
 # Added Columns
-- Protein information (accession numbers, indices)
+- `ms_file_idx`, `charge`
 - Peak areas and normalization
-- Sequence information
-- Modification details
-- File metadata
 """
 function process_final_psms!(
     psms::DataFrame,
@@ -2115,66 +2234,36 @@ function process_final_psms!(
         @debug_l1 "[$parsed_fname] $n_unquantified / $(nrow(psms)) PSMs identified " *
                   "but not quantified (peak_area == 0)"
     end
-    # Add columns
+    # Add columns. Library text (sequence, modifications, accessions, species, start positions)
+    # and the file name are not stored on the PSMs: they are functions of :precursor_idx and
+    # :ms_file_idx, and the final writers look them up (see `PrecursorTextIds`).
     precursors = getPrecursors(getSpecLib(search_context))
     n = size(psms, 1)
-    accession_numbers = Vector{String}(undef, n)
     ms_file_idxs = Vector{UInt16}(undef, n)
-    species = Vector{String}(undef, n)
     peak_area = Vector{Union{Missing, Float32}}(undef, n)
     peak_area_normalized = Vector{Union{Missing, Float32}}(undef, n)
-    structural_mods = Vector{Union{Missing, String}}(undef, n)
-    isotopic_mods = Vector{Union{Missing, String}}(undef, n)
     charge = Vector{UInt8}(undef, n)
-    sequence = Vector{String}(undef, n)
-    peptide_start_positions = Vector{String}(undef, n)
-    file_name = Vector{String}(undef, n)
     psms_precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
 
-    accession_col = getAccessionNumbers(precursors)
-    for i in range(1, n)
-        pid = psms_precursor_idx[i]
-        accession_numbers[i] = accession_col[pid]
-    end
-    psms[!, :accession_numbers] = accession_numbers
-
-    # No sort here. MaxLFQSearch sorts the merged PSMs by :inferred_protein_group
+    # No sort here. ProteinQuantificationSearch sorts the merged PSMs by :inferred_protein_group
     # before its chunked-merge so chunk boundaries align with protein-group
     # boundaries. ProteinInferenceSearch (which runs between this method and
     # MaxLFQ) is what populates :inferred_protein_group, so a sort by that
     # column at this stage isn't possible anyway.
 
-    parsed_fname = getFileIdToName(getMSData(search_context), ms_file_idx)
-    proteome_col = getProteomeIdentifiers(precursors)
-    structural_mods_col = getStructuralMods(precursors)
-    isotopic_mods_col = getIsotopicMods(precursors)
     charge_col = getCharge(precursors)
-    sequence_col = getSequence(precursors)
-    start_idx_col = getStartIdx(precursors)
     for i in range(1, n)
         pid = psms_precursor_idx[i]
         ms_file_idxs[i] = UInt32(ms_file_idx)
-        species[i] = join(sort(unique(split(coalesce(proteome_col[pid], ""),';'))),';')
         peak_area[i] = psms[i,:peak_area]
         peak_area_normalized[i] = zero(Float32)
-        structural_mods[i] = structural_mods_col[pid]
-        isotopic_mods[i] = isotopic_mods_col[pid]
         charge[i] = charge_col[pid]
-        sequence[i] = sequence_col[pid]
-        peptide_start_positions[i] = _format_start_idx(start_idx_col[pid])
-        file_name[i] = parsed_fname
     end
 
     psms[!,:ms_file_idx] = ms_file_idxs
-    psms[!,:species] = species
     psms[!,:peak_area] = peak_area
     psms[!,:peak_area_normalized] = peak_area_normalized
-    psms[!,:structural_mods] = structural_mods
-    psms[!,:isotopic_mods] = isotopic_mods
-    psms[!,:charge] = charge 
-    psms[!,:sequence] = sequence
-    psms[!,:peptide_start_positions] = peptide_start_positions
-    psms[!,:file_name] = file_name
-    
+    psms[!,:charge] = charge
+
     return nothing
 end

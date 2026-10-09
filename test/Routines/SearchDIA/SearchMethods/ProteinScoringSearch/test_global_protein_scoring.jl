@@ -54,7 +54,7 @@
         mktempdir() do directory
             path = joinpath(directory, "protein_groups.arrow")
             Arrow.write(path, DataFrame(
-                protein_name = ["P0", "P1"],
+                protein_name = [UInt32(0), UInt32(1)],
                 target = Bool[true, false],
                 pg_score = Float32[0.5, 1.5],
                 feature = Float32[1.0, -1.0],
@@ -63,11 +63,11 @@
                 Pioneer.ProteinGroupFileReference(path),
             ]
             protein_to_cv_fold = Dictionary{
-                String,
+                UInt32,
                 @NamedTuple{best_score::Float32, cv_fold::UInt8},
             }()
-            insert!(protein_to_cv_fold, "P0", (best_score = 0.5f0, cv_fold = UInt8(0)))
-            insert!(protein_to_cv_fold, "P1", (best_score = 1.5f0, cv_fold = UInt8(1)))
+            insert!(protein_to_cv_fold, UInt32(0), (best_score = 0.5f0, cv_fold = UInt8(0)))
+            insert!(protein_to_cv_fold, UInt32(1), (best_score = 1.5f0, cv_fold = UInt8(1)))
 
             Pioneer.apply_protein_scores_multifold!(
                 refs,
@@ -87,8 +87,8 @@
     end
 
     @testset "score-distribution feature table" begin
-        key1 = ("P1", true, UInt8(0))
-        key2 = ("P2", false, UInt8(1))
+        key1 = (UInt32(1), true, UInt8(0))
+        key2 = (UInt32(2), false, UInt8(1))
         inputs = Pioneer.GlobalProteinInputs(
             Dict(
                 key1 => Pioneer.GlobalProteinRunScore[
@@ -100,8 +100,8 @@
                 ],
             ),
             Dict(
-                key1 => Set(["PEPA", "PEPB", "PEPC"]),
-                key2 => Set(["PEPX"]),
+                key1 => Set(UInt32[1, 2, 3]),
+                key2 => Set(UInt32[4]),
             ),
             Dict(key1 => 2, key2 => 1),
             Dict(key1 => 6, key2 => 4),
@@ -120,7 +120,7 @@
             run_similarity = run_similarity,
         )
 
-        @test table.protein_name == ["P1", "P2"]
+        @test table.protein_name == [UInt32(1), UInt32(2)]
         @test table.target == Bool[true, false]
         @test table.entrap_id == UInt8[0, 1]
         @test table.cv_fold == UInt8[0, 1]
@@ -168,7 +168,7 @@
     end
 
     @testset "global coverage separates common and all peptides" begin
-        key = ("P1", true, UInt8(0))
+        key = (UInt32(1), true, UInt8(0))
         inputs = Pioneer.GlobalProteinInputs(
             Dict(
                 key => Pioneer.GlobalProteinRunScore[
@@ -176,8 +176,8 @@
                     Pioneer.GlobalProteinRunScore(UInt32(2), 0.8f0),
                 ],
             ),
-            Dict(key => Set(["COMMON", "SEMI1", "SEMI2"])),
-            Dict(key => Set(["COMMON"])),
+            Dict(key => Set(UInt32[1, 2, 3])),
+            Dict(key => Set(UInt32[1])),
             Dict(key => 2),
             Dict(key => 1),
             Dict(key => 6),
@@ -201,7 +201,7 @@
             run1_path = joinpath(directory, "run1.arrow")
             run2_path = joinpath(directory, "run2.arrow")
             Arrow.write(run1_path, DataFrame(
-                protein_name = ["P1", "P2"],
+                protein_name = [UInt32(1), UInt32(2)],
                 target = Bool[true, false],
                 entrap_id = UInt8[0, 0],
                 file_idx = UInt32[2, 2],
@@ -210,11 +210,11 @@
                 n_common_peptides = Int[1, 0],
                 n_possible_unique_peptides = Int[4, 2],
                 n_possible_common_unique_peptides = Int[2, 1],
-                peptide_list = ["PEPA;PEPB", "PEPX"],
-                common_peptide_list = ["PEPA", ""],
+                peptide_list = [UInt32[1, 2], UInt32[4]],
+                common_peptide_list = [UInt32[1], UInt32[]],
             ))
             Arrow.write(run2_path, DataFrame(
-                protein_name = ["P1", "P3"],
+                protein_name = [UInt32(1), UInt32(3)],
                 target = Bool[true, false],
                 entrap_id = UInt8[0, 1],
                 file_idx = UInt32[4, 4],
@@ -223,20 +223,20 @@
                 n_common_peptides = Int[1, 1],
                 n_possible_unique_peptides = Int[4, 3],
                 n_possible_common_unique_peptides = Int[2, 2],
-                peptide_list = ["PEPB;PEPC", "PEPY"],
-                common_peptide_list = ["PEPC", "PEPY"],
+                peptide_list = [UInt32[2, 3], UInt32[5]],
+                common_peptide_list = [UInt32[3], UInt32[5]],
             ))
             refs = Pioneer.ProteinGroupFileReference[
                 Pioneer.ProteinGroupFileReference(run1_path),
                 Pioneer.ProteinGroupFileReference(run2_path),
             ]
             protein_to_cv_fold = Dictionary{
-                String,
+                UInt32,
                 @NamedTuple{best_score::Float32, cv_fold::UInt8},
             }()
-            insert!(protein_to_cv_fold, "P1", (best_score = 0.9f0, cv_fold = UInt8(0)))
-            insert!(protein_to_cv_fold, "P2", (best_score = 0.4f0, cv_fold = UInt8(1)))
-            insert!(protein_to_cv_fold, "P3", (best_score = 0.3f0, cv_fold = UInt8(1)))
+            insert!(protein_to_cv_fold, UInt32(1), (best_score = 0.9f0, cv_fold = UInt8(0)))
+            insert!(protein_to_cv_fold, UInt32(2), (best_score = 0.4f0, cv_fold = UInt8(1)))
+            insert!(protein_to_cv_fold, UInt32(3), (best_score = 0.3f0, cv_fold = UInt8(1)))
 
             inputs = Pioneer._collect_global_protein_inputs(
                 refs,
@@ -244,52 +244,52 @@
                 3,
             )
 
-            @test inputs.run_scores[("P1", true, UInt8(0))] ==
+            @test inputs.run_scores[(UInt32(1), true, UInt8(0))] ==
                 Pioneer.GlobalProteinRunScore[
                     Pioneer.GlobalProteinRunScore(UInt32(2), 0.9f0),
                     Pioneer.GlobalProteinRunScore(UInt32(4), 0.8f0),
                 ]
-            @test inputs.run_scores[("P2", false, UInt8(0))] ==
+            @test inputs.run_scores[(UInt32(2), false, UInt8(0))] ==
                 Pioneer.GlobalProteinRunScore[
                     Pioneer.GlobalProteinRunScore(UInt32(2), 0.4f0),
                 ]
-            @test inputs.run_scores[("P3", false, UInt8(1))] ==
+            @test inputs.run_scores[(UInt32(3), false, UInt8(1))] ==
                 Pioneer.GlobalProteinRunScore[
                     Pioneer.GlobalProteinRunScore(UInt32(4), 0.3f0),
                 ]
-            @test inputs.observed_peptides[("P1", true, UInt8(0))] ==
-                  Set(["PEPA", "PEPB", "PEPC"])
-            @test inputs.observed_peptides[("P2", false, UInt8(0))] == Set(["PEPX"])
-            @test inputs.observed_peptides[("P3", false, UInt8(1))] == Set(["PEPY"])
-            @test inputs.observed_common_peptides[("P1", true, UInt8(0))] ==
-                Set(["PEPA", "PEPC"])
-            @test isempty(inputs.observed_common_peptides[("P2", false, UInt8(0))])
-            @test inputs.observed_common_peptides[("P3", false, UInt8(1))] ==
-                Set(["PEPY"])
+            @test inputs.observed_peptides[(UInt32(1), true, UInt8(0))] ==
+                  Set(UInt32[1, 2, 3])
+            @test inputs.observed_peptides[(UInt32(2), false, UInt8(0))] == Set(UInt32[4])
+            @test inputs.observed_peptides[(UInt32(3), false, UInt8(1))] == Set(UInt32[5])
+            @test inputs.observed_common_peptides[(UInt32(1), true, UInt8(0))] ==
+                Set(UInt32[1, 3])
+            @test isempty(inputs.observed_common_peptides[(UInt32(2), false, UInt8(0))])
+            @test inputs.observed_common_peptides[(UInt32(3), false, UInt8(1))] ==
+                Set(UInt32[5])
             @test inputs.max_n_peptides == Dict(
-                ("P1", true, UInt8(0)) => 2,
-                ("P2", false, UInt8(0)) => 1,
-                ("P3", false, UInt8(1)) => 1,
+                (UInt32(1), true, UInt8(0)) => 2,
+                (UInt32(2), false, UInt8(0)) => 1,
+                (UInt32(3), false, UInt8(1)) => 1,
             )
             @test inputs.n_possible_unique_peptides == Dict(
-                ("P1", true, UInt8(0)) => 4,
-                ("P2", false, UInt8(0)) => 2,
-                ("P3", false, UInt8(1)) => 3,
+                (UInt32(1), true, UInt8(0)) => 4,
+                (UInt32(2), false, UInt8(0)) => 2,
+                (UInt32(3), false, UInt8(1)) => 3,
             )
             @test inputs.max_n_common_peptides == Dict(
-                ("P1", true, UInt8(0)) => 1,
-                ("P2", false, UInt8(0)) => 0,
-                ("P3", false, UInt8(1)) => 1,
+                (UInt32(1), true, UInt8(0)) => 1,
+                (UInt32(2), false, UInt8(0)) => 0,
+                (UInt32(3), false, UInt8(1)) => 1,
             )
             @test inputs.n_possible_common_unique_peptides == Dict(
-                ("P1", true, UInt8(0)) => 2,
-                ("P2", false, UInt8(0)) => 1,
-                ("P3", false, UInt8(1)) => 2,
+                (UInt32(1), true, UInt8(0)) => 2,
+                (UInt32(2), false, UInt8(0)) => 1,
+                (UInt32(3), false, UInt8(1)) => 2,
             )
             @test inputs.folds == Dict(
-                ("P1", true, UInt8(0)) => UInt8(0),
-                ("P2", false, UInt8(0)) => UInt8(1),
-                ("P3", false, UInt8(1)) => UInt8(1),
+                (UInt32(1), true, UInt8(0)) => UInt8(0),
+                (UInt32(2), false, UInt8(0)) => UInt8(1),
+                (UInt32(3), false, UInt8(1)) => UInt8(1),
             )
         end
     end
@@ -306,23 +306,23 @@
             for (run_idx, scores) in enumerate(run_scores)
                 path = joinpath(directory, "run$(run_idx).arrow")
                 Arrow.write(path, DataFrame(
-                    protein_name = ["P1", "P2"],
+                    protein_name = [UInt32(1), UInt32(2)],
                     target = Bool[true, false],
                     entrap_id = UInt8[0, 0],
                     file_idx = fill(UInt32(run_idx), 2),
                     pg_score = scores,
                     n_peptides = Int[2, 1],
                     n_possible_unique_peptides = Int[4, 3],
-                    peptide_list = ["PEPA;PEPB", "PEPX"],
+                    peptide_list = [UInt32[1, 2], UInt32[4]],
                 ))
                 push!(refs, Pioneer.ProteinGroupFileReference(path))
             end
             protein_to_cv_fold = Dictionary{
-                String,
+                UInt32,
                 @NamedTuple{best_score::Float32, cv_fold::UInt8},
             }()
-            insert!(protein_to_cv_fold, "P1", (best_score = 0.9f0, cv_fold = UInt8(0)))
-            insert!(protein_to_cv_fold, "P2", (best_score = 0.6f0, cv_fold = UInt8(0)))
+            insert!(protein_to_cv_fold, UInt32(1), (best_score = 0.9f0, cv_fold = UInt8(0)))
+            insert!(protein_to_cv_fold, UInt32(2), (best_score = 0.6f0, cv_fold = UInt8(0)))
 
             scores, protein_scores = Pioneer.build_global_protein_score_dicts(
                 refs,
@@ -336,12 +336,12 @@
             expected_p1 = logodds(Float32[0.9, 0.8, 0.7, 0.6], 2)
             expected_p2 = logodds(Float32[0.6, 0.5, 0.4, 0.3], 2)
             @test scores == Dict(
-                ("P1", true, UInt8(0)) => expected_p1,
-                ("P2", false, UInt8(0)) => expected_p2,
+                (UInt32(1), true, UInt8(0)) => expected_p1,
+                (UInt32(2), false, UInt8(0)) => expected_p2,
             )
             @test protein_scores == Dict(
-                ProteinKey("P1", true, UInt8(0)) => expected_p1,
-                ProteinKey("P2", false, UInt8(0)) => expected_p2,
+                ProteinKey(UInt32(1), true, UInt8(0)) => expected_p1,
+                ProteinKey(UInt32(2), false, UInt8(0)) => expected_p2,
             )
         end
     end
@@ -352,7 +352,7 @@
                 Float32[0.9, 0.4, 0.8, 0.3],
                 Float32[0.8, 0.3, 0.7, 0.2],
             )
-            protein_names = ["T0", "D0", "T1", "D1"]
+            protein_names = UInt32[3, 1, 4, 2]   # pg_ids of T0, D0, T1, D1
             targets = Bool[true, false, true, false]
             refs = Pioneer.ProteinGroupFileReference[]
             for (run_idx, scores) in enumerate(run_scores)
@@ -365,13 +365,13 @@
                     pg_score = scores,
                     n_peptides = fill(2, 4),
                     n_possible_unique_peptides = fill(4, 4),
-                    peptide_list = fill("PEPA;PEPB", 4),
+                    peptide_list = fill(UInt32[1, 2], 4),
                 ))
                 push!(refs, Pioneer.ProteinGroupFileReference(path))
             end
 
             protein_to_cv_fold = Dictionary{
-                String,
+                UInt32,
                 @NamedTuple{best_score::Float32, cv_fold::UInt8},
             }()
             for (protein_name, score, fold) in zip(
@@ -396,10 +396,10 @@
             )
 
             @test scores == Dict(
-                ("T0", true, UInt8(0)) => logodds(Float32[0.9, 0.8], 1),
-                ("D0", false, UInt8(0)) => logodds(Float32[0.4, 0.3], 1),
-                ("T1", true, UInt8(0)) => logodds(Float32[0.8, 0.7], 1),
-                ("D1", false, UInt8(0)) => logodds(Float32[0.3, 0.2], 1),
+                (UInt32(3), true, UInt8(0)) => logodds(Float32[0.9, 0.8], 1),
+                (UInt32(1), false, UInt8(0)) => logodds(Float32[0.4, 0.3], 1),
+                (UInt32(4), true, UInt8(0)) => logodds(Float32[0.8, 0.7], 1),
+                (UInt32(2), false, UInt8(0)) => logodds(Float32[0.3, 0.2], 1),
             )
         end
     end
@@ -407,14 +407,15 @@
     @testset "global protein training requires one hundred of each class" begin
         function training_inputs(n_per_class_per_fold)
             run_scores = Dict{
-                Tuple{String, Bool, UInt8},
+                Tuple{UInt32, Bool, UInt8},
                 Vector{Pioneer.GlobalProteinRunScore},
             }()
-            folds = Dict{Tuple{String, Bool, UInt8}, UInt8}()
+            folds = Dict{Tuple{UInt32, Bool, UInt8}, UInt8}()
             for fold in UInt8[0, 1]
                 for class_idx in 1:n_per_class_per_fold
-                    target_key = ("T$(fold)_$(class_idx)", true, UInt8(0))
-                    decoy_key = ("D$(fold)_$(class_idx)", false, UInt8(0))
+                    # pg_ids: decoys below targets, as the former "D..."/"T..." names sorted
+                    target_key = (UInt32(200_000 + 10_000 * fold + class_idx), true, UInt8(0))
+                    decoy_key = (UInt32(100_000 + 10_000 * fold + class_idx), false, UInt8(0))
                     run_scores[target_key] = Pioneer.GlobalProteinRunScore[
                         Pioneer.GlobalProteinRunScore(UInt32(1), 0.9f0),
                     ]
@@ -427,9 +428,9 @@
             end
             return Pioneer.GlobalProteinInputs(
                 run_scores,
-                Dict{Tuple{String, Bool, UInt8}, Set{String}}(),
-                Dict{Tuple{String, Bool, UInt8}, Int}(),
-                Dict{Tuple{String, Bool, UInt8}, Int}(),
+                Dict{Tuple{UInt32, Bool, UInt8}, Set{UInt32}}(),
+                Dict{Tuple{UInt32, Bool, UInt8}, Int}(),
+                Dict{Tuple{UInt32, Bool, UInt8}, Int}(),
                 folds,
             )
         end
@@ -456,17 +457,17 @@
 
     @testset "protein features support out-of-fold LightGBM scoring" begin
         run_scores = Dict{
-            Tuple{String, Bool, UInt8},
+            Tuple{UInt32, Bool, UInt8},
             Vector{Pioneer.GlobalProteinRunScore},
         }()
-        observed_peptides = Dict{Tuple{String, Bool, UInt8}, Set{String}}()
-        max_n_peptides = Dict{Tuple{String, Bool, UInt8}, Int}()
-        n_possible_unique_peptides = Dict{Tuple{String, Bool, UInt8}, Int}()
-        folds = Dict{Tuple{String, Bool, UInt8}, UInt8}()
+        observed_peptides = Dict{Tuple{UInt32, Bool, UInt8}, Set{UInt32}}()
+        max_n_peptides = Dict{Tuple{UInt32, Bool, UInt8}, Int}()
+        n_possible_unique_peptides = Dict{Tuple{UInt32, Bool, UInt8}, Int}()
+        folds = Dict{Tuple{UInt32, Bool, UInt8}, UInt8}()
         for group_idx in 1:40
             fold = UInt8(group_idx % 2)
-            target_key = ("target_$(group_idx)", true, UInt8(0))
-            decoy_key = ("decoy_$(group_idx)", false, UInt8(0))
+            target_key = (UInt32(2_000 + group_idx), true, UInt8(0))
+            decoy_key = (UInt32(1_000 + group_idx), false, UInt8(0))
             run_scores[target_key] = Pioneer.GlobalProteinRunScore[
                 Pioneer.GlobalProteinRunScore(
                     UInt32(1),
@@ -481,8 +482,8 @@
                 ),
                 Pioneer.GlobalProteinRunScore(UInt32(2), 0.1f0),
             ]
-            observed_peptides[target_key] = Set(["PEPA", "PEPB"])
-            observed_peptides[decoy_key] = Set(["PEPX", "PEPY"])
+            observed_peptides[target_key] = Set(UInt32[1, 2])
+            observed_peptides[decoy_key] = Set(UInt32[4, 5])
             max_n_peptides[target_key] = 2
             max_n_peptides[decoy_key] = 2
             n_possible_unique_peptides[target_key] = 4

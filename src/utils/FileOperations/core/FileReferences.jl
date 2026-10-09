@@ -82,43 +82,78 @@ mutable struct PSMFileReference <: FileReference
     # row count matches the main file are auto-discovered and registered.
     # This ensures fresh PSMFileReferences built from a path inherit any
     # sidecars produced upstream by `add_columns_via_sidecar!`.
-    function PSMFileReference(file_path::String)
+    function PSMFileReference(file_path::String; sidecar_paths=nothing, table=nothing)
         if !isfile(file_path)
             return new(file_path, FileSchema(Symbol[]), (), 0, false, Sidecar[])
         end
 
-        # Read schema from file
-        tbl = Arrow.Table(file_path)
-        schema = FileSchema(collect(Symbol.(Tables.columnnames(tbl))))
-        # Get row count from first column if columns exist
-        col_names = Tables.columnnames(tbl)
-        row_count = isempty(col_names) ? 0 : length(Tables.getcolumn(tbl, 1))
+        # Read schema and row count from the file (unmapped afterwards)
+        col_names, row_count = table === nothing ? _arrow_columns_and_rows(file_path) :
+            _arrow_columns_and_rows(table)
+        schema = FileSchema(col_names)
 
         ref = new(file_path, schema, (), row_count, true, Sidecar[])
-        _discover_sidecars_from_disk!(ref)
+        _discover_sidecars_from_disk!(ref; sidecar_paths)
         return ref
     end
+end
+
+# Column names and row count (rows of the first column, 0 without columns). The path form
+# unmaps the file before returning, so it can be rewritten or deleted afterwards.
+function _arrow_columns_and_rows(tbl)
+    col_names = collect(Symbol.(Tables.columnnames(tbl)))
+    return col_names, isempty(col_names) ? 0 : length(Tables.getcolumn(tbl, 1))
+end
+_arrow_columns_and_rows(path::AbstractString) = with_arrow_table(_arrow_columns_and_rows, path)
+
+"""
+    index_sidecar_paths(file_paths)
+
+Discover sidecar paths with one directory listing per input directory. The index
+is a snapshot; build it after upstream sidecar writers finish.
+"""
+function index_sidecar_paths(file_paths::Vector{String})
+    index = Dict(path => String[] for path in file_paths)
+    by_directory = Dict{String, Dict{String, String}}()
+    for path in file_paths
+        names = get!(() -> Dict{String, String}(), by_directory, dirname(path))
+        names[basename(path)] = path
+    end
+    for (directory, names) in by_directory
+        isdir(directory) || continue
+        for entry in readdir(directory)
+            endswith(entry, ".sidecar.arrow") || continue
+            for dot in findall(==('.'), entry)
+                dot == firstindex(entry) && continue
+                path = get(names, entry[firstindex(entry):prevind(entry, dot)], nothing)
+                path === nothing && continue
+                push!(index[path], joinpath(directory, entry))
+            end
+        end
+    end
+    return index
 end
 
 # Scan the directory containing `ref.file_path` for files named
 # "{basename}.<tag>.sidecar.arrow" and register any that have the matching
 # row count + no schema collisions. Used by the PSMFileReference constructor.
-function _discover_sidecars_from_disk!(ref::PSMFileReference)
+function _discover_sidecars_from_disk!(ref::PSMFileReference; sidecar_paths=nothing)
     dir = dirname(ref.file_path)
     base = basename(ref.file_path)
     isdir(dir) || return ref
     pattern = base * "."
-    for entry in readdir(dir)
+    paths = sidecar_paths === nothing ?
+        (joinpath(dir, entry) for entry in readdir(dir)
+         if startswith(entry, pattern) && endswith(entry, ".sidecar.arrow")) : sidecar_paths
+    for side_path in paths
+        entry = basename(side_path)
         startswith(entry, pattern) || continue
         endswith(entry, ".sidecar.arrow") || continue
-        side_path = joinpath(dir, entry)
         # Skip self-collisions: if the main path itself has a .sidecar.arrow
         # tail (shouldn't, but be defensive), don't register it as its own sidecar.
         side_path == ref.file_path && continue
         try
-            tbl = Arrow.Table(side_path)
-            side_cols = Symbol.(Tables.columnnames(tbl))
-            n = isempty(side_cols) ? 0 : length(Tables.getcolumn(tbl, 1))
+            side_cols, n = _arrow_columns_and_rows(side_path)
             n == ref.row_count || continue
             # Filter out cols that already exist in main or another sidecar.
             # Discovery is opportunistic — colliding cols are just skipped
@@ -151,9 +186,7 @@ already-registered sidecar.
 function register_sidecar!(ref::PSMFileReference, path::String, cols::Vector{Symbol})
     validate_exists(ref)
     isfile(path) || error("Sidecar file does not exist: $path")
-    tbl = Arrow.Table(path)
-    side_cols = Symbol.(Tables.columnnames(tbl))
-    n_side = isempty(side_cols) ? 0 : length(Tables.getcolumn(tbl, 1))
+    side_cols, n_side = _arrow_columns_and_rows(path)
     n_side == ref.row_count ||
         error("Sidecar row count $n_side ≠ main row count $(ref.row_count) for $path")
     for c in cols
@@ -228,20 +261,24 @@ plain `FileReference` (no sidecars), behaves identically to
 `DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))`.
 """
 function load_with_sidecars(ref::FileReference)
-    # DataFrame's default copycols=true gives us mutable Vector{T} columns
-    # (downstream pipeline ops like filter/empty! require this).
-    return DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    # Copied, mutable columns (downstream pipeline ops like filter/empty! require
+    # this), and the file is unmapped on return so callers may rewrite or delete it.
+    return load_arrow_dataframe(file_path(ref))
 end
 
 function load_with_sidecars(ref::PSMFileReference)
-    df = DataFrame(Tables.columntable(Arrow.Table(file_path(ref))))
+    df = load_arrow_dataframe(file_path(ref))
     for s in ref.sidecars
-        side = Arrow.Table(s.path)
-        for c in s.cols
-            # collect ensures the column is a mutable Vector{T}, matching the
-            # mutability invariant used by the rest of the pipeline (filter!,
-            # empty!, transform!).
-            df[!, c] = collect(Tables.getcolumn(side, c))
+        with_arrow_table(s.path) do side
+            for c in s.cols
+                # collect ensures the column is a mutable Vector{T}, matching the
+                # mutability invariant used by the rest of the pipeline (filter!,
+                # empty!, transform!); list cells are copied out of the file too.
+                col = _owned_column(collect(Tables.getcolumn(side, c)))
+                _owns_memory(col) || error("load_with_sidecars: sidecar column $c of $(s.path) " *
+                                           "has type $(typeof(col)), which may still reference the mapped file")
+                df[!, c] = col
+            end
         end
     end
     return df
@@ -294,9 +331,9 @@ function materialize_columns(ref::PSMFileReference, cols::Vector{Symbol})
     end
     df = DataFrame()
     for (path, ps) in cols_per_path
-        tbl = Arrow.Table(path)
+        part = load_arrow_dataframe(path; cols = ps)   # copied, then unmapped
         for c in ps
-            df[!, c] = collect(Tables.getcolumn(tbl, c))
+            df[!, c] = part[!, c]
         end
     end
     return df[!, cols]  # preserve caller's column order
@@ -321,13 +358,10 @@ mutable struct ProteinGroupFileReference <: FileReference
             return new(file_path, FileSchema(Symbol[]), (), 0, false)
         end
         
-        # Read schema from file
-        tbl = Arrow.Table(file_path)
-        schema = FileSchema(collect(Symbol.(Tables.columnnames(tbl))))
-        # Get row count from first column if columns exist
-        col_names = Tables.columnnames(tbl)
-        row_count = isempty(col_names) ? 0 : length(Tables.getcolumn(tbl, 1))
-        
+        # Read schema and row count from the file (unmapped afterwards)
+        col_names, row_count = _arrow_columns_and_rows(file_path)
+        schema = FileSchema(col_names)
+
         new(file_path, schema, (), row_count, true)
     end
 end
@@ -353,30 +387,30 @@ mutable struct ProteinQuantFileReference <: FileReference
             return new(file_path, FileSchema(Symbol[]), (), 0, false, 0, 0)
         end
         
-        # Read schema from file
-        tbl = Arrow.Table(file_path)
-        schema = FileSchema(collect(Symbol.(Tables.columnnames(tbl))))
-        # Get row count from first column if columns exist
-        col_names = Tables.columnnames(tbl)
-        row_count = isempty(col_names) ? 0 : length(Tables.getcolumn(tbl, 1))
-        
-        # Estimate protein groups and experiments for MaxLFQ context
-        n_protein_groups = 0
-        n_experiments = 0
-        
-        # Try to extract meaningful counts if the file has appropriate columns
-        if has_column(schema, :protein)
-            protein_col = Tables.getcolumn(tbl, :protein)
-            n_protein_groups = length(unique(skipmissing(protein_col)))
+        # Schema, row count and counts are read in one pass; the file is unmapped afterwards.
+        schema, row_count, n_protein_groups, n_experiments = with_arrow_table(file_path) do tbl
+            col_names, row_count = _arrow_columns_and_rows(tbl)
+            schema = FileSchema(col_names)
+
+            # Estimate protein groups and experiments for MaxLFQ context
+            n_protein_groups = 0
+            n_experiments = 0
+
+            # Try to extract meaningful counts if the file has appropriate columns
+            if has_column(schema, :protein)
+                protein_col = Tables.getcolumn(tbl, :protein)
+                n_protein_groups = length(unique(skipmissing(protein_col)))
+            end
+
+            if has_column(schema, :experiments) || has_column(schema, :file_name)
+                exp_col = has_column(schema, :experiments) ?
+                         Tables.getcolumn(tbl, :experiments) :
+                         Tables.getcolumn(tbl, :file_name)
+                n_experiments = length(unique(skipmissing(exp_col)))
+            end
+            (schema, row_count, n_protein_groups, n_experiments)
         end
-        
-        if has_column(schema, :experiments) || has_column(schema, :file_name)
-            exp_col = has_column(schema, :experiments) ? 
-                     Tables.getcolumn(tbl, :experiments) : 
-                     Tables.getcolumn(tbl, :file_name)
-            n_experiments = length(unique(skipmissing(exp_col)))
-        end
-        
+
         new(file_path, schema, (), row_count, true, n_protein_groups, n_experiments)
     end
 end

@@ -140,8 +140,9 @@ import Pioneer: DEBUG_CONSOLE_LEVEL
                 "mined target negatives=0, decoys=500, rows=1000",
                 output,
             )
+            # All 500 decoys share one score; the entire score group fails q≤0.01.
             @test occursin(
-                "IDs at q≤0.01: targets=500, decoys=5",
+                "IDs at q≤0.01: targets=500, decoys=0",
                 output,
             )
             @test occursin(

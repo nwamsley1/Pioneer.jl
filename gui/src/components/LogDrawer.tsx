@@ -314,6 +314,39 @@ export function LogDrawer({
         )}
       </pre>
 
+      {status === 'running' && (job?.stepFailures?.length ?? 0) > 0 && (
+        <div
+          style={{
+            flex: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 9,
+            padding: '9px 18px',
+            background: 'rgba(217,119,6,0.14)',
+            borderTop: '1px solid rgba(217,119,6,0.3)',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ flex: 'none' }}>
+            <path d="M12 3l9.5 17h-19L12 3z" stroke="#FCD34D" strokeWidth="1.8" strokeLinejoin="round" />
+            <path d="M12 10v4.5M12 17.5v.5" stroke="#FCD34D" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          <span style={{ flex: 1, fontSize: 12.5, color: '#FCD34D', fontWeight: 600 }}>
+            {job!.stepFailures!.length} of {job!.stepTotal} steps failed.{' '}
+            {job!.stepFailures![job!.stepFailures!.length - 1]} Continuing with the remaining files.
+          </span>
+          {!confirmCancel && (
+            <button
+              type="button"
+              className="pio-cancel"
+              onClick={onAskCancel}
+              style={{ ...GHOST_BTN, color: '#F0A8A8', padding: '5px 12px', flex: 'none' }}
+            >
+              Stop job
+            </button>
+          )}
+        </div>
+      )}
+
       {status === 'failed' && (
         <div
           style={{

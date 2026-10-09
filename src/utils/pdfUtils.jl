@@ -51,8 +51,7 @@ end
 # Minimal multipage PDF builder. Embeds one PNG per page using /FlateDecode
 # with /Predictor 15 (PNG row predictor) — PDF readers decode this natively.
 # Output page size = image size in PDF points (1 pt per pixel, ~96 dpi).
-function write_pngs_to_pdf(png_paths::AbstractVector{String}, dest::String)
-    io = IOBuffer()
+function _write_pngs_to_pdf(io::IO, png_paths::AbstractVector{String})
     write(io, "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n")  # binary marker
     offsets = Int[]
     function emit(obj_str::AbstractString)
@@ -112,8 +111,14 @@ function write_pngs_to_pdf(png_paths::AbstractVector{String}, dest::String)
     end
     write(io, "trailer\n<< /Size $(n_objs+1) /Root 1 0 R >>\nstartxref\n$xref_offset\n%%EOF\n")
 
-    open(dest, "w") do f
-        write(f, take!(io))
+    return nothing
+end
+
+function write_pngs_to_pdf(png_paths::AbstractVector{String}, dest::String)
+    mktemp(dirname(dest)) do path, io
+        _write_pngs_to_pdf(io, png_paths)
+        close(io)
+        mv(path, dest; force=true)
     end
     return dest
 end

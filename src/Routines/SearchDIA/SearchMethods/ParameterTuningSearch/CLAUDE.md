@@ -129,4 +129,4 @@ If you find references to those in older notes/docs/PRs, they describe a previou
 
 - **`getFragTolPpm(::ParameterTuningSearchParameters)`** no longer exists. The fallback was `getInitMassTolPpm(iteration_settings)`; both removed. If you need a placeholder tolerance, use `WIDE_SCOUT_TOL_PPM` directly.
 - **The mass error model set by `initialize_models!` is a placeholder** that the wide-scout phase overwrites within the same function. Don't rely on it for downstream code.
-- **`MassErrSample` carries no rank/charge/ion-type fields.** Filtering of mass-error samples by rank/charge/y-ion happens **inside** `run_fused_masserr!` before the sample is written; downstream consumers (`fit_mass_err_model`, `fit_intensity_mass_error_model`, `extract_fragment_plot_data`, `generate_wide_scout_plot`) only need theoretical/observed/intensity.
+- **`MassErrSample` carries no rank/charge/ion-type fields.** Filtering of mass-error samples by rank/charge/y-ion happens **inside** `run_fused_masserr!` before the sample is written; downstream consumers (`fit_mass_err_model`, `fit_intensity_mass_error_model`, `extract_fragment_plot_data`) only need theoretical/observed/intensity.

@@ -66,6 +66,18 @@ pub struct ExitEvent {
     pub message: String,
 }
 
+/// One step of a multi-step job failing while the job carries on with the rest.
+#[derive(Clone, serde::Serialize)]
+pub struct StepFailedEvent {
+    pub job_id: String,
+    /// 1-based position of the failed step.
+    pub step: usize,
+    pub total: usize,
+    pub code: Option<i32>,
+    /// Human-readable, e.g. "Step 6 of 117 (run.raw) failed: exit code 1."
+    pub message: String,
+}
+
 /// Live child processes, keyed by job id.
 ///
 /// We keep only the pid and a cancel flag here — the `Child` itself is moved
@@ -142,6 +154,15 @@ pub struct Spec {
     pub threads: u32,
 }
 
+/// `JULIA_NUM_GC_THREADS` for a job: `ceil(threads / 2)` mark threads, matching the
+/// `pioneer` wrapper, and one concurrent sweep thread -- except for BuildSpecLib, which
+/// runs without it: with it, large library builds intermittently crashed (SIGSEGV) in
+/// the threaded fragment-index builder, and it gives no measurable speedup.
+pub fn gc_threads_env(command: pioneer::Command, threads: u32) -> String {
+    let sweep = if matches!(command, pioneer::Command::BuildSpecLib) { 0 } else { 1 };
+    format!("{},{}", ((threads + 1) / 2).max(1), sweep)
+}
+
 /// Where the params file for a job is written.
 ///
 /// Kept after the run rather than deleted — it is the exact input Pioneer saw,
@@ -155,6 +176,8 @@ fn params_path(job_id: &str, command: pioneer::Command) -> PathBuf {
         pioneer::Command::DownloadSpecLib => "download.json",
         pioneer::Command::ConvertRaw => "convert.json",
         pioneer::Command::ConvertMzml => "convertmzml.json",
+        pioneer::Command::ConvertBruker => "convertbruker.json",
+        pioneer::Command::ConvertSciex => "convertsciex.json",
     };
     dir.join(name)
 }
@@ -213,7 +236,7 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
         // which leaves GC threads defaulting to the full worker count.
         // Matches the `pioneer` wrapper's own formula, `(threads + 1) / 2`,
         // i.e. ceil rather than floor — so the GUI and the shell script agree.
-        let gc = format!("{},1", ((spec.threads + 1) / 2).max(1));
+        let gc = gc_threads_env(spec.command, spec.threads);
         envs.push(("JULIA_NUM_THREADS".into(), spec.threads.to_string()));
         envs.push(("JULIA_NUM_GC_THREADS".into(), gc.clone()));
         env_summary = format!(
@@ -244,6 +267,7 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
     std::thread::spawn(move || {
         let mut child = first;
         let mut index = 0usize;
+        let mut failures: Vec<String> = Vec::new();
         let event = loop {
             // Drain both pipes to completion before the next step starts, so a
             // step's output cannot interleave with the tail of the one before.
@@ -273,25 +297,44 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
 
             index += 1;
             let last = index >= steps.len();
-            // A failed step ends the job: the steps of a sequence are the same
-            // command over different files, and continuing after one has failed
-            // would bury the failure under whatever came next.
-            if was_cancelled || !st.success() || last {
-                let success = st.success() && !was_cancelled;
+            // The steps of a sequence are the same command over different files,
+            // so one failed file does not stop the others. Each failure is
+            // reported as it happens (the GUI can stop the job from there) and
+            // again in the job's final status, which is not success while any
+            // step failed.
+            if multi && !was_cancelled && !st.success() {
+                let message = step_failure_message(
+                    index,
+                    steps.len(),
+                    &steps[index - 1],
+                    st.code(),
+                    exit_signal(&st),
+                );
+                let _ = app.emit(
+                    "job-step-failed",
+                    StepFailedEvent {
+                        job_id: job_id.clone(),
+                        step: index,
+                        total: steps.len(),
+                        code: st.code(),
+                        message: message.clone(),
+                    },
+                );
+                failures.push(message);
+            }
+            if was_cancelled || (!multi && !st.success()) || last {
+                let success = st.success() && !was_cancelled && failures.is_empty();
                 let code = st.code();
                 let message = if was_cancelled {
                     "Cancelled by user.".to_string()
                 } else if success {
                     String::new()
+                } else if multi {
+                    failed_steps_summary(&failures, steps.len())
                 } else {
-                    let where_ = if multi {
-                        format!(" on step {index} of {}", steps.len())
-                    } else {
-                        String::new()
-                    };
                     match code {
-                        Some(c) => format!("Pioneer exited with code {c}{where_}."),
-                        None => format!("Pioneer was terminated by a signal{where_}."),
+                        Some(c) => format!("Pioneer exited with code {c}."),
+                        None => "Pioneer was terminated by a signal.".to_string(),
                     }
                 };
                 break ExitEvent {
@@ -330,6 +373,70 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
     });
 
     Ok(Started { params_path: params_display, env_summary })
+}
+
+/// The file a step works on, for messages: its first non-option argument.
+fn step_label(args: &[String]) -> Option<String> {
+    args.iter().find(|a| !a.starts_with('-')).map(|a| {
+        // Split on both separators rather than `Path::file_name`, which only knows
+        // the running platform's.
+        let trimmed = a.trim_end_matches(['/', '\\']);
+        trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed).to_string()
+    })
+}
+
+fn step_failure_message(
+    step: usize,
+    total: usize,
+    args: &[String],
+    code: Option<i32>,
+    signal: Option<i32>,
+) -> String {
+    let what = match step_label(args) {
+        Some(l) => format!("Step {step} of {total} ({l})"),
+        None => format!("Step {step} of {total}"),
+    };
+    match (code, signal) {
+        (Some(c), _) => format!("{what} failed with exit code {c}."),
+        // A crashing .NET or Julia process on macOS/Linux ends on a signal
+        // (SIGABRT for an unhandled exception), not an exit code.
+        (None, Some(sig)) => match signal_name(sig) {
+            Some(name) => format!("{what} crashed (signal {sig}, {name})."),
+            None => format!("{what} crashed (signal {sig})."),
+        },
+        (None, None) => format!("{what} was terminated by a signal."),
+    }
+}
+
+/// The signal that ended a process, on unix.
+fn exit_signal(st: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        st.signal()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = st;
+        None
+    }
+}
+
+fn signal_name(sig: i32) -> Option<&'static str> {
+    Some(match sig {
+        6 => "SIGABRT",
+        9 => "SIGKILL",
+        11 => "SIGSEGV",
+        15 => "SIGTERM",
+        _ => return None,
+    })
+}
+
+/// The final status of a sequence in which some steps failed: the count and the
+/// most recent failure (each one is in the log).
+fn failed_steps_summary(failures: &[String], total: usize) -> String {
+    let last = failures.last().map(String::as_str).unwrap_or("");
+    format!("{} of {total} steps failed. {last}", failures.len())
 }
 
 /// Build and spawn one step of a job.
@@ -574,6 +681,14 @@ impl LineSplitter {
 mod tests {
     use super::*;
 
+    #[test]
+    fn library_builds_run_without_the_concurrent_gc_sweep_thread() {
+        assert_eq!(gc_threads_env(pioneer::Command::BuildSpecLib, 12), "6,0");
+        assert_eq!(gc_threads_env(pioneer::Command::SearchDia, 12), "6,1");
+        assert_eq!(gc_threads_env(pioneer::Command::SearchDia, 1), "1,1");
+        assert_eq!(gc_threads_env(pioneer::Command::BuildSpecLib, 7), "4,0");
+    }
+
     /// Feed bytes through the splitter and apply the frontend's replace rule,
     /// returning what the log pane would end up showing.
     fn render(input: &[u8]) -> Vec<String> {
@@ -648,6 +763,28 @@ mod tests {
     fn multi_line_cursor_up_removes_several() {
         let input = b"a\nb\nc\n\x1b[2Ax\n";
         assert_eq!(render(input), vec!["a", "x"]);
+    }
+    #[test]
+    fn step_failure_names_the_file() {
+        let args: Vec<String> = [r"D:\data\run6.raw", "--output-dir", "out", "--skip-existing"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(step_label(&args).as_deref(), Some("run6.raw"));
+        assert_eq!(
+            step_failure_message(6, 117, &args, Some(-532462766), None),
+            "Step 6 of 117 (run6.raw) failed with exit code -532462766."
+        );
+        assert_eq!(
+            step_failure_message(2, 3, &args, None, Some(6)),
+            "Step 2 of 3 (run6.raw) crashed (signal 6, SIGABRT)."
+        );
+        assert_eq!(step_failure_message(2, 3, &[], None, None), "Step 2 of 3 was terminated by a signal.");
+    }
+
+    #[test]
+    fn failed_steps_summary_gives_count_and_latest() {
+        let f: Vec<String> = (1..=7).map(|i| format!("Step {i} failed.")).collect();
+        assert_eq!(failed_steps_summary(&f[..1], 117), "1 of 117 steps failed. Step 1 failed.");
+        assert_eq!(failed_steps_summary(&f, 117), "7 of 117 steps failed. Step 7 failed.");
     }
 }
 

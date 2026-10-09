@@ -22,15 +22,19 @@ function build_rt_indices!(
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
     rt_indices_folder = joinpath(temp_folder, "rt_indices")
     mkpath(rt_indices_folder)
+    # Per-precursor max weight for the chromatogram right-tail extension, collected here
+    # because this loop already reads every final passing-PSM table.
+    max_weight = init_precursor_max_weight!(search_context)
 
     for (file_idx, ref) in zip(valid_file_indices, passing_refs)
         t_file_start = time()
 
         # Read passing PSMs — these ARE the precursors for this file's RT index
-        tbl = Arrow.Table(file_path(ref))
-        pids = tbl[:precursor_idx]
-        rts = tbl[:rt]
+        tbl = load_staged_psms(file_path(ref), [:precursor_idx, :rt, :weight])
+        pids = tbl.precursor_idx
+        rts = tbl.rt
         n_precs = length(pids)
+        hasproperty(tbl, :weight) && accumulate_max_weight!(max_weight, pids, tbl.weight)
 
         # Build RT index from passing precursors using empirical RT (not iRT)
         out_rts = Vector{Float32}(undef, n_precs)

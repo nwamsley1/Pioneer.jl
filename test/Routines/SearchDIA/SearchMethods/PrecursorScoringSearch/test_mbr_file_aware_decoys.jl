@@ -19,6 +19,7 @@ function _test_integrated_mbr_donor(
         -1.0f0,
         0.0f0,
         irt,
+        0.0f0,          # im_obs: no ion-mobility data
         5.0f0,
         spectrum,
         UInt8(0x03),
@@ -346,6 +347,7 @@ end
         -1.0f0,
         10.0f0,
         10.0f0,
+        0.0f0,          # receiver_im: no ion-mobility data
         5.0f0,
         spectrum,
         temporal_trace,
@@ -359,8 +361,10 @@ end
     )
 
     @test length(values) == length(Pioneer.MBR_PAIRED_FEATURE_STEMS)
-    @test values[19] == 1.0f0
-    @test values[20] == donor.trace_prob
+    # look features up by name: positions shift whenever a paired feature is added (e.g. the observed-IM diffs)
+    feat(stem) = values[findfirst(==(stem), Pioneer.MBR_PAIRED_FEATURE_STEMS)]
+    @test feat("MBR_single_donor") == 1.0f0
+    @test feat("MBR_best_hellinger_source_prob") == donor.trace_prob
 end
 
 @testset "paired post-integration MBR model produces OOF transfer scores" begin
@@ -413,6 +417,8 @@ end
         end
     end
 
+    candidate_rows = (n_baseline + 1):n
+    candidates = frame[candidate_rows, :]
     summary = Pioneer.apply_postintegration_mbr_rescoring!(
         frame;
         alpha = 0.01f0,
@@ -423,6 +429,16 @@ end
     @test all(frame.MBR_transfer_candidate[candidate_rows])
     @test all(isfinite, frame.ftr_qval_true[candidate_rows])
     @test all(isfinite, frame.ftr_pep_true[candidate_rows])
+    candidate_summary = Pioneer.apply_postintegration_mbr_rescoring!(
+        candidates; alpha=0.01f0, q_value_threshold=0.01f0,
+        baseline_counts=(n_baseline, 0), frame_is_candidates=true,
+    )
+    @test isequal(candidate_summary, summary)
+    for column in (:mbr_recovered, :mbr_target_decoy_prob, :ftr_qval_true,
+                   :ftr_pep_true, :mbr_counterfactual_decoy_prob,
+                   :mbr_counterfactual_decoy_index)
+        @test isequal(candidates[!, column], frame[candidate_rows, column])
+    end
 end
 
 @testset "hardest MBR counterfactual control retains score and block index" begin
@@ -484,10 +500,7 @@ end
 end
 
 @testset "MBR row gather matches the block-stacked matrix" begin
-    # `_mbr_feature_matrix` used to build the whole (1 + NCF) * n_candidates x n_features expansion,
-    # but it was only ever consumed as x[train_rows, :] / x[test_rows, :]. `_mbr_gather_feature_rows`
-    # produces those subsets directly, so it must agree with the full matrix exactly -- including the
-    # missing -> 0.0f0 convention and the global row numbering.
+    # Independent dense reference checks block ordering and missing-to-zero conversion.
     ncf = Pioneer.MBR_N_COUNTERFACTUALS
     n_candidates = 37
     n_features = 4
@@ -502,7 +515,8 @@ end
             df[!, false_features[k][j]] = col
         end
     end
-    x = Pioneer._mbr_feature_matrix(df, true_features, false_features)
+    x = vcat((Float32.(coalesce.(Matrix(df[:, cols]), 0))
+              for cols in vcat([true_features], false_features) )...)
     n_rows = (1 + ncf) * n_candidates
     @test size(x) == (n_rows, n_features)
     @test Pioneer._mbr_gather_feature_rows(

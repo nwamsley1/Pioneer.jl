@@ -45,11 +45,8 @@ and emit a one-line @user_info summary with target counts at q≤.001, q≤.01,
 PEP≤.01, PEP≤.05. **Diagnostic only** — purely transparent (no mutation of
 best_psms columns).
 
-Gated on `DEBUG_CONSOLE_LEVEL[] >= 1` because the q-value + PEP calculation
-underneath (two sorts of up to ~3.98M rows each, called 3× per file) is
-non-trivial — ~0.6 s/file × 8 files = ~5 s on Astral. The default debug
-level is 0, so this is a no-op in production. Set
-`logging.debug_console_level: 1` in the config to re-enable.
+Gated on `DEBUG_CONSOLE_LEVEL[] >= 1`. Q-values and PEPs share one score
+ordering; the default debug level is 0, so diagnostics add no scoring work.
 """
 function _summarize_psm_counts(best_psms::DataFrame, stage_label::AbstractString,
                                 ms_file_idx::Integer, file_name::AbstractString)
@@ -61,9 +58,8 @@ function _summarize_psm_counts(best_psms::DataFrame, stage_label::AbstractString
     probs = Float32.(best_psms[!, :lgbm_prob])
     is_t  = Vector{Bool}(best_psms[!, :target])
     qv = zeros(Float32, length(probs))
-    get_qvalues!(probs, is_t, qv; doSort=true, fdr_scale_factor=1.0f0)
     peps = Vector{Float32}(undef, length(probs))
-    get_PEP!(probs, is_t, peps; doSort=true, fdr_scale_factor=1.0f0)
+    get_score_statistics!(probs, is_t, qv, peps; fdr_scale_factor=1.0f0)
     n_t_q001  = count((qv .<= 0.001f0) .& is_t)
     n_t_q01   = count((qv .<= 0.01f0)  .& is_t)
     n_t_pep01 = count((peps .<= 0.01f0) .& is_t)
@@ -99,16 +95,16 @@ end
 """
 Results container for main search.
 
-`lgbm_buffers` holds the reusable backing stores for the per-file LightGBM
-feature matrices. The file loop in `execute_search` is sequential, so one buffer
-set serves every file — the matrices are population-scaled (hundreds of MB per
-file), so allocating them per file is churn that grows with file count. Living
-here scopes them to MainSearch: they are released with the results container
-instead of being retained through the later search phases.
+`lgbm_buffers` and `sortperm_workspace` hold reusable backing stores for the
+per-file LightGBM feature matrices and parallel permutations. The file loop in
+`execute_search` is sequential, so one buffer set serves every file. Living here
+scopes the large arrays to MainSearch instead of retaining them through later
+search phases.
 """
 struct MainSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}
     lgbm_buffers::LGBMMatrixBuffers
+    sortperm_workspace::Int32SortPermWorkspace
 end
 
 #==========================================================
@@ -139,7 +135,8 @@ function init_search_results(::MainSearch, params::P, search_context::SearchCont
 
     return MainSearchResults(
         DataFrame(),
-        LGBMMatrixBuffers()
+        LGBMMatrixBuffers(),
+        Int32SortPermWorkspace(),
     )
 end
 
@@ -153,7 +150,11 @@ Core Processing Methods
 `dst[i] = src[perm[i]]` for a concretely-typed column. Separate method so the loop specialises on the
 column's element type rather than the `AbstractVector` that `eachcol` statically yields.
 """
-@noinline function _gather_into!(dst::Vector{T}, src::Vector{T}, perm::Vector{Int}) where {T}
+@noinline function _gather_into!(
+    dst::Vector{T},
+    src::Vector{T},
+    perm::AbstractVector{<:Integer},
+) where {T}
     @inbounds for i in eachindex(perm)
         dst[i] = src[perm[i]]
     end
@@ -161,7 +162,7 @@ column's element type rather than the `AbstractVector` that `eachcol` statically
 end
 
 """
-    permute_psms_by_precursor_idx!(psms::DataFrame) -> DataFrame
+    permute_psms_by_precursor_idx!(psms, sortperm_workspace) -> DataFrame
 
 Sort `psms` in place by `:precursor_idx` with a hand-rolled column-wise gather. Much faster than
 `DataFrames.sort!(psms, :precursor_idx)` on the post-deconv DataFrame shape (~14M rows × 27 cols),
@@ -172,14 +173,20 @@ Each isbits column is gathered through a single shared byte buffer rather than l
 both necessary and safe for peak memory.
 
 Establishes the sorted-by-precursor invariant that downstream passes
-(`_build_precursor_groups`, feature passes, `select_best_per_precursor!`)
+(`_build_precursor_groups`, feature passes, `select_best_per_precursor`)
 can take advantage of to skip their own sortperm.
 """
 
-function permute_psms_by_precursor_idx!(psms::DataFrame)
+function permute_psms_by_precursor_idx!(
+    psms::DataFrame,
+    sortperm_workspace::Int32SortPermWorkspace,
+)
     n = nrow(psms)
     n == 0 && return psms
-    perm = sortperm(psms[!, :precursor_idx]::Vector{UInt32})
+    perm = parallel_sortperm_int32!(
+        sortperm_workspace,
+        psms[!, :precursor_idx]::Vector{UInt32},
+    )
     # NOT `Base.permute!`. Its docstring contract changed: it no longer destroys the permutation
     # argument (nor does `permute!!`) -- it allocates a *data*-sized temporary instead, measured at
     # exactly `sizeof(col)` per call. So the old code's defensive `copyto!(p_scratch, perm)` guarded a
@@ -280,6 +287,9 @@ function process_file!(
     file_name = getParsedFileName(search_context, ms_file_idx)
 
     psms = @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
+    # Scanning-quad (ZT): library_search already ran the two per-scan passes below on each chunk's
+    # raw per-bin rows, then collapsed them to meta-PSMs (ZT/chunked_main_search.jl).
+    zt_collapsed = zt_collapsed_in_search(getZTGeometry(search_context, ms_file_idx))
     t_lib_search = time() - t_file_start
 
     # IMPORTANT: the next two steps depend on the deconv output being
@@ -295,7 +305,8 @@ function process_file!(
     # contiguous-by-scan invariant: linear sweep for run boundaries
     # + threaded per-run rank/ratio. ~4× faster than the previous
     # Dict-based version (measured 2026-05-19).
-    t_scan_comp = @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(psms)
+    t_scan_comp = zt_collapsed ? 0.0 :
+        @elapsed @alloc_bucket "scan_competition_features" add_scan_competition_features!(psms)
 
     # MS1 lookup features (ms1_m0_intensity, ms1_m1_intensity,
     # ms1_m0_mass_err_ppm, ms1_m1_to_m0_ratio, ms1_m1_to_m0_pred). Done
@@ -305,7 +316,8 @@ function process_file!(
     # precursor-sorted input. The per-precursor chromatogram-feature passes
     # (ms1_corr_*, frag_*) run later in process_search_results! after the
     # precursor sort, since they group by :precursor_idx.
-    t_ms1 = @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
+    t_ms1 = zt_collapsed ? 0.0 :
+        @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
 
     # Sort the deconv-output DataFrame by :precursor_idx once. Downstream
     # passes (chrom features, best-per-precursor) can then fast-path their
@@ -313,7 +325,10 @@ function process_file!(
     # for any per-precursor parallelism. We use a hand-rolled in-place
     # column permute rather than `sort!(df, :col)` because DataFrames.sort!
     # is ~4× slower on this shape (measured 2026-05-19).
-    t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(psms)
+    t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(
+        psms,
+        results.sortperm_workspace,
+    )
 
     results.psms[] = psms
 
@@ -329,21 +344,26 @@ function process_file!(
 end
 
 """
-Per-file scoring: compute prescore features, train LightGBM, select best scan per precursor.
+    _mainsearch_best_in_memory!(results, params, search_context, ms_file_idx, spectra,
+                                center_mzs, isolation_widths, bitvec_rank_table)
+
+First half of per-file scoring with the whole post-deconvolution table in memory: prescore
+features, LightGBM, iRT refinement, best scan per precursor. Returns the best-per-precursor table
+and what the second half needs from the full table, or `nothing` when there are no PSMs.
 """
-function process_search_results!(
+function _mainsearch_best_in_memory!(
     results::MainSearchResults,
     params::P,
     search_context::SearchContext,
     ms_file_idx::Int64,
-    spectra::MassSpecData
+    spectra::MassSpecData,
+    center_mzs,
+    isolation_widths,
+    bitvec_rank_table,
 ) where {P<:MainSearchParameters}
 
-    t_start = time()
     psms = results.psms[]
     file_name = getParsedFileName(search_context, ms_file_idx)
-    center_mzs = getCenterMzs(spectra)
-    isolation_widths = getIsolationWidthMzs(spectra)
 
     # Compute prescore features
     t_prepare = @elapsed @alloc_bucket "prepare_psm_features" prepare_psm_features!(psms, params, search_context, ms_file_idx, spectra)
@@ -377,27 +397,24 @@ function process_search_results!(
     # MS1 spectrum lookup moved upstream to process_file! (before precursor
     # sort) so the per-chunk MS1 cache exploits contiguous-by-scan input.
     # Only the precursor/window chromatogram features still run here.
-    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
     t_ms1 = @elapsed @alloc_bucket "chromatogram_features" add_chromatogram_features!(
         psms,
         spectra;
         bitvec_rank_table = bitvec_rank_table,
     )
 
-    # Train LightGBM on ALL PSMs, select best scan per precursor
+    # Train LightGBM on all PSMs and select the narrow set of representatives
+    # needed to fit the out-of-fold iRT correction.
     n_total_psms = nrow(psms)
     _log_psm_table_footprint(psms, "full pre-reduction (after all feature passes)", ms_file_idx)
     Pioneer.DIAG_DUMP_FILE_IDX[] = 0
     t_lgbm_start = time()
-    best_psms, scores, lgbm_timings, lgbm_predictor =
-        @alloc_bucket "train_lgbm_and_select_best" train_lgbm_and_select_best(
-            psms;
-            center_mzs = center_mzs,
-            isolation_widths = isolation_widths,
-            buffers = results.lgbm_buffers,
+    refinement_psms, lgbm_timings, lgbm_predictor =
+        @alloc_bucket "train_lgbm_for_irt_refinement" train_lgbm_for_irt_refinement(
+            psms,
+            results.lgbm_buffers;
+            features = model_features(PRESCORE_FEATURES, has_ion_mobility(search_context)),
         )
-    best_psms[!, :lgbm_prob] = scores
-    _summarize_psm_counts(best_psms, "after best-per-precursor", ms_file_idx, file_name)
     t_lgbm_end = time()
 
     # Refine predicted iRTs with out-of-fold correction models. The correction
@@ -409,25 +426,84 @@ function process_search_results!(
         q_value_threshold = PRESCORE_QVALUE_THRESHOLD,
         min_precursors = MAIN_IRT_REFINEMENT_MIN_PRECURSORS,
     )
-    irt_refinement_result = refine_mainsearch_irt_predictions!(psms, best_psms, scores, irt_refinement)
+    irt_refinement_result = refine_mainsearch_irt_predictions!(
+        psms,
+        refinement_psms,
+        irt_refinement,
+    )
     if irt_refinement_result.refined
-        best_psms, scores, reapply_timings = reapply_psm_classifier_and_select_best!(
+        best_psms, reapply_timings = reapply_psm_classifier_and_select_best!(
             psms,
             lgbm_predictor;
             center_mzs = center_mzs,
             isolation_widths = isolation_widths,
             buffers = results.lgbm_buffers,
         )
-        best_psms[!, :lgbm_prob] = scores
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): " *
                    "$(length(irt_refinement_result.training_target_precursors)) training precursors; " *
                    "reapply predict=$(round(reapply_timings.predict, digits=2))s best=$(round(reapply_timings.best, digits=2))s"
-        _summarize_psm_counts(best_psms, "after refined-iRT reapply", ms_file_idx, file_name)
     else
+        # The lightweight first reduction omits final shape columns. If there
+        # is not enough evidence to fit an iRT correction, materialize the full
+        # result using the original classifier scores.
+        best_psms = select_best_per_precursor(
+            psms;
+            center_mzs = center_mzs,
+            isolation_widths = isolation_widths,
+        )
         @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, $file_name): skipped " *
                    "($(length(irt_refinement_result.training_target_precursors)) " *
                    "high-confidence target precursors; need $(irt_refinement.min_precursors))"
     end
+    best_psms[!, :lgbm_prob] = copy(best_psms[!, :lgbm_score])
+
+    return (
+        best_psms = best_psms,
+        # every meta-PSM's final score and label (the global PEP), and the rows the trace
+        # features read: here the whole in-memory table
+        all_scores = psms[!, :lgbm_score],
+        all_targets = psms[!, :target],
+        trace_input = (best, mask, peps) -> (psms, mask, peps),
+        cleanup = () -> nothing,
+        n_total_psms = n_total_psms,
+        timings = (prepare = t_prepare, competition = t_competition, apex = t_apex, ms1 = t_ms1,
+                   lgbm_start = t_lgbm_start, lgbm_end = t_lgbm_end, lgbm = lgbm_timings),
+    )
+end
+
+"""
+Per-file scoring: compute prescore features, train LightGBM, select best scan per precursor.
+"""
+function process_search_results!(
+    results::MainSearchResults,
+    params::P,
+    search_context::SearchContext,
+    ms_file_idx::Int64,
+    spectra::MassSpecData
+) where {P<:MainSearchParameters}
+
+    t_start = time()
+    file_name = getParsedFileName(search_context, ms_file_idx)
+    center_mzs = getCenterMzs(spectra)
+    isolation_widths = getIsolationWidthMzs(spectra)
+    bitvec_rank_table = getBitVecExcessRanks(search_context, Int64(ms_file_idx))
+
+    # Scanning-quad files searched in more than one chunk keep their meta-PSMs on disk, merged into
+    # precursor-complete files, and are scored file by file (ZT/partitioned_scoring.jl).
+    zt_parts = getZTPsmPartitions(search_context, ms_file_idx)
+    stage = zt_parts === nothing ?
+        _mainsearch_best_in_memory!(results, params, search_context, ms_file_idx, spectra,
+                                    center_mzs, isolation_widths, bitvec_rank_table) :
+        zt_mainsearch_best_partitioned!(zt_parts, results, params, search_context, ms_file_idx,
+                                        spectra, center_mzs, isolation_widths, bitvec_rank_table)
+    stage === nothing && return nothing
+    best_psms = stage.best_psms
+    n_total_psms = stage.n_total_psms
+    t_prepare = stage.timings.prepare; t_competition = stage.timings.competition
+    t_apex = stage.timings.apex; t_ms1 = stage.timings.ms1
+    t_lgbm_start = stage.timings.lgbm_start; t_lgbm_end = stage.timings.lgbm_end
+    lgbm_timings = stage.timings.lgbm
+    precursors = getPrecursors(getSpecLib(search_context))
 
     _summarize_psm_counts(best_psms, "before PEP filter", ms_file_idx, file_name)
     t_pep_start = time()
@@ -444,7 +520,12 @@ function process_search_results!(
         probs_filt = Float32.(best_psms[!, :lgbm_prob])
         is_t_filt  = Vector{Bool}(best_psms[!, :target])
         peps_filt  = Vector{Float32}(undef, length(probs_filt))
-        get_PEP!(probs_filt, is_t_filt, peps_filt; doSort=true, fdr_scale_factor=1.0f0)
+        pep_order = parallel_sortperm_int32!(
+            results.sortperm_workspace,
+            probs_filt;
+            rev = true,
+        )
+        _get_PEP_from_order!(probs_filt, is_t_filt, peps_filt, pep_order, 1.0f0)
         keep = peps_filt .<= pep_filter_thr
         n_before_pep = nrow(best_psms)
         n_drop_t = count(.!keep .& is_t_filt)
@@ -469,11 +550,43 @@ function process_search_results!(
     new_rt_model = getRtIrtModel(search_context, ms_file_idx)
     best_psms[!, :irt_obs] .= new_rt_model.(best_psms[!, :rt])
     best_psms[!, :irt_error] .= abs.(best_psms[!, :irt_obs] .- best_psms[!, :irt_pred])
+
+    # Ion-mobility calibration (packet data): the z2 library 1/K0 vs packet IM scan line,
+    # refit from high-confidence PSMs or else the file's tuning / median line; writes the
+    # signed :im_error (z2 sigma units) for every row, zeros when there is no line.
+    im_fallback = get(getImModel(search_context, ms_file_idx), 2, nothing)
+    im_qc = Ref((0, false))
+    im_models = add_im_error!(best_psms, best_psms[!, :lgbm_prob], spectra,
+                              getPrecursors(getSpecLib(search_context)), ms_file_idx;
+                              fallback = im_fallback, qc = im_qc)
+    setImModel!(search_context, ms_file_idx, im_models)
+    # Calibration QC and bounded plots (first files plus suspicious ones), as for the other stages.
+    if getImScans(spectra) !== nothing && getInvIonMobility(getPrecursors(getSpecLib(search_context))) !== nothing
+        n_calib, own_line = im_qc[]
+        record_calibration_qc!(search_context.calibration_qc, :ion_mobility, ms_file_idx,
+            assess_calibration_qc(:ion_mobility, n_calib, (NaN, NaN, NaN, NaN);
+                min_support = 100, fallback = !own_line, failed = isempty(im_models)))
+        if select_calibration_plot!(search_context.calibration_qc, :ion_mobility, ms_file_idx)
+            if isempty(im_models)
+                calibration_notice!(search_context, :ion_mobility, ms_file_idx)
+            else
+                render_calibration_safely(search_context, :ion_mobility, ms_file_idx) do
+                    fname = calibration_qc_title(search_context, :ion_mobility, ms_file_idx,
+                        getParsedFileName(search_context, ms_file_idx))
+                    for page in plot_im_calibration(best_psms, best_psms[!, :lgbm_prob], spectra,
+                                                    getPrecursors(getSpecLib(search_context)), im_models, fname)
+                        write_calibration_page!(search_context, :ion_mobility, page)
+                    end
+                end
+            end
+        end
+    end
     t_recal = time()
 
     trace_peps, trace_pass_mask = _mainsearch_peps_and_pass_mask(
-        psms[!, :lgbm_score],
-        psms[!, :target],
+        stage.all_scores,
+        stage.all_targets,
+        results.sortperm_workspace,
     )
     @alloc_bucket "precursor_fraction_transmitted" add_precursor_fraction_transmitted!(
         best_psms,
@@ -489,15 +602,17 @@ function process_search_results!(
     # Filter by precursor_fraction_transmitted
     to_remove = findall(best_psms[!, :precursor_fraction_transmitted] .< params.min_fraction_transmitted)
     deleteat!(best_psms, to_remove)
+    trace_psms, trace_mask, trace_pep_values = stage.trace_input(best_psms, trace_pass_mask, trace_peps)
     @alloc_bucket "trace_and_fragment_features" add_trace_and_fragment_features!(
         best_psms,
-        psms,
-        trace_pass_mask;
+        trace_psms,
+        trace_mask;
         bitvec_rank_table = bitvec_rank_table,
         center_mzs = center_mzs,
         isolation_widths = isolation_widths,
-        pep_values = trace_peps,
+        pep_values = trace_pep_values,
     )
+    trace_psms = nothing; stage.cleanup()
     best_psms[!, :ms_file_idx] .= UInt32(ms_file_idx)
     t_phase2 = time()
 
@@ -606,6 +721,10 @@ function summarize_results!(
     precursors = getPrecursors(getSpecLib(search_context))
     lib_irt = getIrt(precursors)
 
+    # Ion-mobility calibration QC (packet data only): the selected files' pages as one PDF.
+    finish_calibration_report!(search_context, :ion_mobility,
+        joinpath(getDataOutDir(search_context), "qc_plots", "ion_mobility_model", "ion_mobility_plots.pdf"))
+
     # Step 1: Per-fold global prescore aggregation → RT-binned tolerance only.
     # No PSM filter is applied here; the per-file PEP filter upstream already
     # gates what reaches ScoringSearch.
@@ -651,11 +770,10 @@ function summarize_results!(
                 continue
             end
 
-            # Load this fold's main search PSMs into in-memory DataFrame
-            # (Tables.columntable + DataFrame materializes columns off the
-            # Arrow mmap so the subsequent in-place writeArrow is safe on
-            # Windows — same pattern as ArrowOperations.jl:68).
-            tbl = DataFrame(Tables.columntable(Arrow.Table(psm_path)))
+            # Load this fold's main search PSMs into an in-memory DataFrame and
+            # unmap the file, so the in-place writeArrow below can replace it
+            # (on a network share a still-mapped file cannot be deleted).
+            tbl = load_arrow_dataframe(psm_path)
             n_before = nrow(tbl)
             n_before_file += n_before
             n_total_precs += n_before

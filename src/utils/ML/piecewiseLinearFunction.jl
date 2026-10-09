@@ -19,102 +19,6 @@ function PiecewiseNceModel(x::T) where {T<:AbstractFloat}
     PiecewiseNceModel(zero(T), one(T), zero(T), x, zero(T))
 end
 
-"""
-   fit_nce_model(pwlm::PiecewiseNceModel{T}, x::AbstractVector, y::AbstractVector, 
-                charge::AbstractVector, breakpoint::Real) where {T<:AbstractFloat}
-
-Fit a piecewise model with charge dependence to normalized collision energy data, ensuring continuity at the breakpoint.
-
-# Arguments
-- `pwlm::PiecewiseNceModel{T}`: Template for the model type to fit
-- `x::AbstractVector`: Mass-to-charge ratio values
-- `y::AbstractVector`: Observed collision energy values
-- `charge::AbstractVector`: Charge states
-- `breakpoint::Real`: Point where model transitions from linear to constant behavior
-
-# Returns
-- `PiecewiseNceModel{T}`: Fitted model with parameters:
-   - left_slope: Slope of linear region (x ≤ breakpoint)
-   - left_intercept: Intercept of linear region
-   - right_value: Constant value for x > breakpoint (= left_slope * breakpoint + left_intercept)
-   - charge_slope: Linear charge dependence coefficient
-
-# Model
-For mass-to-charge ratio x and charge state z:
-- When x ≤ breakpoint: f(x,z) = left_slope * x + left_intercept + charge_slope * z
-- When x > breakpoint: f(x,z) = right_value + charge_slope * z
-
-The model is fit by minimizing the sum of squared residuals while maintaining continuity 
-at the breakpoint through the constraint: right_value = left_slope * breakpoint + left_intercept.
-
-# Notes
-- Initial parameter estimates are obtained using linear regression on the left region
-- Optimization is performed using the LBFGS algorithm
-- Charge dependence is linear and consistent across both regions
-- Continuity at breakpoint is enforced by construction
-
-See also: [`PiecewiseNceModel`](@ref)
-"""
-function fit_nce_model(
-    pwlm::PiecewiseNceModel{T},
-    x::AbstractVector,
-    y::AbstractVector,
-    charge::AbstractVector,
-    breakpoint::Real
-) where {T<:AbstractFloat}
-    # Define the objective function to minimize sum of squared residuals
-    function objective(params)
-        # params[1] = left_slope
-        # params[2] = left_intercept
-        # params[3] = charge_slope
-        
-        # Calculate the right_value from continuity constraint
-        right_value = params[1] * breakpoint + params[2]
-        
-        # Calculate residuals for left side
-        left_mask = x .<= breakpoint
-        y_pred_left = params[1] .* x[left_mask] .+
-                     params[3] .* charge[left_mask] .+
-                     params[2]
-        residuals_left = y_pred_left .- y[left_mask]
-        
-        # Calculate residuals for right side
-        right_mask = x .> breakpoint
-        y_pred_right = fill(right_value, sum(right_mask)) .+
-                     params[3] .* charge[right_mask]
-        residuals_right = y_pred_right .- y[right_mask]
-        
-        # Total sum of squared residuals
-        return sum(residuals_left.^2) + sum(residuals_right.^2)
-    end
-    
-    # Initial guess using simple linear regression
-    left_mask = x .<= breakpoint
-    X_left = [ones(sum(left_mask)) x[left_mask] charge[left_mask]]
-    initial_coef = X_left \ y[left_mask]
-    
-    initial_guess = [
-        initial_coef[2],  # left_slope
-        initial_coef[1],  # left_intercept
-        initial_coef[3]   # charge_slope
-    ]
-    
-    # Optimize
-    result = optimize(objective, initial_guess, LBFGS())
-    optimal_params = Optim.minimizer(result)
-    
-    # Calculate right_value using continuity constraint
-    right_value = optimal_params[1] * breakpoint + optimal_params[2]
-    
-    return PiecewiseNceModel(
-        T(float(breakpoint)),
-        T(optimal_params[1]),  # left_slope
-        T(optimal_params[2]),  # left_intercept
-        T(right_value),        # right_value from continuity
-        T(optimal_params[3])   # charge_slope
-    )
-end
- 
 function (f::PiecewiseNceModel)()
     return f.right_value
 end
@@ -126,6 +30,18 @@ else
     f.right_value
 end
 return base + f.charge_slope * charge
+end
+
+function prepare_fragment_intensity_model(
+        lookup::SplineFragmentLookup, model::PiecewiseNceModel)
+    # PiecewiseNceModel(nce) is the constant model used for the NCE sweep and
+    # as the pre-calibration default. All precursor m/z values are positive.
+    if model.breakpoint == zero(model.breakpoint) &&
+            model.charge_slope == zero(model.charge_slope)
+        return ConstantSplineIntensityModel(
+            prepare_spline_fractions(model.right_value, getKnots(lookup)))
+    end
+    return DynamicSplineIntensityModel(model, getKnots(lookup))
 end
  
  # Add method for vectors
@@ -151,7 +67,8 @@ struct BinnedMedianNceModel{T<:AbstractFloat} <: NceModel{T}
     default_nce::T
 end
 
-function (m::BinnedMedianNceModel{T})(mz::AbstractFloat, charge::Integer) where {T}
+@inline function nce_cache_slot(
+        m::BinnedMedianNceModel{T}, mz::AbstractFloat, charge::Integer) where {T}
     c = Int(charge)
     if c < 1 || c > 6 || m.offsets[c] == 0x00
         best_c = 0
@@ -164,18 +81,107 @@ function (m::BinnedMedianNceModel{T})(mz::AbstractFloat, charge::Integer) where 
                 best_c = k
             end
         end
-        best_c == 0 && return m.default_nce
+        best_c == 0 && return 0
         c = best_c
     end
     nb = Int(m.n_bins[c])
     idx = clamp(floor(Int, (T(mz) - m.mz_min[c]) / m.bin_width[c]) + 1, 1, nb)
-    return m.medians[Int(m.offsets[c]) + idx - 1]
+    return Int(m.offsets[c]) + idx - 1
+end
+
+function (m::BinnedMedianNceModel{T})(mz::AbstractFloat, charge::Integer) where {T}
+    slot = nce_cache_slot(m, mz, charge)
+    return slot == 0 ? m.default_nce : @inbounds(m.medians[slot])
 end
 
 (m::BinnedMedianNceModel)() = m.default_nce
 
+function prepare_fragment_intensity_model(
+        lookup::SplineFragmentLookup, model::BinnedMedianNceModel)
+    knots = getKnots(lookup)
+    data = [prepare_spline_fractions(nce, knots) for nce in model.medians]
+    default_data = prepare_spline_fractions(model.default_nce, knots)
+    return BinnedSplineIntensityModel(model, data, default_data)
+end
+
 function (m::BinnedMedianNceModel)(x::AbstractVector, charge::AbstractVector)
     return map((xi, ci) -> m(xi, ci), x, charge)
+end
+
+# Three-argument form: the scan's collision energy (eV). Models that key on
+# precursor m/z ignore it.
+(m::NceModel)(mz::AbstractFloat, charge::Integer, ::AbstractFloat) = m(mz, charge)
+@inline nce_cache_slot(m::BinnedMedianNceModel, mz::AbstractFloat, charge::Integer, ::AbstractFloat) =
+    nce_cache_slot(m, mz, charge)
+
+# ============================================================================
+# Collision-energy-keyed NCE model (timsTOF packets)
+# ============================================================================
+#
+# On a timsTOF the collision energy is an eV ramp along the ion-mobility scan, so
+# every scan (packet) has its own energy and precursors in the same m/z window are
+# fragmented at different energies. Expressed on Thermo's NCE scale,
+#     nominal_nce = eV * 500 / (mz * f(z)),   f = 1.0, 0.9, 0.85, 0.8 for z = 1..4,
+# the best Altimeter NCE tracks nominal NCE monotonically (E. coli diaPASEF: ~2 NCE
+# units below it for 2+ and 3+). This model bins the tuning precursors by
+# (nominal NCE, charge) and takes medians — the same machinery as
+# `BinnedMedianNceModel`, with nominal NCE in place of precursor m/z as the bin axis.
+"""
+    CeBinnedNceModel{T}
+
+Binned-median NCE model keyed on the scan's collision energy. `inner` is a
+`BinnedMedianNceModel` fitted with nominal NCE as its x axis (its `mz_min` /
+`bin_width` fields hold nominal-NCE bin edges). Evaluated as
+`model(prec_mz, charge, scan_ev)`; a scan without a collision energy (`scan_ev <= 0`)
+gets `default_nce`.
+"""
+struct CeBinnedNceModel{T<:AbstractFloat} <: NceModel{T}
+    inner::BinnedMedianNceModel{T}
+end
+
+# Thermo HCD charge-state correction factors: absolute eV = NCE * (mz / 500) * f(z).
+@inline nce_charge_factor(z::Integer) = z <= 1 ? 1.0f0 : z == 2 ? 0.9f0 : z == 3 ? 0.85f0 : 0.8f0
+@inline nominal_nce(ev::AbstractFloat, mz::AbstractFloat, charge::Integer) =
+    Float32(ev) * 500f0 / (Float32(mz) * nce_charge_factor(charge))
+
+@inline function nce_cache_slot(m::CeBinnedNceModel, mz::AbstractFloat, charge::Integer, ev::AbstractFloat)
+    ev > zero(ev) || return 0
+    return nce_cache_slot(m.inner, nominal_nce(ev, mz, charge), charge)
+end
+
+function (m::CeBinnedNceModel{T})(mz::AbstractFloat, charge::Integer, ev::AbstractFloat) where {T}
+    slot = nce_cache_slot(m, mz, charge, ev)
+    return slot == 0 ? m.inner.default_nce : @inbounds(m.inner.medians[slot])
+end
+(m::CeBinnedNceModel)(::AbstractFloat, ::Integer) = m.inner.default_nce   # no scan energy available
+(m::CeBinnedNceModel)() = m.inner.default_nce
+(m::CeBinnedNceModel)(x::AbstractVector, charge::AbstractVector) = map((xi, ci) -> m(xi, ci), x, charge)
+
+function prepare_fragment_intensity_model(
+        lookup::SplineFragmentLookup, model::CeBinnedNceModel)
+    knots = getKnots(lookup)
+    data = [prepare_spline_fractions(nce, knots) for nce in model.inner.medians]
+    default_data = prepare_spline_fractions(model.inner.default_nce, knots)
+    return BinnedSplineIntensityModel(model, data, default_data)
+end
+
+"""
+    fit_ce_binned_median_nce(ev, mz, nce, charge, default_nce; min_per_bin=50)
+
+Fit a `CeBinnedNceModel`: per charge, equal-width bins over the precursors' nominal
+NCE (from each precursor's scan eV, m/z and charge) with at least `min_per_bin`
+precursors each, taking the median best NCE per bin.
+"""
+function fit_ce_binned_median_nce(
+    ev::AbstractVector,
+    mz::AbstractVector{T},
+    nce::AbstractVector{T},
+    charge::AbstractVector,
+    default_nce::T;
+    min_per_bin::Int = 50
+) where {T<:AbstractFloat}
+    nominal = T[nominal_nce(ev[i], mz[i], charge[i]) for i in eachindex(ev)]
+    return CeBinnedNceModel{T}(fit_binned_median_nce(nominal, nce, charge, default_nce; min_per_bin = min_per_bin))
 end
 
 function fit_binned_median_nce(

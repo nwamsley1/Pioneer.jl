@@ -35,6 +35,20 @@ function maybe_run(f, name)
     end
 end
 
+# A search that runs to the end without identifying anything compiles only its first stages: every later
+# stage runs on empty tables. That is a failure here, not a success. Totals, not per run: the yeast
+# target deliberately includes a run with no signal.
+function search_checked(config_path::AbstractString)
+    Pioneer.SearchDIA(config_path)
+    results = Pioneer.JSON.parsefile(config_path)["paths"]["results"]
+    results = isabspath(results) ? results : joinpath(root, "..", "..", results)
+    summary = joinpath(results, "run_summary.tsv")
+    isfile(summary) || error("$(basename(config_path)): no run_summary.tsv; the search produced no output tables")
+    n = sum(row -> parse(Int, split(row, '\t')[2]), readlines(summary)[2:end]; init = 0)
+    n > 0 || error("$(basename(config_path)): no precursors identified; stages after precursor scoring were not compiled")
+    return nothing
+end
+
 # Called once at the end of the script, after every target has had its turn, so a single run reports
 # *all* broken targets rather than stopping at the first -- which matters when each target takes
 # minutes.
@@ -109,6 +123,11 @@ end
 # precursors / 855 protein groups against Altimeter's 1,822 / 902 -- 89% Jaccard
 # overlap on precursors, which is the expected level of agreement between two
 # independent fragment predictors rather than a degenerate subset.
+# The Prosit fixture is also built with UInt32 fragment-index local IDs
+# (`frag_index_local_id_type = "UInt32"`), while the Altimeter fixture resolves "auto" to UInt16 (it is tiny).
+# The fragment-index search specialises on the index type, not the fragment lookup type, so the two fixtures
+# together precompile both index variants; a real library whose partitions exceed 65,535 precursors resolves
+# "auto" to UInt32, and without this its first search would pay the UInt32 compile at startup.
 maybe_run("BuildSpecLib_prosit") do
     Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_prosit.json"))
 end
@@ -192,8 +211,8 @@ maybe_run("SearchDIA") do
         joinpath(data_dir, "ecoli_test", "raw"),
         joinpath(data_dir, "precompile", "ecoli_raw_mixed"),
     )
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter.json"))      # altimeter + MBR
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_altimeter_OOM.json"))  # altimeter + MBR + OOM
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_altimeter.json"))      # altimeter + MBR
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_altimeter_OOM.json"))  # altimeter + MBR + OOM
 end
 
 # Search the Prosit library built above. Building it is not enough: the search side
@@ -209,7 +228,7 @@ maybe_run("SearchDIA_prosit") do
         joinpath(data_dir, "ecoli_test", "raw"),
         joinpath(data_dir, "precompile", "ecoli_raw_mixed"),
     )
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_prosit.json"))
 end
 
 
@@ -250,7 +269,67 @@ end
 # only because report_snoop_failures() rethrows: a stale library fails the build instead of
 # degrading the artifact. Bump the precompile-data cache-key whenever the artifact is regenerated.
 maybe_run("SearchDIA_yeast") do
-    Pioneer.SearchDIA(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
+    search_checked(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
+end
+
+
+##########################################
+# timsTOF: .d -> .tdfs conversion and search
+##########################################
+# The truncated E. coli diaPASEF fixture from the Zenodo artifact (temp/zenodo/ecoli_tims_fixture.d, made by
+# test/fixtures/tools/make_d_fixture.jl): 90 s, one isolation window per MS2 frame (537.5 / 562.5 m/z). Searched
+# against the committed E. coli test library, which carries alphapept_ccs 1/K0, it reaches ~750 precursors at 1% FDR,
+# so every stage runs on .tdfs data: TdfsMassSpecData decoding, the IM candidate gate, IM calibration and features,
+# the 2D chromatogram. Without these targets the first timsTOF search in a built app compiles all of that at startup.
+const TDFS_FIXTURE_D = joinpath(root, "..", "..", "temp", "zenodo", "ecoli_tims_fixture.d")
+const TDFS_FIXTURE_OUT = joinpath(data_dir, "precompile", "ecoli_tims_tdfs")
+convert_tdfs_fixture() = (rm(TDFS_FIXTURE_OUT; force = true, recursive = true);
+                          Pioneer.convertBruker(TDFS_FIXTURE_D; output_dir = TDFS_FIXTURE_OUT))
+maybe_run("convertBruker") do
+    convert_tdfs_fixture()
+end
+maybe_run("SearchDIA_tdfs") do
+    isdir(TDFS_FIXTURE_OUT) || convert_tdfs_fixture()    # so the target also works alone via the `cmd` filter
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_tdfs.json"))
+end
+
+
+##########################################
+# SCIEX: .wiff -> .scxs conversion and search
+##########################################
+# The truncated SCIEX SWATH fixture from the Zenodo artifact (temp/zenodo/sciex_wiff_fixture, made by
+# test/fixtures/tools/make_wiff_fixture.jl): a three-proteome ZenoTOF run cut to 30-50 min and to the windows inside
+# the committed E. coli test library's precursor range, which it searches to ~340 precursors at 1% FDR, so every
+# stage runs on ScxsMassSpecData. Converting first also compiles convertSciex and the SciexWiff reader.
+const SCXS_FIXTURE_WIFF = joinpath(root, "..", "..", "temp", "zenodo", "sciex_wiff_fixture", "BenchSample_B_nswath4_25ng.wiff")
+const SCXS_FIXTURE_OUT = joinpath(data_dir, "precompile", "sciex_scxs")
+convert_scxs_fixture() = (rm(SCXS_FIXTURE_OUT; force = true, recursive = true);
+                          Pioneer.convertSciex(SCXS_FIXTURE_WIFF; output_dir = SCXS_FIXTURE_OUT, zt_scan = false))
+maybe_run("convertSciex") do
+    convert_scxs_fixture()
+end
+maybe_run("SearchDIA_scxs") do
+    isdir(SCXS_FIXTURE_OUT) || convert_scxs_fixture()    # so the target also works alone via the `cmd` filter
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_scxs.json"))
+end
+
+
+##########################################
+# SCIEX ZT Scan DIA (scanning quadrupole)
+##########################################
+# No ZT fixture is downloaded: synthetic `.zt.scxs` runs are generated from the Altimeter library the
+# BuildSpecLib target builds above (src/build/synthetic_zt.jl), so the scanning-quad search compiles
+# for ScxsMassSpecData without real ZT data. That library, not the committed test library, because its
+# fragment index holds the 8 fragments quad tuning's triangle fit requires. The check afterwards fails
+# the target if any ZT stage fell back to its non-ZT path.
+include(joinpath(root, "synthetic_zt.jl"))
+const ZT_SYNTH_LIBRARY = joinpath(data_dir, "precompile", "ecoli_small_altimeter.poin")
+maybe_run("SearchDIA_zt") do
+    isdir(ZT_SYNTH_LIBRARY) ||                  # so the target also works alone via the `cmd` filter
+        Pioneer.BuildSpecLib(joinpath(data_dir, "precompile", "build_ecoli_altimeter.json"))
+    generate_synthetic_zt_runs(ZT_SYNTH_LIBRARY, joinpath(data_dir, "precompile", "synthetic_zt"))
+    search_checked(joinpath(data_dir, "precompile", "search_ecoli_zt.json"))
+    check_zt_search_ran(joinpath(data_dir, "precompile", "zt_results"))
 end
 
 

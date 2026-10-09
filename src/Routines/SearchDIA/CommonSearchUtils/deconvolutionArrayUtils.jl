@@ -14,7 +14,7 @@ into `weights` (indexed by column number) for the current scan's active
 precursors.
 """
 function initialize_weights!(
-    id_to_col::AbstractPrecursorMap{UInt16},
+    id_to_col::AbstractPrecursorMap{UInt32},
     weights::Vector{Float32},
     precursor_weights::AbstractPrecursorMap{Float32}
 )
@@ -30,7 +30,7 @@ Copy solved weights back from `weights` (column-indexed) into
 `precursor_weights` (precursor-id-keyed) so subsequent scans can warm-start.
 """
 function update_precursor_weights!(
-    id_to_col::AbstractPrecursorMap{UInt16},
+    id_to_col::AbstractPrecursorMap{UInt32},
     weights::Vector{Float32},
     precursor_weights::AbstractPrecursorMap{Float32}
 )

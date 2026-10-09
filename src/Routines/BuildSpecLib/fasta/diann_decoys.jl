@@ -136,7 +136,7 @@ The resulting library has targets followed by decoys, with proper
 pairing (pair_id, partner_precursor_idx) and all required columns.
 
 Modifies `detailed_fragments.jls`, `precursor_to_fragment_indices.jls`,
-`precursors_table.arrow`, and rebuilds `partitioned_fragment_index.jls` in place.
+`precursors_table.arrow`, and rebuilds the fragment indexes in place (`write_fragment_indexes`).
 """
 function apply_diann_decoy_style!(lib_path::String)
     # Load target-only precursors table
@@ -281,7 +281,7 @@ function apply_diann_decoy_style!(lib_path::String)
         else
             error("spline_knots file not found in $lib_path")
         end
-        temp_lookup = SplineFragmentLookup(all_new_frags, new_pid_to_fid, Tuple(spl_knots), 3)
+        temp_lookup = SplineFragmentLookup(all_new_frags, new_pid_to_fid, Tuple(spl_knots))
         temp_lib = SplineFragmentIndexLibrary(empty_pfi, empty_pfi, temp_precursors, temp_proteins, temp_lookup, OutputSchemaPolicy())
     else
         temp_lookup = StandardFragmentLookup(all_new_frags, new_pid_to_fid)
@@ -293,14 +293,8 @@ function apply_diann_decoy_style!(lib_path::String)
     lib_params = get(config, "library_params", Dict())
     frag_bin_tol_ppm = Float32(get(lib_params, "frag_bin_tol_ppm", 10.0))
     rt_bin_tol = Float32(get(lib_params, "rt_bin_tol", 1.0))
-
-    partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=rt_bin_tol)
-    serialize_to_jls(joinpath(lib_path, "partitioned_fragment_index.jls"), partitioned_index)
-
-    presearch_partitioned_index = build_partitioned_index_from_lib(temp_lib;
-        partition_width=5.0f0, frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=typemax(Float32))
-    serialize_to_jls(joinpath(lib_path, "presearch_partitioned_fragment_index.jls"), presearch_partitioned_index)
+    write_fragment_indexes(lib_path, temp_lib, fragment_index_widths(lib_params), frag_index_local_id_request(lib_params);
+        frag_bin_tol_ppm=frag_bin_tol_ppm, rt_bin_tol=rt_bin_tol)
 
     @debug_l1 "DIA-NN decoy generation complete: $n_total total precursors ($n_targets targets + $n_created decoys)"
     return nothing

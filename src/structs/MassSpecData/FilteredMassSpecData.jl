@@ -33,6 +33,7 @@ mutable struct FilteredMassSpecData{T<:AbstractFloat} <: MassSpecData
     low_mzs::Vector{T}
     high_mzs::Vector{T}
     isolation_width_mzs::Vector{T}
+    collision_energy_evs::Vector{T}   # per-scan collision energy (eV); 0 when unknown
 
     # Index mapping: filtered index → original scan index
     original_scan_indices::Vector{UInt32}
@@ -179,6 +180,92 @@ function get_ms2_scan_priority_order(spectra::MassSpecData)
     return create_priority_order(all_sorted_scans, bin_starts, bin_ends)
 end
 
+"""
+    get_ms2_scan_priority_order_im(spectra::MassSpecData, n_im_bins::Int) -> Vector{Int32}
+
+Ion-mobility (packet) variant of `get_ms2_scan_priority_order`, modelled on the
+scanning-quad `get_ms2_scan_priority_order_q1` of feat/zt-scanning-v2. Same outer
+round-robin over `SCAN_PRIORITY_N_RT_BINS` RT bins, but each RT bin keeps its own
+rotation over (isolation window × IM bin) cells and a visit returns the highest-TIC
+undrawn packet of the NEXT cell. No cell is revisited until every other non-empty
+cell of that RT bin has given a packet.
+
+Why: a packet is one IM scan of one frame. TIC-first within an RT bin draws the densest
+scan of the densest frame and then its neighbouring scans, which hold the same precursors
+(measured: 1,641 tuning PSMs from 246 precursors), and the densest isolation window
+dominates. Rotating over windows spreads draws over all windows; rotating over IM bins
+puts consecutive draws for one window at least one IM bin apart, beyond the ~25-scan
+mobility peak width.
+
+Window identity is the distinct `centerMz` values (typically 24–64 for diaPASEF); if
+there are more than 64 distinct centres they are binned into 32 equal-width m/z bins.
+Exactly sized throughout; no push!.
+"""
+function get_ms2_scan_priority_order_im(spectra::MassSpecData, n_im_bins::Int)
+    n_rt = SCAN_PRIORITY_N_RT_BINS
+    rt_bins, _, _, _ = compute_rt_bins(spectra, n_rt)
+    ms_orders = getMsOrders(spectra)
+    cmz = getCenterMzs(spectra)
+    tics = getTICs(spectra)
+    im_scans = getImScans(spectra)
+    ms2 = Int32[i for i in 1:length(spectra) if ms_orders[i] == 2 && !ismissing(cmz[i])]
+    n = length(ms2)
+    n == 0 && return Int32[]
+    # Window index per scan: distinct isolation centres, or 32 m/z bins if there are too many.
+    centres = sort!(unique(Float32[Float32(cmz[i]) for i in ms2]))
+    win_id = zeros(Int32, length(spectra))
+    if length(centres) <= 64
+        n_win = length(centres)
+        win_lookup = Dict{Float32,Int32}(c => Int32(k) for (k, c) in enumerate(centres))
+        @inbounds for i in ms2; win_id[i] = win_lookup[Float32(cmz[i])]; end
+    else
+        n_win = 32
+        mz_lo = first(centres); mz_w = max(last(centres) - mz_lo, eps(Float32)) / n_win
+        @inbounds for i in ms2; win_id[i] = Int32(clamp(ceil(Int, (Float32(cmz[i]) - mz_lo) / mz_w), 1, n_win)); end
+    end
+    s_lo = minimum(Int(im_scans[i]) for i in ms2); s_hi = maximum(Int(im_scans[i]) for i in ms2)
+    s_w = max(s_hi - s_lo + 1, 1) / n_im_bins
+    im_of(i) = clamp(floor(Int, (Int(im_scans[i]) - s_lo) / s_w) + 1, 1, n_im_bins)
+    n_sub = n_win * n_im_bins
+    cell(i) = (Int(rt_bins[i]) - 1) * n_sub + (Int(win_id[i]) - 1) * n_im_bins + im_of(i)   # 1-based, RT-major
+    ncell = n_rt * n_sub
+    # counting sort into cells
+    counts = zeros(Int32, ncell)
+    @inbounds for i in ms2; counts[cell(i)] += 1; end
+    starts = Vector{Int32}(undef, ncell + 1); starts[1] = 1
+    @inbounds for c in 1:ncell; starts[c + 1] = starts[c] + counts[c]; end
+    sorted = Vector{Int32}(undef, n)
+    fill!(counts, 0)
+    @inbounds for i in ms2
+        c = cell(i); sorted[starts[c] + counts[c]] = i; counts[c] += 1
+    end
+    @inbounds for c in 1:ncell
+        lo, hi = starts[c], starts[c + 1] - 1
+        lo < hi && sort!(view(sorted, lo:hi), by = idx -> tics[idx], rev = true)
+    end
+    # emit: outer pass over RT bins, per-RT-bin cursor over its (window, IM) cells
+    pos = copy(starts)                       # next undrawn packet per cell
+    cursor = ones(Int, n_rt)
+    out = Vector{Int32}(undef, n)
+    w = 1
+    while w <= n
+        for r in 1:n_rt
+            base = (r - 1) * n_sub
+            for _ in 1:n_sub                         # find the next non-empty cell of this RT bin
+                q = cursor[r]
+                cursor[r] = q == n_sub ? 1 : q + 1
+                c = base + q
+                if pos[c] < starts[c + 1]
+                    out[w] = sorted[pos[c]]; pos[c] += 1; w += 1
+                    break
+                end
+            end
+            w > n && break
+        end
+    end
+    return out
+end
+
 # ============================================================================
 # Constructor
 # ============================================================================
@@ -236,13 +323,14 @@ function FilteredMassSpecData(
     low_mzs = Vector{T}(undef, n_sampled)
     high_mzs = Vector{T}(undef, n_sampled)
     isolation_width_mzs = Vector{T}(undef, n_sampled)
+    collision_energy_evs = Vector{T}(undef, n_sampled)
 
     indices_buffer = topn !== nothing ? Vector{Int}(undef, 10000) : Int[]
 
     # Copy scan data
+    decode_buf = PeakDecodeBuffer()   # .tdfs originals decode here; the peaks are copied out below
     for (i, oi) in enumerate(scan_indices_to_sample)
-        mz_array = getMzArray(original, oi)
-        int_array = getIntensityArray(original, oi)
+        mz_array, int_array = getPeaks!(decode_buf, original, oi)
 
         if topn !== nothing && length(mz_array) > topn
             mz_arrays[i], intensity_arrays[i] = filterTopNPeaks(mz_array, int_array, topn, indices_buffer, min_intensity_typed)
@@ -267,6 +355,7 @@ function FilteredMassSpecData(
         low_mzs[i] = T(getLowMz(original, oi))
         high_mzs[i] = T(getHighMz(original, oi))
         isolation_width_mzs[i] = T(coalesce(getIsolationWidthMz(original, oi), zero(T)))
+        collision_energy_evs[i] = T(getCollisionEnergyEv(original, oi))
     end
 
     return FilteredMassSpecData{T}(
@@ -274,7 +363,7 @@ function FilteredMassSpecData(
         scan_headers, scan_numbers, base_peak_mzs, base_peak_intensities,
         injection_times, retention_times, precursor_mzs, isolation_widths,
         precursor_charges, ms_orders, cycle_idxs, center_mzs, TICs,
-        low_mzs, high_mzs, isolation_width_mzs,
+        low_mzs, high_mzs, isolation_width_mzs, collision_energy_evs,
         scan_indices_to_sample, original, topn, min_intensity_typed,
         max_scans, target_ms_order, rng, scan_priority_order,
         Int32(n_sampled), rt_bin_assignments, n_rt_bins,
@@ -356,6 +445,7 @@ getCenterMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_da
 getTIC(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.TICs[scan_idx]
 getLowMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.low_mzs[scan_idx]
 getHighMz(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = ms_data.high_mzs[scan_idx]
+getCollisionEnergyEv(ms_data::FilteredMassSpecData{T}, scan_idx::Integer) where T = Float32(ms_data.collision_energy_evs[scan_idx])
 
 # ============================================================================
 # MassSpecData Interface — Plural/Batch Getters
@@ -403,9 +493,9 @@ function Base.append!(
 
     indices_buffer = filtered.topn !== nothing ? Vector{Int}(undef, 10000) : Int[]
 
+    decode_buf = PeakDecodeBuffer()   # .tdfs originals decode here; the peaks are copied out below
     for oi in new_scan_indices
-        mz_array = getMzArray(original, oi)
-        int_array = getIntensityArray(original, oi)
+        mz_array, int_array = getPeaks!(decode_buf, original, oi)
 
         if filtered.topn !== nothing && length(mz_array) > filtered.topn
             mz_f, int_f = filterTopNPeaks(mz_array, int_array, filtered.topn, indices_buffer, filtered.min_intensity)
@@ -432,6 +522,7 @@ function Base.append!(
         push!(filtered.low_mzs, T(getLowMz(original, oi)))
         push!(filtered.high_mzs, T(getHighMz(original, oi)))
         push!(filtered.isolation_width_mzs, T(coalesce(getIsolationWidthMz(original, oi), zero(T))))
+        push!(filtered.collision_energy_evs, T(getCollisionEnergyEv(original, oi)))
         push!(filtered.original_scan_indices, oi)
     end
 

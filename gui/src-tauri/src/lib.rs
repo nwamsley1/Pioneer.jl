@@ -100,6 +100,12 @@ fn inspect_path(path: String) -> paths::PathInfo {
     paths::inspect(&path)
 }
 
+/// The `.arrow` files in a folder, for a search that fans out one run per file.
+#[tauri::command]
+fn list_arrow_files(dir: String) -> Result<Vec<String>, String> {
+    paths::list_arrow_files(&dir)
+}
+
 /// What a `.poin` says about itself, for the panel under the library field.
 #[tauri::command]
 fn library_info(path: String) -> paths::LibraryInfo {
@@ -264,6 +270,7 @@ pub fn run() {
             uninstall_info,
             uninstall_this_version,
             inspect_path,
+            list_arrow_files,
             stage_files,
             read_config,
             library_info,

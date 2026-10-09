@@ -14,7 +14,7 @@ Use the bundled [PioneerConverter](https://github.com/nwamsley1/PioneerConverter
 pioneer convert-raw /path/to/raw/or/folder --output-dir /path/to/arrow --skip-existing
 ```
 
-This subcommand accepts either a single `.raw` file or a directory of files. Common options are `--output-dir`, `--skip-existing`, `--concurrent-files`, and `--threads-per-file`. For all options, run `pioneer convert-raw --help`.
+This subcommand accepts either a single `.raw` file or a directory of files. Common options are `--output-dir`, `--skip-existing`, and `--threads-per-file`. For all options, run `pioneer convert-raw --help`.
 
 ## MzML to Arrow IPC (Sciex)
 For mzML-formatted data, use:
@@ -65,3 +65,28 @@ This sequence builds a predicted spectral library, converts vendor files to Arro
 `params-predict` and `params-search` create template JSON files. Edit these
 configurations to suit your experiment before running `predict` or `search`.
 See [Parameter Configuration](parameters.md) for a description of each option.
+
+## Per-run summary (`run_summary.tsv`)
+
+Every search writes `run_summary.tsv` next to the result tables: one row per
+raw file with QC metrics in the spirit of DIA-NN's `report.stats.tsv`.
+*Identified* counts target IDs regardless of abundance, including missing values.
+*Quantified* counts the subset with positive abundance. Missed cleavages are
+reported as 100 × their mean over identified target precursors.
+
+| Column | Description |
+|---|---|
+| `file_name` | Run name (raw file name without extension) |
+| `precursors_identified` / `precursors_quantified` | Target precursors passing FDR / with a positive `peak_area` |
+| `precursors_mbr` | Identified precursors recovered by match-between-runs |
+| `peptides_identified` | Distinct stripped sequences among identified precursors |
+| `protein_groups_identified` / `protein_groups_quantified` | Target protein groups for the run / with a positive abundance |
+| `total_peak_area`, `median_peak_area` | Sum and median of quantified precursor areas |
+| `median_normalization_factor` | Median `peak_area_normalized / peak_area` (empty when normalization is off) |
+| `median_irt_error` | Median absolute iRT prediction error |
+| `median_rt_fwhm` | Median RT span (min) of the scans at or above half the apex intensity; 0 when only the apex scan qualifies (fast gradients / few points per peak) |
+| `median_points_integrated` | Median number of scans integrated per peak |
+| `median_peptide_length`, `median_charge` | Peptide-property medians |
+| `missed_cleavage_percentage` | 100 × mean missed cleavages among identified target precursors; can exceed 100 |
+| `ms2_mass_tol_low/high/unit`, `ms1_mass_tol_low/high/unit` | Fragment / precursor mass tolerance the search settled on (`ppm` or `Da` depending on the fitted model; MS1 empty when no MS1 model was fit) |
+| `gradient_length_min`, `n_ms1_scans`, `n_ms2_scans` | Run length (last retention time, minutes) and scan counts |

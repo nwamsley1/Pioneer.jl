@@ -7,7 +7,12 @@ on:
       - develop
     tags:
       - 'v*.*.*'
+    # Markdown-only commits (README, notes) cannot change test results. Tag pushes ignore path filters.
+    paths-ignore:
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - '**.md'
   workflow_dispatch:
 
 concurrency:
@@ -54,6 +59,12 @@ jobs:
         run: |
           julia --threads auto --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.build()'
 
+      # Vendor-format fixtures (and the yeast precompile data) in temp/zenodo, for test/UnitTests/formats
+      - name: Precompile / fixture data
+        uses: ./.github/actions/precompile-data
+        with:
+          cache-key: precompile-data-v3-yeast-formats
+
       - name: Run tests
         run: julia --threads auto --code-coverage=all --project=. -e 'using Pkg; Pkg.test(coverage=true)'
 
@@ -67,4 +78,31 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
-  
+  merge-windows:
+    name: Persistent merge writers on Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.12.6'
+          arch: x64
+      - name: Cache Julia packages
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.julia/registries
+            ~/.julia/packages
+          key: julia-merge-windows-${{ hashFiles('**/Project.toml','**/Manifest.toml') }}
+          restore-keys: julia-merge-windows-
+      - name: Instantiate
+        run: julia --threads=4 --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Merge regression and handle tests (one thread)
+        run: julia --threads=1 --project=. -e 'using Pioneer; include("test/utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl"); include("test/utils/FileOperations/streaming/test_persistent_merge_writer.jl")'
+      - name: Sidecar discovery and snapshot handle tests
+        run: julia --threads=1 --project=. -e 'include("test/utils/FileOperations/core/test_sidecar_index.jl")'
+      - name: Merge regression and handle tests (four threads)
+        run: julia --threads=4 --project=. -e 'using Pioneer; include("test/utils/FileOperations/streaming/test_stream_sorted_merge_basic.jl"); include("test/utils/FileOperations/streaming/test_persistent_merge_writer.jl")'

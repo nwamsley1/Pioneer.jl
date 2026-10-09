@@ -25,20 +25,32 @@ replacing complex NamedTuple-based dictionaries.
 using Dictionaries
 
 """
-    ProteinKey
+    ProteinKey{N}
 
 Unique identifier for a protein or protein group.
 
 # Fields
-- `name::String`: Protein name or semicolon-delimited list of indistinguishable proteins
+- `name::N`: The protein or group. A `String` holds the name itself (a semicolon-delimited list
+  of indistinguishable proteins for a group). A `UInt32` is an integer ID: inside protein
+  inference a `ProteinGroupRegistry` group ID, and after it the group's `pg_id` (the rank of its
+  name; see `ProteinInferenceSearch`).
 - `is_target::Bool`: True if this is a target protein (not decoy)
 - `entrap_id::UInt8`: Entrapment group identifier for FDR estimation
 """
-struct ProteinKey
-    name::String
+struct ProteinKey{N}
+    name::N
     is_target::Bool
     entrap_id::UInt8
+    # Inner constructor: no default `ProteinKey(::N, ...)`, so the outer methods below pick the type.
+    ProteinKey{N}(name, is_target::Bool, entrap_id::Integer) where {N} = new{N}(name, is_target, UInt8(entrap_id))
 end
+ProteinKey(name::AbstractString, is_target::Bool, entrap_id::Integer) =
+    ProteinKey{String}(String(name), is_target, UInt8(entrap_id))
+ProteinKey(name::Integer, is_target::Bool, entrap_id::Integer) =
+    ProteinKey{UInt32}(UInt32(name), is_target, UInt8(entrap_id))
+
+"""Protein-group key after inference: the group's integer `pg_id`."""
+const PGKey = ProteinKey{UInt32}
 
 # Comparison methods for ProteinKey (required for sorting)
 Base.isless(a::ProteinKey, b::ProteinKey) = (a.name, a.is_target, a.entrap_id) < (b.name, b.is_target, b.entrap_id)
@@ -46,20 +58,27 @@ Base.:(==)(a::ProteinKey, b::ProteinKey) = a.name == b.name && a.is_target == b.
 Base.hash(k::ProteinKey, h::UInt) = hash((k.name, k.is_target, k.entrap_id), h)
 
 """
-    PeptideKey
+    PeptideKey{S}
 
 Unique identifier for a peptide in the context of protein inference.
 
 # Fields
-- `sequence::String`: Peptide amino acid sequence
+- `sequence::S`: Peptide amino acid sequence (`String`), or its library `sequence_id` (`UInt32`,
+  the rank of the sequence, so sorting IDs sorts sequences)
 - `is_target::Bool`: True if from target proteins (not decoy)
 - `entrap_id::UInt8`: Entrapment group identifier
 """
-struct PeptideKey
-    sequence::String
+struct PeptideKey{S}
+    sequence::S
     is_target::Bool
     entrap_id::UInt8
+    # Inner constructor: no default `PeptideKey(::S, ...)`, so the outer methods below pick the type.
+    PeptideKey{S}(sequence, is_target::Bool, entrap_id::Integer) where {S} = new{S}(sequence, is_target, UInt8(entrap_id))
 end
+PeptideKey(sequence::AbstractString, is_target::Bool, entrap_id::Integer) =
+    PeptideKey{String}(String(sequence), is_target, UInt8(entrap_id))
+PeptideKey(sequence::Integer, is_target::Bool, entrap_id::Integer) =
+    PeptideKey{UInt32}(UInt32(sequence), is_target, UInt8(entrap_id))
 
 # Comparison methods for PeptideKey (required for sorting)
 Base.isless(a::PeptideKey, b::PeptideKey) = (a.sequence, a.is_target, a.entrap_id) < (b.sequence, b.is_target, b.entrap_id)
@@ -123,9 +142,9 @@ and should be used for quantification. Peptides present in
 quantification. For PSMs with peptides in neither mapping, use the original protein assignment
 but mark as `use_for_protein_quant = false`.
 """
-struct InferenceResult
-    peptide_to_protein::Dictionary{PeptideKey, ProteinKey}
-    ambiguous_peptide_to_proteins::Dictionary{PeptideKey, Vector{ProteinKey}}
+struct InferenceResult{P<:ProteinKey, Q<:PeptideKey}
+    peptide_to_protein::Dictionary{Q, P}
+    ambiguous_peptide_to_proteins::Dictionary{Q, Vector{P}}
 end
 
 """
@@ -146,10 +165,52 @@ Fixed and isotopic modifications do not affect this classification.
         num_variable_modifications == 0
 end
 
-InferenceResult(peptide_to_protein::Dictionary{PeptideKey, ProteinKey}) = InferenceResult(
-    peptide_to_protein,
-    Dictionary{PeptideKey, Vector{ProteinKey}}()
-)
+InferenceResult(peptide_to_protein::Dictionary{Q, P}) where {Q<:PeptideKey, P<:ProteinKey} =
+    InferenceResult(peptide_to_protein, Dictionary{Q, Vector{P}}())
+
+#==========================================================
+Protein group names
+==========================================================#
+# Protein inference splits each input protein into its member proteins and names merged groups
+# by their members. These methods do that for the two representations of a name.
+
+"""String names: members are `;`-separated; a group is named by its sorted members."""
+struct StringGroupNames end
+
+group_members(::StringGroupNames, name::AbstractString) = String[m for m in split(name, ';')]
+merge_group(::StringGroupNames, names) =
+    join(sort!(unique!(String[m for name in names for m in split(name, ';')])), ';')
+group_isless(::StringGroupNames, a::AbstractString, b::AbstractString) = split(a, ';') < split(b, ';')
+
+"""
+    ProteinGroupRegistry(n_accessions)
+
+Integer names: a group is its sorted member accession IDs, interned to a `UInt32` group ID.
+IDs `1:n_accessions` are the single accessions. With accession IDs that are ranks of the
+accession strings, every comparison here orders groups exactly as `StringGroupNames` does.
+"""
+struct ProteinGroupRegistry
+    members::Vector{Vector{UInt32}}
+    index::Dict{Vector{UInt32}, UInt32}
+end
+
+function ProteinGroupRegistry(n_accessions::Integer)
+    members = [UInt32[i] for i in 1:n_accessions]
+    return ProteinGroupRegistry(members, Dict(m => UInt32(i) for (i, m) in enumerate(members)))
+end
+
+"""Group ID for these member accessions (sorted, without duplicates), registering it if new."""
+function intern_group!(registry::ProteinGroupRegistry, members::Vector{UInt32})
+    get!(registry.index, members) do
+        push!(registry.members, members)
+        UInt32(length(registry.members))
+    end
+end
+
+group_members(registry::ProteinGroupRegistry, id::UInt32) = registry.members[id]
+merge_group(registry::ProteinGroupRegistry, ids) =
+    intern_group!(registry, sort!(unique!(UInt32[m for id in ids for m in registry.members[id]])))
+group_isless(registry::ProteinGroupRegistry, a::UInt32, b::UInt32) = registry.members[a] < registry.members[b]
 
 """
     ProteinPeptideOpportunityCounts

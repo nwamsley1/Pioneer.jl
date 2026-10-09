@@ -131,6 +131,60 @@ end
     end
 end
 
+# Per-thread mass windows outlive individual scans, partitions and files.
+@testset "FragIndexScratch mass-window capacity and reuse" begin
+    scratch = Pioneer.FragIndexScratch(2)
+    @test length(scratch.mz_low_bufs) == length(scratch.mz_high_bufs) == 2
+    @test all(isempty, scratch.mz_low_bufs)
+    @test all(isempty, scratch.mz_high_bufs)
+    @test scratch.mz_low_bufs[1] !== scratch.mz_low_bufs[2]
+    @test scratch.mz_high_bufs[1] !== scratch.mz_high_bufs[2]
+    @test scratch.mz_low_bufs[1] !== scratch.mz_high_bufs[1]
+
+    # Existing callers can omit the new optional keyword.
+    @test Pioneer.prepare!(scratch; n_threads=2, est_per_thread=4,
+        counter_size=8, int_buf_size=5) === scratch
+    @test all(isempty, scratch.mz_low_bufs)
+    @test all(isempty, scratch.mz_high_bufs)
+    low_buffers = copy(scratch.mz_low_bufs)
+    high_buffers = copy(scratch.mz_high_bufs)
+    old_counters = copy(scratch.counters)
+
+    Pioneer.prepare!(scratch; n_threads=2, est_per_thread=4,
+        counter_size=8, int_buf_size=5, mz_buf_size=6)
+    for tid in 1:2
+        @test length(scratch.mz_low_bufs[tid]) >= 6
+        @test length(scratch.mz_high_bufs[tid]) >= 6
+        @test scratch.mz_low_bufs[tid] === low_buffers[tid]
+        @test scratch.mz_high_bufs[tid] === high_buffers[tid]
+        fill!(scratch.mz_low_bufs[tid], Float32(tid))
+        fill!(scratch.mz_high_bufs[tid], Float32(tid + 10))
+    end
+
+    # A smaller scan reuses capacity and preserves independent thread contents.
+    Pioneer.prepare!(scratch; n_threads=2, est_per_thread=2,
+        counter_size=4, int_buf_size=2, mz_buf_size=3)
+    for tid in 1:2
+        @test scratch.mz_low_bufs[tid] == fill(Float32(tid), 6)
+        @test scratch.mz_high_bufs[tid] == fill(Float32(tid + 10), 6)
+        @test scratch.counters[tid] === old_counters[tid]
+    end
+
+    # Larger later scans grow each existing vector without losing its prefix.
+    Pioneer.prepare!(scratch; n_threads=2, est_per_thread=9,
+        counter_size=12, int_buf_size=10, mz_buf_size=13)
+    for tid in 1:2
+        @test scratch.mz_low_bufs[tid] === low_buffers[tid]
+        @test scratch.mz_high_bufs[tid] === high_buffers[tid]
+        @test length(scratch.mz_low_bufs[tid]) >= 13
+        @test length(scratch.mz_high_bufs[tid]) >= 13
+        @test scratch.mz_low_bufs[tid][1:6] == fill(Float32(tid), 6)
+        @test scratch.mz_high_bufs[tid][1:6] == fill(Float32(tid + 10), 6)
+        @test scratch.counters[tid] !== old_counters[tid]
+        @test all(iszero, scratch.counters[tid].counts)
+    end
+end
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Counter — or! (bitmask fragment index scoring)
 # ═══════════════════════════════════════════════════════════════════════════════

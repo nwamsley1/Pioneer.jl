@@ -90,6 +90,7 @@ function set_rt_to_irt_model!(
     
     #parsed_fname = getParsedFileName(search_context, ms_file_idx)
     getIrtErrors(search_context)[ms_file_idx] = model[4] * TUNING_IRT_TOL_SIGMA
+    @debug_l1 "  Tuning iRT tolerance for the main search: $(round(getIrtErrors(search_context)[ms_file_idx], digits = 3)) (MAD $(round(model[4], digits = 3)) x $(TUNING_IRT_TOL_SIGMA))"
 end
 
 
@@ -125,11 +126,6 @@ function init_search_results(::ParameterTuningSearchParameters, search_context::
         Vector{Float32}(),
         Vector{Float32}(),
         Vector{Float32}(),  # frag_mzs
-        Vector{UInt8}[],  # rt_plots (legacy)
-        Vector{UInt8}[],  # mass_plots (legacy)
-        Any[],            # rt_plot_objects
-        Any[],            # mass_plot_objects
-        Any[],            # nce_plot_objects
         qc_dir,
         ParameterTuningDiagnostics(),
         ParameterHistory(),
@@ -181,7 +177,9 @@ function initialize_models!(search_context, ms_file_idx, params)
 
     # Quad transmission: trust the stated isolation width with a hard
     # square cutoff during tuning, before any file-specific Razo fit.
-    setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.0f0))
+    # (Scanning-quad files keep the model installed from their geometry; ZT/tuning.jl.)
+    zt_keeps_quad_model(getZTGeometry(search_context, ms_file_idx)) ||
+        setQuadTransmissionModel!(search_context, ms_file_idx, SquareQuadModel(0.0f0))
 end
 
 
@@ -259,7 +257,8 @@ function accumulate_psms!(
     score_tiers = TUNING_SCORE_TIERS,
     n_required_top::Int = TUNING_N_REQUIRED_TOP,
     fdr_threshold::Float16 = Float16(0.01),
-    label::String = "accumulate"
+    label::String = "accumulate",
+    max_per_precursor::Int = 0      # 0 = count PSM rows; k > 0 = keep the best k per precursor, count rows
 )
     all_scan_indices = scan_priority[1:min(length(scan_priority), length(scan_priority))]
     max_scans = length(all_scan_indices)
@@ -268,6 +267,9 @@ function accumulate_psms!(
     scored_psms = DataFrame()
     n_passing = 0
     total_scans_used = 0
+    t_phase = time()
+    end_reason = "exhausted all tiers"
+    n_prec = 0; n_capped = 0
 
     for (tier_idx, score) in enumerate(score_tiers)
         setMassErrorModel!(search_context, ms_file_idx, mass_model)
@@ -279,8 +281,10 @@ function accumulate_psms!(
         raw_psms = DataFrame()
         prev = 0
         n_passing = 0
-        # First tier: start at initial_scans. Subsequent: start at max_scans.
-        scan_target = tier_idx == 1 ? min(initial_scans, max_scans) : max_scans
+        # Second-order stopping state: the previous checkpoint and the previous batch's marginal rate.
+        prev_scans = 0; prev_passing = 0; prev_marginal = -1.0
+        # Every tier grows from initial_scans so the second-order decay check can end it early.
+        scan_target = min(initial_scans, max_scans)
 
         while prev < max_scans
             batch_indices = all_scan_indices[(prev+1):scan_target]
@@ -307,14 +311,25 @@ function accumulate_psms!(
                              scored_tmp[!,:q_value]; fdr_scale_factor=fdr_scale)
                 filter!(row -> row.q_value::Float16 <= fdr_threshold, scored_tmp)
                 filter!(row -> row.target::Bool, scored_tmp)
+                n_before = nrow(scored_tmp)
+                if max_per_precursor > 0
+                    # Keep the best k PSMs per precursor (by prob) and count the remaining rows: a few
+                    # persistent ions cannot fill the target on their own (on packet data one precursor
+                    # yields ~7 adjacent-slice PSMs), but the target does not demand distinct precursors.
+                    scored_tmp = filter_top_psms_per_precursor(scored_tmp, max_per_precursor)
+                end
                 n_passing = nrow(scored_tmp)
+                n_capped = n_before - n_passing
+                n_prec = length(unique(scored_tmp.precursor_idx))
                 scored_psms = scored_tmp
             end
 
-            @debug_l1 "  $(label) (score≥$(score)): $(prev) scans, $(n_raw) raw, " *
-                       "$(n_passing) at $(round(Float64(fdr_threshold)*100, digits=1))% FDR"
+            @debug_l1 "  $(label) (score≥$(score)): $(prev) scans, $(n_raw) raw, $(n_passing) PSMs at " *
+                       "$(round(Float64(fdr_threshold)*100, digits=1))% FDR ($(n_prec) precursors" *
+                       (max_per_precursor > 0 ? ", $(n_capped) removed by the $(max_per_precursor)/precursor cap" : "") * ")"
 
             if n_passing >= target_psms
+                end_reason = "converged at score≥$(score)"
                 break
             end
 
@@ -322,6 +337,23 @@ function accumulate_psms!(
             scans_remaining = max_scans - prev
             scans_remaining <= 0 && break
             rate = n_passing / max(prev, 1)
+            # Second-order: marginal yield of the last batch vs the batch before. If it is decaying,
+            # the most the remaining scans can add is dn * d / (1 - d) (geometric tail); if even that
+            # cannot reach the target, further search at this tier is wasted -> back off now.
+            ds = prev - prev_scans; dn = n_passing - prev_passing
+            marginal = ds > 0 ? dn / ds : 0.0
+            if prev_marginal > 0 && marginal < prev_marginal
+                d = marginal / prev_marginal
+                tail_max = dn * d / (1 - d)
+                if n_passing + tail_max < target_psms
+                    @debug_l1 "  $(label) (score≥$(score)): marginal yield decaying (" *
+                               "$(round(1000 * prev_marginal, digits=2)) -> $(round(1000 * marginal, digits=2)) per 1k scans, " *
+                               "tail bound +$(round(Int, tail_max)) < $(target_psms - n_passing) needed), backing off early"
+                    end_reason = "score≥$(score) backed off early at $(prev) scans"
+                    break
+                end
+            end
+            prev_scans = prev; prev_passing = n_passing; prev_marginal = marginal
             additional = if rate > 0
                 remaining = target_psms - n_passing
                 clamp(ceil(Int, remaining / rate * 1.5), 1, scans_remaining)
@@ -344,6 +376,10 @@ function accumulate_psms!(
     delete!(search_context.bitvec_filter, ms_file_idx)
 
     converged = n_passing >= target_psms
+    @debug_l1 "  $(label) summary: $(converged ? "CONVERGED" : "NOT converged") — $(end_reason); " *
+               "$(total_scans_used) of $(max_scans) scans searched, $(n_passing) PSMs from $(n_prec) precursors " *
+               "(target $(target_psms), unit = " * (max_per_precursor > 0 ? "rows after best-$(max_per_precursor)/precursor cap" : "rows") *
+               "), $(round(time() - t_phase, digits=2))s"
     rate = n_passing / max(total_scans_used, 1)
     return converged, scored_psms, total_scans_used, rate
 end
@@ -361,7 +397,13 @@ function fit_nce_from_psms!(
     psms::DataFrame;
     nce_grid::AbstractVector{Float32} = LinRange{Float32}(21.0f0, 40.0f0, 20)
 )
-    nrow(psms) < 50 && return nothing
+    if nrow(psms) < 50
+        record_calibration_qc!(search_context.calibration_qc, :nce, ms_file_idx,
+            assess_calibration_qc(:nce,nrow(psms),(NaN,NaN,NaN,NaN); min_support=50))
+        select_calibration_plot!(search_context.calibration_qc, :nce, ms_file_idx) &&
+            calibration_notice!(search_context, :nce, ms_file_idx)
+        return nothing
+    end
 
     spec_lib = getSpecLib(search_context)
     precursors = getPrecursors(spec_lib)
@@ -405,12 +447,13 @@ function fit_nce_from_psms!(
     t_nce = time()
     all_results = map(nce_grid) do nce_val
         nce_model = PiecewiseNceModel(nce_val)
+        intensity_model = prepare_fragment_intensity_model(ion_list, nce_model)
         tasks = map(thread_tasks) do thread_task
             Threads.@spawn process_scans_fused!(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
-                nce_model, qtm, mem, rt_to_irt, irt_tol)
+                intensity_model, qtm, mem, rt_to_irt, irt_tol)
         end
         result = vcat(fetch.(tasks)...)
         if !isempty(result)
@@ -423,6 +466,10 @@ function fit_nce_from_psms!(
 
     if nrow(nce_psms) < 50
         @debug_l1 "NCE sweep: too few PSMs ($(nrow(nce_psms)))"
+        record_calibration_qc!(search_context.calibration_qc, :nce, ms_file_idx,
+            assess_calibration_qc(:nce,nrow(nce_psms),(NaN,NaN,NaN,NaN); min_support=50))
+        select_calibration_plot!(search_context.calibration_qc, :nce, ms_file_idx) &&
+            calibration_notice!(search_context, :nce, ms_file_idx)
         return nothing
     end
 
@@ -436,47 +483,89 @@ function fit_nce_from_psms!(
     sort!(nce_psms, :gof, rev=true)
     best_nce = combine(groupby(nce_psms, :precursor_idx), first)
 
-    # Fit NCE model
-    nce_model = fit_binned_median_nce(
-        best_nce[!, :prec_mz],
-        best_nce[!, :nce],
-        best_nce[!, :charge],
-        Float32(median(nce_grid)))
+    # Fit NCE model. timsTOF data (an eV ramp along ion mobility, so every slice has its own energy) is binned
+    # on the Thermo-normalised nominal NCE of each precursor's scan eV instead of on precursor m/z (see
+    # CeBinnedNceModel). Only for ion-mobility data: Thermo files also carry a per-scan eV (converted from the
+    # method NCE), and for them the m/z-binned model is kept, unchanged from before the timsTOF work.
+    scan_evs = Float32[getCollisionEnergyEv(spectra, si) for si in best_nce[!, :scan_idx]]
+    use_ce = getImScans(spectra) !== nothing && count(>(0f0), scan_evs) >= 50
+    nce_model = if use_ce
+        fit_ce_binned_median_nce(scan_evs, best_nce[!, :prec_mz], best_nce[!, :nce],
+                                 best_nce[!, :charge], Float32(median(nce_grid)))
+    else
+        fit_binned_median_nce(best_nce[!, :prec_mz], best_nce[!, :nce],
+                              best_nce[!, :charge], Float32(median(nce_grid)))
+    end
 
     setNceModel!(search_context, ms_file_idx, nce_model)
 
     n_precs = nrow(best_nce)
     charges = sort(unique(best_nce[!, :charge]))
-    @debug_l1 "NCE: $(n_precs) precursors, $(length(charges)) charges, $(length(nce_grid)) grid pts ($(dt_nce)s)"
+    @debug_l1 "NCE: $(n_precs) precursors, $(length(charges)) charges, $(length(nce_grid)) grid pts ($(dt_nce)s)" *
+              (use_ce ? "; binned on scan collision energy (nominal NCE)" : "; binned on precursor m/z")
 
+    # Plot x axis and the bin table: nominal NCE for the CE-keyed model, else m/z.
+    x_vals = use_ce ?
+        Float32[nominal_nce(scan_evs[i], best_nce[i, :prec_mz], best_nce[i, :charge]) for i in 1:nrow(best_nce)] :
+        best_nce[!, :prec_mz]
+    bins_model = use_ce ? nce_model.inner : nce_model
+    x_label = use_ce ? "Nominal NCE (scan eV × 500 / (m/z × f(z)))" : "Precursor m/z"
+
+    weak = 0
+    for group in groupby(nce_psms, :precursor_idx)
+        best_score = group.gof[1]
+        alternative = findfirst(!=(group.nce[1]), group.nce)
+        weak += alternative === nothing || !isfinite(best_score) ||
+            best_score - group.gof[alternative] <= 0.01 * max(abs(best_score), eps(Float32))
+    end
+    endpoints = count(x -> x == first(nce_grid) || x == last(nce_grid), best_nce.nce)
+    supported = count(c -> 1 <= c <= 6 && bins_model.offsets[Int(c)] != 0, best_nce.charge)
+    record_calibration_qc!(search_context.calibration_qc, :nce, ms_file_idx,
+        assess_calibration_qc(:nce,n_precs,(supported/n_precs,NaN,weak/n_precs,endpoints/n_precs);
+            min_support=50, fallback=supported == 0))
+    if select_calibration_plot!(search_context.calibration_qc, :nce, ms_file_idx)
+        render_calibration_safely(search_context, :nce, ms_file_idx) do
+            if any(charge -> count(==(charge), best_nce.charge) >= 10, charges)
+                plot_nce_calibration!(search_context, ms_file_idx, best_nce, nce_grid, bins_model, charges; x_vals, x_label)
+            else
+                calibration_notice!(search_context, :nce, ms_file_idx)
+            end
+        end
+    end
+    return nce_model
+end
+
+# `bins_model` is the m/z- or eV-binned median model; timsTOF passes its eV-keyed x values and label.
+function plot_nce_calibration!(search_context, ms_file_idx, best_nce, nce_grid, bins_model, charges;
+                               x_vals = best_nce[!, :prec_mz], x_label = "Precursor m/z")
     # Generate per-charge diagnostic plots
-    parsed_fname = getParsedFileName(search_context, ms_file_idx)
-    nce_plots = Plots.Plot[]
+    parsed_fname = calibration_qc_title(search_context, :nce, ms_file_idx, getParsedFileName(search_context, ms_file_idx))
+    plot_rng = MersenneTwister(1844 + ms_file_idx)
     for charge in charges
         mask = best_nce[!, :charge] .== charge
         n_c = count(mask)
         n_c < 10 && continue
-        charge_mz = best_nce[mask, :prec_mz]
+        charge_mz = x_vals[mask]
         charge_nce = best_nce[mask, :nce]
         ci = Int(UInt8(charge))
 
         # Get the bin edges from the fitted model
-        has_bins = ci >= 1 && ci <= 6 && nce_model.offsets[ci] != 0x00
+        has_bins = ci >= 1 && ci <= 6 && bins_model.offsets[ci] != 0x00
         if has_bins
-            nb = Int(nce_model.n_bins[ci])
-            bw = Float64(nce_model.bin_width[ci])
-            mz_lo = Float64(nce_model.mz_min[ci])
+            nb = Int(bins_model.n_bins[ci])
+            bw = Float64(bins_model.bin_width[ci])
+            mz_lo = Float64(bins_model.mz_min[ci])
             bin_edges = [mz_lo + (b - 1) * bw for b in 1:nb+1]
-            bin_medians = [Float64(nce_model.medians[Int(nce_model.offsets[ci]) + b - 1]) for b in 1:nb]
+            bin_medians = [Float64(bins_model.medians[Int(bins_model.offsets[ci]) + b - 1]) for b in 1:nb]
         else
             nb = 1
             mz_lo_f, mz_hi_f = extrema(charge_mz)
             bin_edges = [Float64(mz_lo_f), Float64(mz_hi_f) + 1.0]
-            bin_medians = [Float64(nce_model(median(charge_mz), charge))]
+            bin_medians = [Float64(bins_model(median(charge_mz), charge))]
         end
 
         p = Plots.plot(
-            xlabel = "Precursor m/z", ylabel = "Best NCE",
+            xlabel = x_label, ylabel = "Best NCE",
             title = _split_title(parsed_fname, "NCE +$(charge)") *
                     "\nn=$n_c, $(nb) bins, $(length(nce_grid)) grid pts",
             size = (900, 900), topmargin = 15Plots.mm,
@@ -493,7 +582,7 @@ function fit_nce_from_psms!(
             half_w = (hi - lo) / 2
 
             # Jittered raw points
-            jittered_x = [center + half_w * 0.8 * (2 * rand() - 1) for _ in eachindex(bin_mz)]
+            jittered_x = [center + half_w * 0.8 * (2 * rand(plot_rng) - 1) for _ in eachindex(bin_mz)]
             Plots.scatter!(p, jittered_x, Float64.(bin_nce_vals),
                 alpha = 0.12, markersize = 1.5, color = :steelblue, label = (b == 1 ? "data" : nothing))
 
@@ -524,32 +613,12 @@ function fit_nce_from_psms!(
             Plots.vline!(p, [bin_edges[b]], lw = 0.5, ls = :dot, color = :gray60, label = nothing)
         end
 
-        push!(nce_plots, p)
+        write_calibration_page!(search_context, :nce, p)
     end
 
-    return nce_model, nce_plots
+    return nothing
 end
 
-function generate_wide_scout_plot(wide_frags, scout_model, parsed_fname)
-    (scout_model === nothing || length(wide_frags) < 20) && return nothing
-    frag_mzs = Float64[s.theoretical_mz for s in wide_frags]
-    da_errs = Float64[s.observed_mz - s.theoretical_mz for s in wide_frags]
-    mz_range = range(minimum(frag_mzs), maximum(frag_mzs), length=200)
-    tol_mda = Float64(scout_model.tolerance_da * 1e3)
-    bias_mda = [Float64(_scout_mz_bias_da(scout_model, Float32(m))) * 1e3 for m in mz_range]
-
-    p = Plots.scatter(frag_mzs, da_errs .* 1e3,
-        alpha=0.1, markersize=1.5, color=:steelblue, label=nothing,
-        xlabel="Fragment m/z", ylabel="Raw error (mDa)",
-        title="$(parsed_fname)\nWide scout m/z bias (n=$(length(wide_frags)), tol=±$(round(tol_mda, digits=1)) mDa)",
-        size=(600, 600), topmargin=10Plots.mm)
-    Plots.plot!(p, mz_range, bias_mda, lw=2.5, color=:red, label="m/z bias (robust linear)")
-    Plots.plot!(p, mz_range, bias_mda .+ tol_mda, lw=1.5, ls=:dash, color=:red,
-        label="collection tol: ±$(round(tol_mda, digits=1)) mDa")
-    Plots.plot!(p, mz_range, bias_mda .- tol_mda, lw=1.5, ls=:dash, color=:red, label=nothing)
-    Plots.hline!(p, [0.0], color=:black, lw=1, ls=:dot, label=nothing)
-    return p
-end
 
 """
 Process a single MS file to determine optimal mass error and RT parameters.
@@ -580,7 +649,7 @@ function process_file!(
 
     try
         initialize_models!(search_context, ms_file_idx, params)
-        scan_priority = get_ms2_scan_priority_order(spectra)
+        scan_priority = tuning_scan_priority(getZTGeometry(search_context, ms_file_idx), spectra)
         total_ms2 = length(scan_priority)
         if total_ms2 == 0
             iteration_state.failed_with_exception = true
@@ -601,6 +670,7 @@ function process_file!(
              initial_scans = Int64(TUNING_MIN_COLLECT_SCANS),
              max_peaks = 0),
         )
+        phase_caps = (0, TUNING_MAX_PSMS_PER_PRECURSOR)   # scout: PSM rows; collection: best-k rows per precursor
 
         scored_psms = DataFrame()
         for (phase_idx, phase) in enumerate(phases)
@@ -614,7 +684,8 @@ function process_file!(
                 target_psms = phase.target_psms,
                 initial_scans = phase.initial_scans,
                 max_peaks = phase.max_peaks,
-                label = phase.label)
+                label = phase.label,
+                max_per_precursor = phase_caps[phase_idx])
             n_passing = nrow(scored_psms)
             @debug_l1 "  $(phase.label): $(n_scans) scans → $(n_passing) PSMs ($(round(time()-t_phase, digits=2))s)"
 
@@ -636,7 +707,6 @@ function process_file!(
                         MassErrorModel(0.0f0, (WIDE_SCOUT_FALLBACK_TOL_PPM, WIDE_SCOUT_FALLBACK_TOL_PPM)))
                     @debug_l1 "  Scout: <$(SCOUT_MIN_FRAGS) frags, fallback ±$(WIDE_SCOUT_FALLBACK_TOL_PPM) ppm"
                 end
-                iteration_state.wide_scout_plot = generate_wide_scout_plot(frags, scout_model, parsed_fname)
 
             else
                 # Phase 2: fit RT model + final mass error model
@@ -657,6 +727,29 @@ function process_file!(
                         @debug_l1 "  RT: insufficient PSMs ($(n_passing) < $(MIN_PSMS_FOR_RT))"
                     end
 
+                    # Ion-mobility lines (timsTOF slice data) for the fragment-index IM gate of the later
+                    # stages; MainSearch refits them from its own PSMs.
+                    if getImScans(spectra) !== nothing && getInvIonMobility(getPrecursors(getSpecLib(search_context))) !== nothing
+                        im_lib_all = getInvIonMobility(getPrecursors(getSpecLib(search_context)))
+                        im_scan_col = getImScans(spectra)
+                        im_scan = Float32[Float32(im_scan_col[si]) for si in scored_psms[!, :scan_idx]]
+                        im_pred = Float32[Float32(im_lib_all[pid]) for pid in scored_psms[!, :precursor_idx]]
+                        # the z2 line only: the gate derives every charge from it (see build_im_gate)
+                        im_calib = Vector{Bool}(scored_psms[!, :target] .& (scored_psms[!, :charge] .== 2))
+                        im_line = fit_im_line(im_scan, im_pred, im_calib; min_calib = TUNING_IM_MIN_CALIB)
+                        setImModel!(search_context, ms_file_idx,
+                                    im_line === nothing ? Dict{Int, NTuple{3, Float32}}() : Dict(2 => im_line))
+                        # the instrument's scan -> 1/K0 line, for the median line (fill_missing_im_lines!)
+                        im_cal = getImCalibration(spectra)
+                        im_cal === nothing || setImCal!(search_context, ms_file_idx, im_cal)
+                        if im_line !== nothing
+                            a, b, s = im_line
+                            @debug_l1 "  IM line (tuning, z2, $(count(im_calib)) PSMs): 1/K0 = $(round(a, digits = 4)) + ($(round(b, digits = 6))) * scan, sigma = $(round(s, digits = 4))"
+                        else
+                            @debug_l1 "  IM line: fewer than $(TUNING_IM_MIN_CALIB) z2 target PSMs; the file gets the median line of the others"
+                        end
+                    end
+
                     iteration_state.best_fragments = frags
                     if n_frags >= MIN_FRAGS_FOR_INTENSITY_MODEL
                         k_val = Float32(quantile(Normal(), (1.0 + TUNING_GAUSSIAN_COVERAGE) / 2.0))
@@ -672,12 +765,13 @@ function process_file!(
                     # MS2-accepted PSMs. Installs into SearchContext for use by
                     # MainSearch MS1 features and IntegrateChromatogramsSearch.
                     try
-                        ms1_residuals = collect_ms1_residuals(spectra, scored_psms, search_context, ms_file_idx)
+                        ms1_coordinates = (Float32[], Float32[])
+                        ms1_precursor_ids = UInt32[]
+                        ms1_residuals = collect_ms1_residuals(spectra, scored_psms, search_context, ms_file_idx;
+                            qc_coordinates=ms1_coordinates, qc_precursor_ids=ms1_precursor_ids)
                         parsed_fname_ms1 = getParsedFileName(search_context, ms_file_idx)
                         ms1_dir = joinpath(getDataOutDir(search_context), "qc_plots", "ms1_mass_error_plots")
                         isdir(ms1_dir) || mkpath(ms1_dir)
-                        generate_ms1_residual_histogram(ms1_residuals, parsed_fname_ms1,
-                            joinpath(ms1_dir, "$(parsed_fname_ms1).png"))
                         fit = fit_ms1_model_from_residuals(ms1_residuals)
                         if fit !== nothing
                             ms1_model, ms1_med, ms1_mad = fit
@@ -688,17 +782,41 @@ function process_file!(
                         else
                             @debug_l1 "  MS1 model: insufficient residuals ($(length(ms1_residuals)))"
                         end
+                        if fit !== nothing || any(i -> getMsOrder(spectra, i) == 1, 1:length(spectra))
+                            sequences = getSequence(getPrecursors(getSpecLib(search_context)))
+                            ms1_group_ids = [String(sequences[pid]) for pid in ms1_precursor_ids]
+                            record_calibration_qc!(search_context.calibration_qc, :ms1_mass, ms_file_idx,
+                                ms1_calibration_qc(ms1_residuals, ms1_coordinates,
+                                    fit === nothing ? nothing : fit[1];
+                                    group_ids=ms1_group_ids))
+                            if select_calibration_plot!(search_context.calibration_qc, :ms1_mass, ms_file_idx)
+                                if fit === nothing
+                                    calibration_notice!(search_context, :ms1_mass, ms_file_idx)
+                                else
+                                    render_calibration_safely(search_context, :ms1_mass, ms_file_idx) do
+                                        generate_ms1_residual_histogram(ms1_residuals,
+                                            calibration_qc_title(search_context, :ms1_mass, ms_file_idx, parsed_fname_ms1),
+                                            joinpath(ms1_dir, "$(parsed_fname_ms1).png"))
+                                    end
+                                end
+                            end
+                        end
                     catch ms1_err
+                        record_calibration_qc!(search_context.calibration_qc, :ms1_mass, ms_file_idx,
+                            assess_calibration_qc(:ms1_mass,0,(NaN,NaN,NaN,NaN); failed=true))
+                        select_calibration_plot!(search_context.calibration_qc, :ms1_mass, ms_file_idx) &&
+                            calibration_notice!(search_context, :ms1_mass, ms_file_idx)
                         @debug_l1 "  MS1 diag failed: $(sprint(showerror, ms1_err))"
                     end
 
-                    # NCE sweep: reuse collected PSMs (skip fragment index).
-                    # Plots are accumulated for the combined NCE PDF written
-                    # by summarize_results!; the redundant per-file PDF was
-                    # dropped 2026-06-26 (same rationale as the mass-error PDF).
-                    nce_result = fit_nce_from_psms!(search_context, params, ms_file_idx, spectra, scored_psms)
-                    if nce_result !== nothing
-                        append!(results.nce_plot_objects, nce_result[2])
+                    try
+                        fit_nce_from_psms!(search_context, params, ms_file_idx, spectra, scored_psms)
+                    catch err
+                        record_calibration_qc!(search_context.calibration_qc, :nce, ms_file_idx,
+                            assess_calibration_qc(:nce,0,(NaN,NaN,NaN,NaN); failed=true))
+                        select_calibration_plot!(search_context.calibration_qc, :nce, ms_file_idx) &&
+                            calibration_notice!(search_context, :nce, ms_file_idx)
+                        rethrow()
                     end
 
                     iteration_state.best_psms = rt_psms
@@ -838,119 +956,53 @@ function process_search_results!(
     ms_file_idx::Int64,
     spectra::MassSpecData
 ) where {P<:ParameterTuningSearchParameters}
+    state = results.current_iteration_state[]
+    name = getParsedFileName(search_context, ms_file_idx)
     try
-        rt_alignment_folder = getRtAlignPlotFolder(search_context)
-        mass_error_folder = getMassErrPlotFolder(search_context)
-        parsed_fname = getParsedFileName(search_context, ms_file_idx)
-        
-        # Get iteration_state from results
-        iteration_state = results.current_iteration_state[]
-        # Note: No mass-error buffer is applied. Plots reflect the fitted model.
-        
-        # (Plot objects collected into file_rt_plots and file_mass_plots below)
-
-        # Generate RT alignment plot (as Plot object for PDF output)
-        file_rt_plots = Plots.Plot[]
-        if length(results.rt) > 0
-            irt_tol = getIrtErrors(search_context)[ms_file_idx]
-            rt_plot = generate_rt_plot(results, parsed_fname; irt_tol=irt_tol)
-            push!(file_rt_plots, rt_plot)
-        elseif iteration_state !== nothing && iteration_state.best_psms !== nothing &&
-               hasproperty(iteration_state.best_psms, :rt) &&
-               nrow(iteration_state.best_psms) > 0
-            psms = iteration_state.best_psms
-            precursors = getPrecursors(getSpecLib(search_context))
-            irts = Float32[getIrt(precursors)[pid] for pid in psms[!, :precursor_idx]]
-            rts = Float32[getRetentionTimes(spectra)[sid] for sid in psms[!, :scan_idx]]
-            p = Plots.scatter(rts, irts,
-                alpha=0.1, markersize=2, color=:steelblue, label=nothing,
-                xlabel="Retention Time RT (min)",
-                ylabel="Indexed Retention Time iRT (min)",
-                title=parsed_fname * "\n⚠️ Insufficient PSMs for RT model " *
-                      "($(iteration_state.best_psm_count) PSMs, need 750)",
-                size=(600, 600))
-            push!(file_rt_plots, p)
-        else
-            fallback_plot = generate_fallback_rt_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
-            if fallback_plot !== nothing
-                push!(file_rt_plots, fallback_plot)
+        sequences = getSequence(getPrecursors(getSpecLib(search_context)))
+        rt_psms = state === nothing ? nothing : state.best_psms
+        rt_rts = rt_psms === nothing ? Float32[] : rt_psms.rt
+        rt_irts = rt_psms === nothing ? Float32[] : rt_psms.irt_predicted
+        rt_group_ids = rt_psms === nothing ? String[] : [String(sequences[pid]) for pid in rt_psms.precursor_idx]
+        rt_record = rt_calibration_qc(rt_rts, rt_irts, getRtToIrtModel(results),
+            get(getIrtErrors(search_context), ms_file_idx, Inf32); group_ids=rt_group_ids,
+            fallback=results.diagnostics.file_statuses[ms_file_idx].used_fallback)
+        record_calibration_qc!(search_context.calibration_qc, :rt, ms_file_idx, rt_record)
+        if select_calibration_plot!(search_context.calibration_qc, :rt, ms_file_idx)
+            if isempty(results.rt)
+                calibration_notice!(search_context, :rt, ms_file_idx)
+            else
+                render_calibration_safely(search_context, :rt, ms_file_idx) do
+                    p = generate_rt_plot(results, calibration_qc_title(search_context, :rt, ms_file_idx, name);
+                        irt_tol=get(getIrtErrors(search_context), ms_file_idx, Inf32))
+                    write_calibration_page!(search_context, :rt, p)
+                end
             end
         end
-
-        # Generate mass error plot (only store in memory, no individual files)
-        current_model = getMassErrorModel(search_context, ms_file_idx)
-        has_intensity_model = current_model isa IntensityMassErrorModel
-
-        has_fragments = iteration_state !== nothing &&
-                        iteration_state.best_fragments !== nothing &&
-                        !isempty(iteration_state.best_fragments)
-
-        # Collect Plot objects for per-file PDF (display-based, correct orientation)
-        file_mass_plots = Plots.Plot[]
-
-        # Include wide scout plot if stored in iteration_state
-        if iteration_state !== nothing && iteration_state.wide_scout_plot !== nothing
-            push!(file_mass_plots, iteration_state.wide_scout_plot)
-            iteration_state.wide_scout_plot = nothing
-        end
-
-        if has_fragments
-            frag_data = extract_fragment_plot_data(iteration_state.best_fragments)
-            iteration_state.best_fragments = nothing
-            n_frags = length(frag_data.da_errs)
-
-            mda_plots = generate_mass_error_plot_mda(frag_data, current_model, parsed_fname;
-)
-            if mda_plots !== nothing
-                append!(file_mass_plots, mda_plots)
-            end
-
-            if has_intensity_model
-                @debug_l1 "IntensityMassErrorModel plots: $n_frags fragments, " *
-                    "model α=$(current_model.mz_spread_α), β=$(current_model.mz_spread_β), γ=$(current_model.mz_spread_γ)"
-                intensity_plots = generate_intensity_model_plots(frag_data, current_model, parsed_fname)
-                @debug_l2 "Generated $(length(intensity_plots)) intensity model plots"
-                append!(file_mass_plots, intensity_plots)
-            end
-        else
-            fallback_plot = generate_fallback_mass_error_plot_in_memory(results, parsed_fname, search_context, ms_file_idx)
-            if fallback_plot !== nothing
-                push!(file_mass_plots, fallback_plot)
+        fragments = state === nothing ? nothing : state.best_fragments
+        model = getMassErrorModel(search_context, ms_file_idx)
+        fallback = results.diagnostics.file_statuses[ms_file_idx].used_fallback
+        ms2_qc = ms2_calibration_qc(fragments, model, sequences; fallback)
+        record_calibration_qc!(search_context.calibration_qc, :ms2_mass, ms_file_idx, ms2_qc)
+        if select_calibration_plot!(search_context.calibration_qc, :ms2_mass, ms_file_idx)
+            if fragments === nothing || isempty(fragments)
+                calibration_notice!(search_context, :ms2_mass, ms_file_idx)
+            else
+                render_calibration_safely(search_context, :ms2_mass, ms_file_idx) do
+                    data = extract_fragment_plot_data(fragments)
+                    title = calibration_qc_title(search_context, :ms2_mass, ms_file_idx, name)
+                    plots = generate_mass_error_plot_mda(data, model, title)
+                    plots !== nothing && foreach(p -> write_calibration_page!(search_context, :ms2_mass, p), plots)
+                    if model isa IntensityMassErrorModel
+                        foreach(p -> write_calibration_page!(search_context, :ms2_mass, p),
+                            generate_intensity_model_plots(data, model, title))
+                    end
+                end
             end
         end
-
-        # Accumulate Plot objects for the combined mass-error PDF written by
-        # summarize_results!. The per-file mass-error PDF was dropped 2026-06-26:
-        # writing it took ~2.4 s per file (Plots.jl PDF backend; ~15 s of the
-        # ~44 s warm Param Tuning stage on 6-file Olsen). The combined PDF
-        # already paginates per file, so no diagnostic info is lost.
-        if !isempty(file_mass_plots)
-            append!(results.mass_plot_objects, file_mass_plots)
-        end
-
-        # Accumulate RT plots for the combined RT-alignment PDF written by
-        # summarize_results!. The per-file RT PDF was dropped 2026-06-26 (same
-        # rationale as the mass-error PDF: the combined PDF already paginates
-        # per file, so no diagnostic info is lost).
-        if !isempty(file_rt_plots)
-            append!(results.rt_plot_objects, file_rt_plots)
-        end
-
-        # Update models in search context
-        setMassErrorModel!(search_context, ms_file_idx, getMassErrorModel(results))
-        setRtIrtMap!(search_context, getRtToIrtModel(results), ms_file_idx)
-
-        # Clear plotting data to save memory
-        resize!(results.rt, 0)
-        resize!(results.irt, 0)
-        resize!(results.ppm_errs, 0)
-        resize!(results.frag_mzs, 0)
-        results.current_iteration_state[] = nothing  # Clear iteration state after use
-    catch e
-        # Plot-generation failures are non-fatal and should not mark the file as failed.
-        bt = catch_backtrace()
-        @user_error "PLOT GENERATION FAILED for file $ms_file_idx: $(typeof(e))"
-        @user_error sprint(showerror, e, bt)
+    finally
+        empty!(results.rt); empty!(results.irt); empty!(results.ppm_errs); empty!(results.frag_mzs)
+        results.current_iteration_state[] = nothing
     end
 end
 
@@ -973,49 +1025,19 @@ end
 Summarize results across all MS files.
 """
 function summarize_results!(results::ParameterTuningSearchResults, params::P, search_context::SearchContext) where {P<:ParameterTuningSearchParameters}
-    # Combine individual plots into merged PDFs using save_multipage_pdf
-    
-    try
-        rt_plots_folder = getRtAlignPlotFolder(search_context)
-        mass_error_plots_folder = getMassErrPlotFolder(search_context)
-        
-        # Combined RT alignment PDF from all files
-        if !isempty(results.rt_plot_objects)
-            rt_combined_path = joinpath(rt_plots_folder, "rt_alignment_plots.pdf")
-            save_multipage_pdf(Plots.Plot[p for p in results.rt_plot_objects], rt_combined_path)
-            empty!(results.rt_plot_objects)
-        end
-
-        # Combined mass error PDF from all files
-        if !isempty(results.mass_plot_objects)
-            mass_combined_path = joinpath(mass_error_plots_folder, "mass_error_plots.pdf")
-            save_multipage_pdf(Plots.Plot[p for p in results.mass_plot_objects], mass_combined_path)
-            empty!(results.mass_plot_objects)
-        end
-
-        # Combined NCE alignment PDF from all files
-        if !isempty(results.nce_plot_objects)
-            nce_dir = joinpath(getDataOutDir(search_context), "qc_plots", "collision_energy_alignment")
-            mkpath(nce_dir)
-            nce_combined_path = joinpath(nce_dir, "nce_alignment_plots.pdf")
-            save_multipage_pdf(Plots.Plot[p for p in results.nce_plot_objects], nce_combined_path)
-            empty!(results.nce_plot_objects)
-        end
-        empty!(results.rt_plots)
-        empty!(results.mass_plots)
-        
-        # Generate summary report
-        # TODO: Implement generate_summary_report if detailed report needed
-        # For now, the diagnostic summary below provides the key information
-        
-    catch e
-        @user_warn "Failed to merge QC plots" exception=(e, catch_backtrace())
+    root = joinpath(getDataOutDir(search_context), "qc_plots")
+    for (stage, path) in (
+        (:rt, joinpath(getRtAlignPlotFolder(search_context), "rt_alignment_plots.pdf")),
+        (:ms2_mass, joinpath(getMassErrPlotFolder(search_context), "mass_error_plots.pdf")),
+        (:ms1_mass, joinpath(root, "ms1_mass_error_plots", "ms1_calibration_notices.pdf")),
+        (:nce, joinpath(root, "collision_energy_alignment", "nce_alignment_plots.pdf")),
+    )
+        finish_calibration_report!(search_context, stage, path)
     end
-    
-    # Apply buffer to all mass error models AFTER plots are generated
-    # This ensures plots show the actual fitted values, not buffered ones
-    # Do not apply an additional buffer here; models were buffered once per file
-    
+
+    # Files without their own z2 IM line get the median of the others' (before any later stage reads them)
+    fill_missing_im_lines!(search_context, length(getMSData(search_context).file_paths))
+
     # Log diagnostic summary
     diagnostics = getDiagnostics(results)
     # Fixed: use values() to iterate over dictionary values

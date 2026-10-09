@@ -456,7 +456,7 @@ end
         mods_to_sulfur_diff; kwargs...) -> AgnosticFragFilterCtx
 
 Construct the Prosit filter context. Loads the isotope splines (the SAME model
-search uses, `assets/IsotopeSplines_10kDa_21isotopes.xml`) so the predict-time
+search uses, `assets/IsotopeSplines_10kDa_10isotopes.xml`) so the predict-time
 monoisotopic->total conversion matches `getFragIsotopes!` exactly. Filter knobs
 are passed as kwargs (BuildSpecLib hardcodes them at the call site, single source
 of truth with `buildPionLib`).

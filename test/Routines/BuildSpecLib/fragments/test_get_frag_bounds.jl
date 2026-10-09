@@ -308,3 +308,21 @@
     end
 
 end
+@testset "Constant fragment bounds (timsTOF): window edges, not centres" begin
+    # diaPASEF-like windows: three MS2 windows 25 m/z wide, one MS1 scan, one fixed MS2 range
+    center = Union{Missing, Float32}[missing, 412.5f0, 650.0f0, 900.0f0]
+    width = Union{Missing, Float32}[missing, 25.0f0, 25.0f0, 25.0f0]
+    order = UInt8[1, 2, 2, 2]
+    low = Float32[100, 100, 100, 100]
+    high = Float32[1700, 1700, 1700, 1700]
+    fb, pmin, pmax = Pioneer.get_constant_fragment_bounds(center, width, order, low, high)
+    # the top window centred at 900 and 25 wide isolates up to 912.5; the bottom one from 400
+    @test pmin == 400.0f0 && pmax == 912.5f0
+    # the fragment range is the same whatever the precursor
+    @test fb(400.0f0) == (100.0f0, 1700.0f0) && fb(912.5f0) == (100.0f0, 1700.0f0)
+    # the widest range any MS2 scan recorded; MS1 scans (and their missing centres) are ignored
+    low2 = Float32[50, 120, 100, 110]; high2 = Float32[2000, 1650, 1700, 1690]
+    fb2, _, _ = Pioneer.get_constant_fragment_bounds(center, width, order, low2, high2)
+    @test fb2(650.0f0) == (100.0f0, 1700.0f0)
+    @test_throws ArgumentError Pioneer.get_constant_fragment_bounds(center[1:1], width[1:1], order[1:1], low[1:1], high[1:1])
+end

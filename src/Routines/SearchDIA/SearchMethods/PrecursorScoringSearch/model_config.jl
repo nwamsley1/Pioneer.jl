@@ -24,7 +24,7 @@ classifier definition. This file is just the feature list + an MS1 filter.
 ==========================================================#
 
 # ADVANCED_FEATURE_SET drives the ScoringSearch Pass-1 LGBM
-# (in score_psms.jl::_score_precursor_isotope_traces_{mbr,no_mbr}).
+# (in score_psms.jl::score_precursor_isotope_traces).
 #
 # Important: MBR transfer features are not in this list. They are computed
 # from the integrated receiver chromatogram after Pass-1 and are consumed by
@@ -81,6 +81,10 @@ const ADVANCED_FEATURE_SET = [
     :Mox, :spectrum_peak_count, :sequence_length,
     :fitted_hellinger,
     :weight_ratio_at_scan, :weight_rank_at_scan,
+    # Ion-mobility residual, signed, in z2 sigma units, from the file's z2 line (one line
+    # for every charge, MainSearch add_im_error!); 0 on files without mobility data.
+    # :charge lets the trees learn each charge's own offset and spread around that line.
+    :im_error, :charge,
     :ms1_m0_mass_err_ppm,
     :ms1_weight_apex_to_m0_apex_irt,
     :ms1_m0_intensity, :ms1_m1_intensity,
@@ -96,6 +100,8 @@ const ADVANCED_FEATURE_SET = [
     :n_correlated_fragments_bitvec_rank,
     :frag_corr_strength,
     :frag_corr_effective_n,
+    # Ion-mobility slice data (see _add_fragment_chromatogram_features!); 1 without mobility data.
+    :n_scans_in_window, :weight_frac_in_cycle,
     :frag_corr_best_m0,
     :n_frags_detected_union,
     :n_frags_detected_intersection,
@@ -126,5 +132,5 @@ const ADVANCED_FEATURE_SET = [
     # 2026-05-21: removed 11 features added during the 2026-05-20 experiment
     # (5 max_*, 3 Tier-2 re-adds, 3 min_*). 8-file Olsen showed only ~+1% ID
     # gain (commit 8f2a1583) — not worth the compute + disk cost. Reverted
-    # along with their computation in select_best_per_precursor!.
+    # along with their computation in select_best_per_precursor.
 ]

@@ -3,30 +3,144 @@
 # This file is part of Pioneer.jl
 # Licensed under AGPL v3+; see LICENSE.
 
+# Candidate features stay in bounded blocks; only labels, IDs and scores span the search.
+struct _MBRFeatureStore
+    data::DataFrameBlockStore
+    schema::DataFrame
+end
+_MBRFeatureStore(path; budget::Int=64*1024^2) =
+    _MBRFeatureStore(DataFrameBlockStore(path, budget), DataFrame())
+Base.close(store::_MBRFeatureStore) = close(store.data)
+
+function _mbr_store_features!(store::_MBRFeatureStore, frame::DataFrame)
+    columns = unique(vcat(MBR_FTR_FEATURES_TRUE,
+        (_mbr_ftr_features_false(k) for k in 1:MBR_N_COUNTERFACTUALS)...))
+    filter!(col -> hasproperty(frame, col), columns)
+    block = select(frame, columns; copycols=true)
+    append!(store.schema, block[1:0, :]; cols=:union)
+    _store_dataframe_block!(store.data, block)
+    return nothing
+end
+
+function _mbr_copy_feature_rows!(dest, src, positions)
+    @inbounds for j in axes(src, 2), i in eachindex(positions)
+        dest[positions[i], j] = src[i, j]
+    end
+end
+
+function _mbr_gather_feature_rows(store::_MBRFeatureStore, true_features, false_features,
+                                  rows::AbstractVector{Int}, n_candidates::Int)
+    dest = Matrix{Float32}(undef, length(rows), length(true_features))
+    positions = [Int[] for _ in store.data.row_ends]
+    for (position, row) in enumerate(rows)
+        1 <= row <= (1 + length(false_features)) * n_candidates || throw(BoundsError(rows, position))
+        candidate = mod(row - 1, n_candidates) + 1
+        push!(positions[searchsortedfirst(store.data.row_ends, candidate)], position)
+    end
+    columns = unique(vcat(true_features, false_features...))
+    for index in eachindex(positions)
+        selected = positions[index]
+        isempty(selected) && continue
+        first_row = index == 1 ? 1 : store.data.row_ends[index-1] + 1
+        n = store.data.row_ends[index] - first_row + 1
+        local_rows = [div(rows[p] - 1, n_candidates) * n +
+                      mod(rows[p] - 1, n_candidates) + 2 - first_row for p in selected]
+        block = _dataframe_block(store.data, index)
+        # Match the unioned in-memory table: absent feature values gather as zero.
+        if any(col -> !hasproperty(block, col), columns)
+            block = copy(block)
+            for col in columns
+                hasproperty(block, col) || (block[!, col] = zeros(Float32, n))
+            end
+        end
+        gathered = _mbr_gather_feature_rows(block, true_features, false_features, local_rows, n)
+        _mbr_copy_feature_rows!(dest, gathered, selected)
+    end
+    return dest
+end
+
+function _mbr_validate_sidecar_rows(
+    main_pids, main_scans, pass1_pids, pass1_scans,
+    mbr_pids, mbr_scans, row_indices, path,
+)
+    n = length(main_pids)
+    length(pass1_pids) == length(pass1_scans) == n ||
+        error("Pass-1 sidecar row-count mismatch at $path")
+    @inbounds for row in 1:n
+        (main_pids[row] == pass1_pids[row] &&
+         main_scans[row] == pass1_scans[row]) ||
+            error("Pass-1 sidecar misalignment at row $row of $path")
+    end
+    length(mbr_pids) == length(mbr_scans) == length(row_indices) ||
+        error("MBR sidecar row-count mismatch at $path")
+    previous = 0
+    for (sidecar_row, row) in enumerate(row_indices)
+        row isa Integer && previous < row <= n ||
+            error("Invalid MBR sidecar row index $row at $path")
+        (main_pids[row] == mbr_pids[sidecar_row] &&
+         main_scans[row] == mbr_scans[sidecar_row]) ||
+            error("MBR sidecar misalignment at row $row of $path")
+        previous = row
+    end
+    return nothing
+end
+
+function _mbr_feature_row_indices(main, pass1, mbr, path)
+    rows = hasproperty(mbr, :row_idx) ? mbr.row_idx : (1:length(main.precursor_idx))
+    _mbr_validate_sidecar_rows(
+        main.precursor_idx, main.scan_idx, pass1.precursor_idx, pass1.scan_idx,
+        mbr.precursor_idx, mbr.scan_idx, rows, path,
+    )
+    return rows
+end
+
+function _mbr_candidate_sidecar_mask(
+    global_qvals, qvals, missing_true, rows, sparse::Bool, threshold, path,
+)
+    mask = falses(length(qvals))
+    selected = Int[]
+    for (sidecar_row, row) in enumerate(rows)
+        global_qval = Float32(global_qvals[row])
+        qval = Float32(qvals[row])
+        candidate = isfinite(global_qval) && global_qval <= threshold &&
+            !(isfinite(qval) && qval <= threshold) && !Bool(missing_true[sidecar_row])
+        sparse && !candidate && error("Ineligible MBR sidecar candidate at row $row of $path")
+        candidate || continue
+        mask[row] = true
+        push!(selected, sidecar_row)
+    end
+    return mask, selected
+end
+
+function _mbr_baseline_counts(qvals, global_qvals, targets, threshold)
+    base_targets = base_decoys = 0
+    @inbounds for row in 1:length(qvals)
+        qval, global_qval = Float32(qvals[row]), Float32(global_qvals[row])
+        (isfinite(qval) && qval <= threshold &&
+         isfinite(global_qval) && global_qval <= threshold) || continue
+        Bool(targets[row]) ? (base_targets += 1) : (base_decoys += 1)
+    end
+    return base_targets, base_decoys
+end
+
 """
     load_postintegration_mbr_candidates(file_paths, q_value_threshold)
 
-Materialise **only the MBR candidate rows** across all files, plus what the caller needs to expand
-results back to full length later.
-
-Previously this concatenated every row of every file into one DataFrame and the candidate mask was
-applied afterwards. Candidates are only ~10% of rows (76,075 of 742,179 on a 6-file run), so the
-frame was ~10x larger than anything downstream used -- and because `parts` and the `vcat` result
-coexist, peak was ~2x that again. Extrapolated to 100 files that is ~9 GB to hand ~0.5 GB of
-candidates to the model.
-
-Safe because every input to the decision is row-local: `_mbr_candidate_mask_kernel` reads only that
-row's q-values and missing flag, the baseline predicate is row-local, and
-`_mbr_add_hellinger_contrasts!` compares a row's own four blocks. All cross-run features were already
-resolved into each file's sidecar by `compute_postintegration_mbr_features!` before this runs.
-
-Returns `(candidates, masks, n_rows, base_targets, base_decoys)`; `masks[i]` and `n_rows[i]` describe
-file `i` so `_write_mbr_recovery_sidecars!` can scatter per-candidate results back over all rows.
+Load candidate features and retain per-file masks for scattering recovery results
+back to their original rows. Accepts indexed candidate sidecars and legacy dense
+sidecars. Baseline target/decoy counts are accumulated from all main-table rows.
+With `feature_store`, return candidate metadata only and store model features in
+blocks of at most `feature_batch_size` rows. The cache budget excludes the current
+input block, gathered training/prediction matrices, and Arrow input buffers.
 """
 function load_postintegration_mbr_candidates(
     file_paths::Vector{String},
-    q_value_threshold::Float32,
+    q_value_threshold::Float32;
+    feature_store::Union{Nothing, _MBRFeatureStore} = nothing,
+    feature_batch_size::Int = 50_000,
 )
+    feature_batch_size > 0 || throw(ArgumentError("feature_batch_size must be positive"))
+    metadata = DataFrame()
     parts = DataFrame[]
     masks = BitVector[]
     n_rows = Int[]
@@ -41,73 +155,62 @@ function load_postintegration_mbr_candidates(
         pass1 = Arrow.Table(pass1_path)
         mbr = Arrow.Table(mbr_path)
         n = length(main.precursor_idx)
-        length(pass1.precursor_idx) == n ||
-            error("Pass-1 sidecar row-count mismatch at $pass1_path")
-        length(mbr.precursor_idx) == n ||
-            error("MBR sidecar row-count mismatch at $mbr_path")
-        @inbounds for row in 1:n
-            (
-                main.precursor_idx[row] == pass1.precursor_idx[row] ==
-                    mbr.precursor_idx[row] &&
-                main.scan_idx[row] == pass1.scan_idx[row] ==
-                    mbr.scan_idx[row]
-            ) || error("MBR sidecar misalignment at row $row of $path")
-        end
-
-        # Same predicate as the old whole-frame path, evaluated here so only survivors materialise.
-        mask = _mbr_candidate_mask_kernel(
-            main.global_qval,
-            main.qval,
-            Tables.getcolumn(mbr, :MBR_best_is_missing_true),
-            q_value_threshold,
+        rows = _mbr_feature_row_indices(main, pass1, mbr, path)
+        mask, sidecar_rows = _mbr_candidate_sidecar_mask(
+            main.global_qval, main.qval, mbr.MBR_best_is_missing_true,
+            rows, hasproperty(mbr, :row_idx), q_value_threshold, path,
         )
-        # Baseline counts need every row, but they are only two integers. Predicate must match
-        # apply_postintegration_mbr_rescoring! exactly: BOTH q-values under threshold.
-        @inbounds for row in 1:n
-            qv = Float32(main.qval[row])
-            gqv = Float32(main.global_qval[row])
-            (isfinite(qv) && qv <= q_value_threshold &&
-             isfinite(gqv) && gqv <= q_value_threshold) || continue
-            Bool(main.target[row]) ? (base_targets += 1) : (base_decoys += 1)
-        end
+        targets, decoys = _mbr_baseline_counts(
+            main.qval, main.global_qval, main.target, q_value_threshold,
+        )
+        base_targets += targets
+        base_decoys += decoys
         push!(masks, mask)
         push!(n_rows, n)
-        if !any(mask)
-            continue
-        end
+        isempty(sidecar_rows) && continue
+        batches = feature_store === nothing ? (eachindex(sidecar_rows),) :
+            Iterators.partition(eachindex(sidecar_rows), feature_batch_size)
+        for batch in batches
+            selected_sidecar_rows = @view sidecar_rows[batch]
+            candidate_rows = rows[selected_sidecar_rows]
 
-        frame = DataFrame(
-            precursor_idx = UInt32.(main.precursor_idx[mask]),
-            scan_idx = UInt32.(main.scan_idx[mask]),
-            ms_file_idx = UInt32.(main.ms_file_idx[mask]),
-            cv_fold = UInt8.(main.cv_fold[mask]),
-            target = Bool.(main.target[mask]),
-            qval = Float32.(main.qval[mask]),
-            global_qval = Float32.(main.global_qval[mask]),
-            trace_prob_prepass = Float32.(pass1.trace_prob_prepass[mask]),
-            trace_prob_infold = Float32.(pass1.trace_prob_infold[mask]),
-        )
-        for feature in MBR_RECEIVER_FEATURES
-            feature === :trace_prob_infold && continue
-            hasproperty(main, feature) || continue
-            frame[!, feature] = Tables.getcolumn(main, feature)[mask]
+            frame = DataFrame(
+                precursor_idx = UInt32.(main.precursor_idx[candidate_rows]),
+                scan_idx = UInt32.(main.scan_idx[candidate_rows]),
+                ms_file_idx = UInt32.(main.ms_file_idx[candidate_rows]),
+                cv_fold = UInt8.(main.cv_fold[candidate_rows]),
+                target = Bool.(main.target[candidate_rows]),
+                qval = Float32.(main.qval[candidate_rows]),
+                global_qval = Float32.(main.global_qval[candidate_rows]),
+                trace_prob_prepass = Float32.(pass1.trace_prob_prepass[candidate_rows]),
+                trace_prob_infold = Float32.(pass1.trace_prob_infold[candidate_rows]),
+            )
+            for feature in MBR_RECEIVER_FEATURES
+                feature === :trace_prob_infold && continue
+                hasproperty(main, feature) || continue
+                frame[!, feature] = Tables.getcolumn(main, feature)[candidate_rows]
+            end
+            for feature in Symbol.(Tables.columnnames(mbr))
+                feature in (:row_idx, :precursor_idx, :scan_idx) && continue
+                frame[!, feature] = Tables.getcolumn(mbr, feature)[selected_sidecar_rows]
+            end
+            if feature_store === nothing
+                push!(parts, frame)
+            else
+                metadata_columns = [:precursor_idx, :scan_idx, :ms_file_idx, :cv_fold,
+                    :target, :qval, :global_qval,
+                    (_mbr_missing_feature(k) for k in 1:MBR_N_COUNTERFACTUALS)...]
+                _mbr_add_hellinger_contrasts!(frame)
+                _mbr_store_features!(feature_store, frame)
+                append!(metadata, select(frame, metadata_columns); cols=:union)
+            end
         end
-        for feature in Symbol.(Tables.columnnames(mbr))
-            feature in (:precursor_idx, :scan_idx) && continue
-            frame[!, feature] = Tables.getcolumn(mbr, feature)[mask]
-        end
-        push!(parts, frame)
     end
-    # Typed and empty rather than bare. With no surviving candidate anywhere,
-    # _write_mbr_recovery_sidecars_from_candidates! still runs -- it must, since
-    # it writes one recovery sidecar per file and pipeline.jl errors with
-    # "Missing MBR recovery sidecar" if any is absent -- and it reads
-    # :precursor_idx and :scan_idx off this frame. The other nine columns it
-    # needs are supplied by apply_postintegration_mbr_rescoring!, which sizes
-    # them to nrow *before* its own `n == 0` early return. A bare DataFrame()
-    # has no columns at all, so those two reads threw ArgumentError; zero rows
-    # is a state every consumer here already handles.
-    candidates = if isempty(parts)
+    feature_store === nothing || flush(feature_store.data)
+    # Recovery-sidecar writing also requires the ID columns when no candidates survive.
+    candidates = if feature_store !== nothing && !isempty(metadata)
+        metadata
+    elseif isempty(parts)
         DataFrame(
             precursor_idx = UInt32[],
             scan_idx = UInt32[],
@@ -143,18 +246,7 @@ function load_postintegration_mbr_frame(file_paths::Vector{String})
         pass1 = Arrow.Table(pass1_path)
         mbr = Arrow.Table(mbr_path)
         n = length(main.precursor_idx)
-        length(pass1.precursor_idx) == n ||
-            error("Pass-1 sidecar row-count mismatch at $pass1_path")
-        length(mbr.precursor_idx) == n ||
-            error("MBR sidecar row-count mismatch at $mbr_path")
-        @inbounds for row in 1:n
-            (
-                main.precursor_idx[row] == pass1.precursor_idx[row] ==
-                    mbr.precursor_idx[row] &&
-                main.scan_idx[row] == pass1.scan_idx[row] ==
-                    mbr.scan_idx[row]
-            ) || error("MBR sidecar misalignment at row $row of $path")
-        end
+        rows = _mbr_feature_row_indices(main, pass1, mbr, path)
 
         frame = DataFrame(
             precursor_idx = collect(UInt32.(main.precursor_idx)),
@@ -173,18 +265,18 @@ function load_postintegration_mbr_frame(file_paths::Vector{String})
             frame[!, feature] = collect(Tables.getcolumn(main, feature))
         end
         for feature in Symbol.(Tables.columnnames(mbr))
-            feature in (:precursor_idx, :scan_idx) && continue
-            frame[!, feature] = collect(Tables.getcolumn(mbr, feature))
+            feature in (:row_idx, :precursor_idx, :scan_idx) && continue
+            values = Tables.getcolumn(mbr, feature)
+            expanded = eltype(values) <: Bool ? trues(n) : fill(-1.0f0, n)
+            expanded[rows] = values
+            frame[!, feature] = expanded
         end
         push!(parts, frame)
     end
     return isempty(parts) ? DataFrame() : vcat(parts...; cols = :union)
 end
 
-# Runs over the FULL staged frame, so it is the widest of the MBR row loops. `frame.col` infers as
-# AbstractVector and `frame[row, col]` additionally does a Dict{Symbol,Int} lookup per cell, so the
-# loop below is moved behind a barrier that receives the columns. Measured at n = 391,370 with a
-# 100-column frame: 300.4 ms / 71.7 MB inline versus 0.8 ms / 0.1 MB here, identical output.
+# Resolve DataFrame columns once so the row loop specializes on their concrete types.
 function _mbr_candidate_mask(
     frame::DataFrame,
     q_value_threshold::Float32,
@@ -206,7 +298,6 @@ function _mbr_candidate_mask_kernel(
     n = length(global_qval_col)
     candidates = falses(n)
     @inbounds for row in 1:n
-        # Each q-value column used to be fetched twice per row (isfinite, then the comparison).
         global_qval = Float32(global_qval_col[row])
         run_qval = Float32(qval_col[row])
         global_pass = isfinite(global_qval) && global_qval <= q_value_threshold
@@ -220,13 +311,14 @@ function _mbr_candidate_mask_kernel(
     return candidates
 end
 
-function _mbr_available_feature_sets(frame::DataFrame)
+function _mbr_available_feature_sets(frame::DataFrame; ion_mobility::Bool = true)
     true_features = Symbol[]
     false_features = [
         Symbol[] for _ in 1:MBR_N_COUNTERFACTUALS
     ]
     for feature in MBR_FTR_FEATURES_TRUE
         hasproperty(frame, feature) || continue
+        ion_mobility || !(feature in MBR_ION_MOBILITY_FEATURES) || continue
         if feature in MBR_RECEIVER_FEATURES ||
            feature in MBR_SHARED_FEATURES
             all_present = all(
@@ -279,13 +371,7 @@ end
         _mbr_false_feature(stem, counterfactual_idx)
 end
 
-# Rank and margin of one pairing against the other three, for a single stem. Extracted so the column
-# accesses specialise: `frame[row, col]` is a two-argument getindex doing a Dict{Symbol,Int} lookup
-# PER CELL, and this runs 4 stems x 4 blocks x ~4 comparisons per row. Measured on the candidate
-# frame (n = 40,150): 474.9 ms / 92.7 MB inline versus 3.5 ms / 5.0 MB here, identical output.
-#
-# `cols` is a Tuple so it arrives concretely typed -- tuples are covariant, so the kernel specialises
-# on the real column types even though the caller can only infer `Tuple`.
+# A concrete column tuple avoids per-cell DataFrame lookups in rank/margin comparisons.
 function _mbr_contrast_rank_margin(cols::Tuple, source_idx::Int, n::Int)
     ranks = fill(-1.0f0, n)
     margins = fill(-1.0f0, n)
@@ -398,8 +484,7 @@ function _mbr_iteration_metrics(
         eval_labels = labels[eval_indices]
         eval_qvalues = Vector{Float32}(undef, length(eval_indices))
         eval_peps = Vector{Float32}(undef, length(eval_indices))
-        get_qvalues!(eval_scores, eval_labels, eval_qvalues)
-        get_PEP!(eval_scores, eval_labels, eval_peps)
+        get_score_statistics!(eval_scores, eval_labels, eval_qvalues, eval_peps)
         qvalues[eval_indices] .= eval_qvalues
         peps[eval_indices] .= eval_peps
     end
@@ -433,13 +518,8 @@ end
 """
     _mbr_sample_positions(n, limit) -> Vector{Int}
 
-The 1-based positions `_mbr_evenly_spaced_sample` would pick out of a length-`n` list, without
-needing the list. Lets the capped branch of `_mbr_training_rows` emit only the rows it keeps rather
-than materialising every eligible row index first: selecting 1.875M negatives out of, say, 60M
-eligible ones used to allocate a 60M-element `Vector{Int}` (480 MB) purely to index into it.
-
-Positions are strictly increasing, so a single ordered pass over the candidates can match them off
-in lockstep.
+Return increasing, evenly spaced positions without allocating all eligible row indices.
+A single ordered pass can match these positions to the selected candidates.
 """
 function _mbr_sample_positions(n::Int, limit::Int)
     limit >= 0 || throw(ArgumentError("MBR training limit must be nonnegative"))
@@ -638,18 +718,7 @@ function _mbr_training_rows(
     )
 end
 
-# Row indices into `x` for each CV fold: the block-0 row of every candidate held out in that fold,
-# plus each counterfactual block that actually exists for it.
-#
-# This used to be rebuilt inside _mbr_fit_oof_iteration, i.e. on all 16 calls (2 folds x 8
-# semi-supervised iterations), from `folds`, `present` and n_candidates -- all three fixed for the
-# whole search, so all 16 builds produced identical vectors. It is now built once. Measured at
-# N = 391,370 with 3 counterfactuals: 487.5 ms / 271.2 MB rebuilt versus 11.9 ms / 33.9 MB hoisted.
-# The inline version also had no sizehint!, so most of that allocation was geometric regrowth; the
-# count-then-fill below removes it.
-#
-# Only `positive_top` changes between iterations (the semi-supervised label update), and it does not
-# enter this calculation -- so the hoist is value-preserving, not an approximation.
+# Held-out candidate and available counterfactual rows, built once for all iterations.
 function _mbr_test_rows_by_fold(folds::Vector{UInt8}, present::BitMatrix)
     n_candidates, n_counterfactuals = size(present)
     rows_by_fold = Vector{Vector{Int}}()
@@ -681,7 +750,7 @@ function _mbr_test_rows_by_fold(folds::Vector{UInt8}, present::BitMatrix)
 end
 
 function _mbr_fit_oof_iteration(
-    candidate_frame::DataFrame,
+    candidate_frame,
     true_features::Vector{Symbol},
     false_features::Vector{Vector{Symbol}},
     folds::Vector{UInt8},
@@ -730,89 +799,50 @@ function _mbr_fit_oof_iteration(
             continue
         end
 
+        phase_started = time()
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) training gather starting: rows=$(length(train_rows)), features=$(length(true_features))"
+        train_matrix = _mbr_gather_feature_rows(
+            candidate_frame, true_features, false_features, train_rows, n_candidates)
+        labels = _prepare_labels(train_labels)
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) training gather complete: elapsed=$(round(time() - phase_started; digits=2))s"
+
         classifier = build_lightgbm_classifier(; SHARED_LGBM_HP...)
-        LightGBM.fit!(
-            classifier,
-            _mbr_gather_feature_rows(
-                candidate_frame, true_features, false_features,
-                train_rows, n_candidates),
-            _prepare_labels(train_labels);
-            verbosity = -1,
-        )
-        # Batched so the gathered matrix stays bounded regardless of candidate count. Predictions
-        # are per-row independent, so this is equivalent to one call over all test rows.
+        phase_started = time()
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) fit starting: rows=$(length(train_rows)), threads=$(classifier.num_threads), iterations=$(classifier.num_iterations)"
+        LightGBM.fit!(classifier, train_matrix, labels; verbosity=-1)
+        _detach_lightgbm_training_data!(classifier)
+        train_matrix = nothing
+        labels = nothing
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) fit complete: elapsed=$(round(time() - phase_started; digits=2))s"
+
+        prediction_started = time()
+        last_progress = prediction_started
+        gather_seconds = 0.0
+        predict_seconds = 0.0
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) prediction starting: rows=$(length(test_rows)), batch_size=$MBR_PREDICT_ROW_BATCH"
         for batch_start in 1:MBR_PREDICT_ROW_BATCH:length(test_rows)
             batch_stop = min(batch_start + MBR_PREDICT_ROW_BATCH - 1, length(test_rows))
             batch_rows = @view test_rows[batch_start:batch_stop]
-            raw = LightGBM.predict(
-                classifier,
-                _mbr_gather_feature_rows(
-                    candidate_frame, true_features, false_features,
-                    batch_rows, n_candidates),
-            )
-            predictions = ndims(raw) == 2 ? dropdims(raw; dims = 2) : raw
+            phase_started = time()
+            test_matrix = _mbr_gather_feature_rows(
+                candidate_frame, true_features, false_features, batch_rows, n_candidates)
+            gather_seconds += time() - phase_started
+            phase_started = time()
+            raw = LightGBM.predict(classifier, test_matrix)
+            predict_seconds += time() - phase_started
+            test_matrix = nothing
+            predictions = ndims(raw) == 2 ? dropdims(raw; dims=2) : raw
             @inbounds scores[batch_rows] .= Float32.(predictions)
+            now = time()
+            if now - last_progress >= 60
+                @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) prediction progress: rows=$batch_stop/$(length(test_rows)), gather=$(round(gather_seconds; digits=2))s, predict=$(round(predict_seconds; digits=2))s, elapsed=$(round(now - prediction_started; digits=2))s"
+                last_progress = now
+            end
         end
+        @debug_l1 "MBR transfer model OOF fold $(Int(test_fold)) prediction complete: rows=$(length(test_rows)), gather=$(round(gather_seconds; digits=2))s, predict=$(round(predict_seconds; digits=2))s, elapsed=$(round(time() - prediction_started; digits=2))s"
         last_classifier = classifier
     end
     return scores, last_classifier
-end
-
-# Function barrier for the scatter below. `candidate_frame[!, col]` infers as AbstractVector, so
-# indexing it in a loop IN THE SAME FUNCTION makes every element a dynamic dispatch that boxes its
-# result. Measured on a representative 200,000-row x 104-column frame with 12 threads, identical
-# output: 806.7 ms / 713.3 MB inline versus 9.7 ms / 79.4 MB through this barrier (82.8x) -- for a
-# matrix that is itself only 79.3 MB, i.e. the inline version allocated 9x its own output in boxes.
-@inline function _mbr_fill_feature_block!(
-    x::Matrix{Float32},
-    column,
-    offset::Int,
-    n_candidates::Int,
-    feature_idx::Int,
-)
-    @inbounds for candidate_idx in 1:n_candidates
-        value = column[candidate_idx]
-        x[offset + candidate_idx, feature_idx] =
-            value === missing ? 0.0f0 : Float32(value)
-    end
-    return nothing
-end
-
-function _mbr_feature_matrix(
-    candidate_frame::DataFrame,
-    true_features::Vector{Symbol},
-    false_features::Vector{Vector{Symbol}},
-)
-    n_candidates = nrow(candidate_frame)
-    n_features = length(true_features)
-    n_blocks = 1 + length(false_features)
-    x = Matrix{Float32}(
-        undef,
-        n_blocks * n_candidates,
-        n_features,
-    )
-    Threads.@threads for feature_idx in 1:n_features
-        _mbr_fill_feature_block!(
-            x,
-            candidate_frame[!, true_features[feature_idx]],
-            0,
-            n_candidates,
-            feature_idx,
-        )
-        for counterfactual_idx in eachindex(false_features)
-            _mbr_fill_feature_block!(
-                x,
-                candidate_frame[
-                    !,
-                    false_features[counterfactual_idx][feature_idx],
-                ],
-                counterfactual_idx * n_candidates,
-                n_candidates,
-                feature_idx,
-            )
-        end
-    end
-    return x
 end
 
 """
@@ -824,7 +854,7 @@ experiment size; predictions are per-row independent so batching does not change
 const MBR_PREDICT_ROW_BATCH = 1_000_000
 
 # Typed kernel for the gather below. `candidate_frame[!, col]` infers as AbstractVector, so reading
-# it directly in the loop would dispatch per element (the same reason _mbr_fill_feature_block! exists).
+# it directly in the loop would dispatch per element.
 function _mbr_gather_kernel!(
     dest::Matrix{Float32},
     column::AbstractVector,
@@ -845,11 +875,8 @@ end
 
 Materialise just the requested rows of the block-stacked feature matrix.
 
-`_mbr_feature_matrix` built the whole `(1 + MBR_N_COUNTERFACTUALS) * n_candidates` x n_features
-expansion up front, but it was only ever consumed as `x[train_rows, :]` and `x[test_rows, :]` --
-never as a whole. Gathering on demand keeps the identical row numbering (global row `r` is block
-`(r-1) ÷ n_candidates`, candidate `(r-1) % n_candidates + 1`) while making memory a function of the
-rows actually requested rather than of the experiment size.
+Global row `r` identifies block `(r-1) ÷ n_candidates` and candidate
+`(r-1) % n_candidates + 1`. Memory scales with the requested rows.
 
 Rows are grouped by block first so each (block, feature) pair reads one concrete column, which is
 what lets the kernel specialise.
@@ -893,11 +920,11 @@ end
 function _mbr_semisupervised_oof(
     candidate_frame::DataFrame,
     true_features::Vector{Symbol},
-    false_features::Vector{Vector{Symbol}},
+    false_features::Vector{Vector{Symbol}};
+    feature_source = candidate_frame,
 )
+    preparation_started = time()
     n_candidates = nrow(candidate_frame)
-    # The block-stacked matrix is no longer materialised; _mbr_fit_oof_iteration gathers the rows it
-    # needs. _mbr_feature_matrix is retained as the reference implementation of the layout.
     present = falses(n_candidates, MBR_N_COUNTERFACTUALS)
     @inbounds for counterfactual_idx in 1:MBR_N_COUNTERFACTUALS
         missing = candidate_frame[
@@ -918,12 +945,13 @@ function _mbr_semisupervised_oof(
     # Fixed for the whole search: depends only on folds and present, neither of which the
     # semi-supervised loop mutates.
     test_rows_by_fold = _mbr_test_rows_by_fold(folds, present)
+    @debug_l1 "MBR transfer model OOF preparation: rows=$n_candidates, elapsed=$(round(time() - preparation_started; digits=2))s"
     best_state = nothing
     previous_positive = -1
 
     for iteration in 1:MBR_SEMISUPERVISED_MAX_ITERATIONS
         scores, classifier = _mbr_fit_oof_iteration(
-            candidate_frame,
+            feature_source,
             true_features,
             false_features,
             folds,
@@ -954,7 +982,10 @@ function _mbr_semisupervised_oof(
                   "receiver decoys=$(count(receiver_decoy_top)); " *
                   "FTR≤$(100 * MBR_SEMISUPERVISED_FTR_THRESHOLD)% " *
                   "target transfers=$(metrics.n_positive)"
-        if iteration > 1 && !_scoring_target_gain_sufficient(
+        if metrics.n_positive == 0
+            @debug_l1 "MBR transfer model stopping: no confident target transfers remain; using iteration $(best_state.iteration)"
+            break
+        elseif iteration > 1 && !_scoring_target_gain_sufficient(
             previous_positive,
             metrics.n_positive,
         )
@@ -1151,6 +1182,8 @@ function apply_postintegration_mbr_rescoring!(
     q_value_threshold::Float32,
     baseline_counts::Union{Nothing, Tuple{Int, Int}} = nothing,
     frame_is_candidates::Bool = false,
+    feature_source::Union{Nothing, _MBRFeatureStore} = nothing,
+    ion_mobility::Bool = true,
 )
     n = nrow(frame)
     frame[!, :mbr_recovered] = falses(n)
@@ -1223,13 +1256,19 @@ function apply_postintegration_mbr_rescoring!(
         )
     end
 
-    candidates = frame[candidate_indices, :]
-    _mbr_add_hellinger_contrasts!(candidates)
-    true_features, false_features = _mbr_available_feature_sets(candidates)
+    candidates = frame_is_candidates ? frame : frame[candidate_indices, :]
+    preparation_started = time()
+    feature_source === nothing || frame_is_candidates ||
+        throw(ArgumentError("Stored MBR features require a candidate-only frame"))
+    feature_source === nothing && _mbr_add_hellinger_contrasts!(candidates)
+    true_features, false_features = _mbr_available_feature_sets(
+        feature_source === nothing ? candidates : feature_source.schema; ion_mobility)
+    @debug_l1 "MBR transfer model feature preparation: rows=$(nrow(candidates)), features=$(length(true_features)), elapsed=$(round(time() - preparation_started; digits=2))s"
     best_state, present = _mbr_semisupervised_oof(
         candidates,
         true_features,
-        false_features,
+        false_features;
+        feature_source = feature_source === nothing ? candidates : feature_source,
     )
     n_candidates = nrow(candidates)
     real_scores = copy(best_state.scores[1:n_candidates])

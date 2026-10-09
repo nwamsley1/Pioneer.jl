@@ -37,10 +37,11 @@ function getFragIsotopes!(
         prec_mz,
         prec_charge,
         prec_sulfur_count,
-        frag)
+        frag,
+        frag_iso_idx_range)
 
-    for i in reverse(range(1, length(frag_isotopes)))
-        frag_isotopes[i] = total_fragment_intensity * frag_isotopes[i]
+    for iso_idx in reverse(frag_iso_idx_range)
+        frag_isotopes[iso_idx + 1] = total_fragment_intensity * frag_isotopes[iso_idx + 1]
     end
 end
 

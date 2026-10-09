@@ -23,6 +23,7 @@ protein-level q-value calculation after chromatogram integration and protein
 inference have completed.
 """
 struct ProteinScoringSearch <: SearchMethod end
+uses_per_file_spectra(::ProteinScoringSearch) = false   # works from the PSM files; per-file hooks are empty
 
 struct ProteinScoringSearchResults <: SearchResults end
 
@@ -36,7 +37,6 @@ struct ProteinScoringSearchParameters <: SearchParameters
     min_peptides::Int64
     q_value_threshold::Float32
     min_pep_neg_threshold_itr::Float32
-    q_value_interpolation_points_per_bin::Int64
     write_qc_plots::Bool
 
     function ProteinScoringSearchParameters(params::PioneerParameters)
@@ -49,7 +49,6 @@ struct ProteinScoringSearchParameters <: SearchParameters
             Int64(protein_scoring_params.min_peptides),
             _resolve_q_value_threshold(global_params),
             PROTEIN_SCORING_MIN_PEP_NEG_THRESHOLD_ITR,
-            Int64(ml_params.pep_bin_size),
             Bool(protein_scoring_params.write_qc_plots)
         )
     end
@@ -93,13 +92,15 @@ function summarize_results!(
 )
     indexed_paths = get_all_indexed_paths(getPassingPsms, search_context)
     isempty(indexed_paths) && return nothing
+    paths = String[path for (_, path) in indexed_paths]
+    sidecar_index = index_sidecar_paths(paths)
 
     # Files with zero rows weren't annotated by ProteinInferenceSearch (the
     # pipeline short-circuits on empty inputs), so they lack the
     # `inferred_protein_group` column. Drop them here.
     passing_refs = PSMFileReference[]
     for (_, path) in indexed_paths
-        ref = PSMFileReference(path)
+        ref = PSMFileReference(path; sidecar_paths=sidecar_index[path])
         row_count(ref) > 0 && push!(passing_refs, ref)
     end
     isempty(passing_refs) && return nothing
@@ -108,12 +109,12 @@ function summarize_results!(
     protein_ambiguity_candidates = if protein_inference_results isa ProteinInferenceSearchResults
         protein_inference_results.protein_ambiguity_candidates
     else
-        Dict{UInt32, Vector{ProteinKey}}()
+        Dict{UInt32, Vector{PGKey}}()
     end
     protein_peptide_opportunities = if protein_inference_results isa ProteinInferenceSearchResults
         protein_inference_results.protein_peptide_opportunities
     else
-        Dict{ProteinKey, ProteinPeptideOpportunityCounts}()
+        Dict{PGKey, ProteinPeptideOpportunityCounts}()
     end
 
     run_protein_scoring!(
@@ -126,7 +127,6 @@ function summarize_results!(
         min_peptides = params.min_peptides,
         write_qc_plots = params.write_qc_plots,
         min_pep_neg_threshold_itr = params.min_pep_neg_threshold_itr,
-        q_value_interpolation_points_per_bin = params.q_value_interpolation_points_per_bin
     )
     empty!(protein_ambiguity_candidates)
     empty!(protein_peptide_opportunities)

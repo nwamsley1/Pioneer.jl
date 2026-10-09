@@ -6,12 +6,37 @@
 
 abstract type LibraryPrecursors end
 
+"""
+    PrecursorTextIds
+
+Integer stand-ins for the library's per-precursor text, so intermediate tables can carry
+`precursor_idx` alone and compare peptides without strings. Each ID is the rank of its string
+among the library's distinct values in `String` sort order, so sorting IDs sorts the strings.
+
+- `sequence_id`: the peptide sequence.
+- `mods_id`: the `(structural_mods, isotopic_mods)` pair, with `missing` equal to `""`.
+- `species_id` / `species_names`: the canonical species string (`_canonical_species`).
+- `accession_set_id`: the `accession_numbers` string. `accession_set_members[id]` lists its
+  `;`-separated accessions, sorted and without duplicates, as IDs into `accession_names`
+  (the distinct accessions, sorted).
+"""
+struct PrecursorTextIds
+    sequence_id::Vector{UInt32}
+    mods_id::Vector{UInt32}
+    species_id::Vector{UInt32}
+    species_names::Vector{String}
+    accession_set_id::Vector{UInt32}
+    accession_set_members::Vector{Vector{UInt32}}
+    accession_names::Vector{String}
+end
+
 struct StandardLibraryPrecursors <: LibraryPrecursors
     data::Arrow.Table
     n::Int64
     accession_numbers_to_pid::Dictionary{String, UInt32}
     pid_to_cv_fold::Vector{UInt8}
     inferred_num_variable_modifications::Union{Nothing, Vector{UInt8}}
+    text_ids::Base.RefValue{Union{Nothing, PrecursorTextIds}}
     function StandardLibraryPrecursors(
         precursor_table::Arrow.Table,
         inferred_num_variable_modifications::Union{Nothing, Vector{UInt8}} = nothing
@@ -58,7 +83,8 @@ struct StandardLibraryPrecursors <: LibraryPrecursors
                 n,
                 accession_number_to_pgid,
                 pid_to_cv_fold,
-                inferred_num_variable_modifications
+                inferred_num_variable_modifications,
+                Ref{Union{Nothing, PrecursorTextIds}}(nothing)
             )
         catch e
             @user_warn "Failed to load precursor table"
@@ -161,6 +187,79 @@ getStartIdx(lp::LibraryPrecursors) = lp.data[:start_idx]
 @inline _format_start_idx(start::Integer) = string(start)
 @inline _format_start_idx(starts) = join(starts, ';')
 
+"""Species as written to the outputs: the distinct proteome identifiers, sorted and `;`-joined."""
+_canonical_species(proteome) = join(sort(unique(split(coalesce(proteome, ""), ';'))), ';')
+
+# Replace each value by its rank among the distinct values in sort order.
+function _rank_ids(values, ::Type{K}) where {K}
+    first_seen = Dict{K, UInt32}()
+    ids = Vector{UInt32}(undef, length(values))
+    @inbounds for i in eachindex(values)
+        ids[i] = get!(first_seen, convert(K, values[i]), UInt32(length(first_seen) + 1))
+    end
+    distinct = Vector{K}(undef, length(first_seen))
+    for (value, id) in first_seen
+        distinct[id] = value
+    end
+    order = sortperm(distinct)
+    rank = Vector{UInt32}(undef, length(distinct))
+    rank[order] = UInt32.(1:length(distinct))
+    @inbounds for i in eachindex(ids)
+        ids[i] = rank[ids[i]]
+    end
+    return ids, distinct[order]
+end
+
+"""
+    getPrecursorTextIds(lp::LibraryPrecursors) -> PrecursorTextIds
+
+Build (once, on first use) and return the integer IDs for the library's text columns.
+"""
+function getPrecursorTextIds(lp::StandardLibraryPrecursors)
+    ids = lp.text_ids[]
+    ids === nothing || return ids
+    sequence_id, _ = _rank_ids(getSequence(lp), String)
+    structural_mods, isotopic_mods = getStructuralMods(lp), getIsotopicMods(lp)
+    mods = [(coalesce(structural_mods[i], ""), coalesce(isotopic_mods[i], "")) for i in 1:length(lp)]
+    mods_id, _ = _rank_ids(mods, Tuple{String, String})
+    canonical = Dict{Union{Missing, String}, String}()
+    species = [get!(() -> _canonical_species(p), canonical, p) for p in getProteomeIdentifiers(lp)]
+    species_id, species_names = _rank_ids(species, String)
+    accession_set_id, accession_sets = _rank_ids(getAccessionNumbers(lp), String)
+    accession_names = sort!(unique!(String[a for set in accession_sets for a in split(set, ';')]))
+    accession_rank = Dict(name => UInt32(i) for (i, name) in enumerate(accession_names))
+    accession_set_members = [sort!(unique!(UInt32[accession_rank[a] for a in split(set, ';')]))
+                             for set in accession_sets]
+    lp.text_ids[] = PrecursorTextIds(sequence_id, mods_id, species_id, species_names,
+                                     accession_set_id, accession_set_members, accession_names)
+    return lp.text_ids[]
+end
+
+"""
+    PrecursorOutputText(precursors, file_names, protein_group_names = String[])
+
+The lookups needed to put text back on precursor output rows: library text by
+`:precursor_idx`, file names by `:ms_file_idx`, and protein-group names by the `pg_id` in
+`:inferred_protein_group`.
+"""
+struct PrecursorOutputText{P<:LibraryPrecursors}
+    precursors::P
+    text_ids::PrecursorTextIds
+    file_names::Vector{String}
+    protein_group_names::Vector{String}
+end
+
+PrecursorOutputText(precursors::LibraryPrecursors, file_names::AbstractVector{<:AbstractString},
+                    protein_group_names::AbstractVector{<:AbstractString} = String[]) =
+    PrecursorOutputText(precursors, getPrecursorTextIds(precursors), String.(file_names),
+                        String.(protein_group_names))
+
+const PRECURSOR_TEXT_COLUMNS_BEFORE_NORMALIZED = (:accession_numbers, :species)
+const PRECURSOR_TEXT_COLUMNS_AFTER_NORMALIZED =
+    (:structural_mods, :isotopic_mods, :sequence, :peptide_start_positions, :file_name)
+const PRECURSOR_TEXT_COLUMNS =
+    (PRECURSOR_TEXT_COLUMNS_BEFORE_NORMALIZED..., PRECURSOR_TEXT_COLUMNS_AFTER_NORMALIZED...)
+
 function getNumEnzymaticTermini(lp::LibraryPrecursors)
     hasproperty(lp.data, :num_enzymatic_termini) &&
         return lp.data[:num_enzymatic_termini]
@@ -188,6 +287,11 @@ getNumVariableModifications(lp::LibraryPrecursors) =
 @inline _num_variable_modifications_at(values, structural_mods, precursor_idx::Integer) =
     UInt8(values[precursor_idx])
 getIrt(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:irt]
+# Ion-mobility columns exist only in libraries built with `library_params.im_model`;
+# `nothing` otherwise.
+getCCS(lp::LibraryPrecursors) = hasproperty(lp.data, :ccs) ? lp.data[:ccs] : nothing
+getInvIonMobility(lp::LibraryPrecursors) =
+    hasproperty(lp.data, :inv_ion_mobility) ? lp.data[:inv_ion_mobility] : nothing
 getSulfurCount(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
 getIsotopicMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]
 getBasePepId(lp::LibraryPrecursors)::Arrow.Primitive{UInt32, Vector{UInt32}} = lp.data[:base_pep_id]

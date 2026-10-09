@@ -120,7 +120,7 @@ function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSpar
         params.deconvolution_solver,
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
-        params.max_iter_outer, params.max_diff
+        params.max_iter_outer, deconv_tol(search_data, params.max_diff)
     ))
     if converged
         update_precursor_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
@@ -136,7 +136,7 @@ function post_design_matrix!(search_data::SearchDataStructures, Hs::AbstractSpar
         OLSSolver(),
         Hs, getResiduals(search_data), weights, getColNorm2(search_data),
         getMu(search_data), getObserved(search_data),
-        DECONV_MAX_ITER, DECONV_CONVERGENCE_TOL
+        DECONV_MAX_ITER, deconv_tol(search_data, DECONV_CONVERGENCE_TOL)
     ))
     if converged
         update_precursor_weights!(getIdToCol(search_data), weights, getPrecursorWeights(search_data))
@@ -197,7 +197,7 @@ function score_psms!(
         nmatches / (nmatches + nmisses),
         last_val,
         Hs.n,
-        Float32(sum(getIntensityArray(spectra, scan_idx))),
+        Float32(sum(last(getPeaks!(getDecodeBuffer(search_data), spectra, scan_idx)))),
         scan_idx;
         block_size = 500000,
         default_top3_ll = get_default_top3_ll(mem)
@@ -229,7 +229,7 @@ function score_psms!(
         nmatches / (nmatches + nmisses),
         last_val,
         Hs.n,
-        Float32(sum(getIntensityArray(spectra, scan_idx))),
+        Float32(sum(last(getPeaks!(getDecodeBuffer(search_data), spectra, scan_idx)))),
         scan_idx;
         block_size = 500000,
         default_top3_ll = get_default_top3_ll(mem)

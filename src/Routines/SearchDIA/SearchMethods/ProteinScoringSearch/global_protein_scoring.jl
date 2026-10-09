@@ -84,7 +84,7 @@ const GLOBAL_PROTEIN_LGBM_HP = (
 
 const GLOBAL_PROTEIN_MIN_TRAINING_CLASS_COUNT = 100
 const GLOBAL_PROTEIN_MAX_TRAIN = 1_000_000
-const GlobalProteinKey = Tuple{String, Bool, UInt8}
+const GlobalProteinKey = Tuple{UInt32, Bool, UInt8}
 
 struct GlobalProteinRunScore
     ms_file_idx::UInt32
@@ -93,8 +93,8 @@ end
 
 struct GlobalProteinInputs
     run_scores::Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}
-    observed_peptides::Dict{GlobalProteinKey, Set{String}}
-    observed_common_peptides::Dict{GlobalProteinKey, Set{String}}
+    observed_peptides::Dict{GlobalProteinKey, Set{UInt32}}
+    observed_common_peptides::Dict{GlobalProteinKey, Set{UInt32}}
     max_n_peptides::Dict{GlobalProteinKey, Int}
     max_n_common_peptides::Dict{GlobalProteinKey, Int}
     n_possible_unique_peptides::Dict{GlobalProteinKey, Int}
@@ -106,7 +106,7 @@ end
 # Their input is necessarily interpreted as all-common.
 function GlobalProteinInputs(
     run_scores::Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}},
-    observed_peptides::Dict{GlobalProteinKey, Set{String}},
+    observed_peptides::Dict{GlobalProteinKey, Set{UInt32}},
     max_n_peptides::Dict{GlobalProteinKey, Int},
     n_possible_unique_peptides::Dict{GlobalProteinKey, Int},
     folds::Dict{GlobalProteinKey, UInt8}
@@ -126,14 +126,14 @@ end
 function _collect_global_protein_inputs(
     pg_refs::Vector{ProteinGroupFileReference},
     protein_to_cv_fold::Dictionary{
-        String,
+        UInt32,
         @NamedTuple{best_score::Float32, cv_fold::UInt8},
     },
     n_proteins::Int,
 )
     run_scores = Dict{GlobalProteinKey, Vector{GlobalProteinRunScore}}()
-    observed_peptides = Dict{GlobalProteinKey, Set{String}}()
-    observed_common_peptides = Dict{GlobalProteinKey, Set{String}}()
+    observed_peptides = Dict{GlobalProteinKey, Set{UInt32}}()
+    observed_common_peptides = Dict{GlobalProteinKey, Set{UInt32}}()
     max_n_peptides = Dict{GlobalProteinKey, Int}()
     max_n_common_peptides = Dict{GlobalProteinKey, Int}()
     n_possible_unique_peptides = Dict{GlobalProteinKey, Int}()
@@ -149,57 +149,54 @@ function _collect_global_protein_inputs(
     sizehint!(folds, n_proteins)
 
     for ref in pg_refs
-        table = Arrow.Table(file_path(ref))
-        @inbounds for row in eachindex(table.protein_name)
-            protein_name = String(table.protein_name[row])
-            key = (
-                protein_name,
-                Bool(table.target[row]),
-                UInt8(table.entrap_id[row]),
-            )
-            protein_run_scores = get!(run_scores, key) do
-                GlobalProteinRunScore[]
-            end
-            push!(
-                protein_run_scores,
-                GlobalProteinRunScore(
-                    UInt32(table.file_idx[row]),
-                    Float32(table.pg_score[row]),
-                ),
-            )
+        # Values are copied into the dictionaries and sets, so the file is unmapped after.
+        with_arrow_table(file_path(ref)) do table
+            @inbounds for row in eachindex(table.protein_name)
+                protein_name = UInt32(table.protein_name[row])
+                key = (
+                    protein_name,
+                    Bool(table.target[row]),
+                    UInt8(table.entrap_id[row]),
+                )
+                protein_run_scores = get!(run_scores, key) do
+                    GlobalProteinRunScore[]
+                end
+                push!(
+                    protein_run_scores,
+                    GlobalProteinRunScore(
+                        UInt32(table.file_idx[row]),
+                        Float32(table.pg_score[row]),
+                    ),
+                )
 
-            protein_peptides = get!(observed_peptides, key) do
-                Set{String}()
-            end
-            for peptide in split(table.peptide_list[row], ';')
-                isempty(peptide) || push!(protein_peptides, String(peptide))
-            end
+                protein_peptides = get!(observed_peptides, key) do
+                    Set{UInt32}()
+                end
+                union!(protein_peptides, table.peptide_list[row])
 
-            protein_common_peptides = get!(observed_common_peptides, key) do
-                Set{String}()
-            end
-            common_peptide_list = hasproperty(table, :common_peptide_list) ?
-                table.common_peptide_list[row] : table.peptide_list[row]
-            for peptide in split(common_peptide_list, ';')
-                isempty(peptide) ||
-                    push!(protein_common_peptides, String(peptide))
-            end
+                protein_common_peptides = get!(observed_common_peptides, key) do
+                    Set{UInt32}()
+                end
+                common_peptide_list = hasproperty(table, :common_peptide_list) ?
+                    table.common_peptide_list[row] : table.peptide_list[row]
+                union!(protein_common_peptides, common_peptide_list)
 
-            n_peptides = Int(table.n_peptides[row])
-            n_common_peptides = hasproperty(table, :n_common_peptides) ?
-                Int(table.n_common_peptides[row]) : n_peptides
-            max_n_peptides[key] = max(get(max_n_peptides, key, 0), n_peptides)
-            max_n_common_peptides[key] = max(
-                get(max_n_common_peptides, key, 0),
-                n_common_peptides
-            )
-            n_possible_unique_peptides[key] =
-                Int(table.n_possible_unique_peptides[row])
-            n_possible_common_unique_peptides[key] =
-                hasproperty(table, :n_possible_common_unique_peptides) ?
-                Int(table.n_possible_common_unique_peptides[row]) :
-                Int(table.n_possible_unique_peptides[row])
-            folds[key] = protein_to_cv_fold[protein_name].cv_fold
+                n_peptides = Int(table.n_peptides[row])
+                n_common_peptides = hasproperty(table, :n_common_peptides) ?
+                    Int(table.n_common_peptides[row]) : n_peptides
+                max_n_peptides[key] = max(get(max_n_peptides, key, 0), n_peptides)
+                max_n_common_peptides[key] = max(
+                    get(max_n_common_peptides, key, 0),
+                    n_common_peptides
+                )
+                n_possible_unique_peptides[key] =
+                    Int(table.n_possible_unique_peptides[row])
+                n_possible_common_unique_peptides[key] =
+                    hasproperty(table, :n_possible_common_unique_peptides) ?
+                    Int(table.n_possible_common_unique_peptides[row]) :
+                    Int(table.n_possible_unique_peptides[row])
+                folds[key] = protein_to_cv_fold[protein_name].cv_fold
+            end
         end
     end
 
@@ -317,7 +314,7 @@ function _build_global_protein_feature_table(
     end
 
     table = DataFrame(
-        protein_name = String[key[1] for key in protein_keys],
+        protein_name = UInt32[key[1] for key in protein_keys],
         target = Bool[key[2] for key in protein_keys],
         entrap_id = UInt8[key[3] for key in protein_keys],
         cv_fold = UInt8[inputs.folds[key] for key in protein_keys],
@@ -333,7 +330,7 @@ function _build_protein_score_dicts(
     scores::AbstractVector{<:Real},
 )
     global_score_dict = Dict{GlobalProteinKey, Float32}()
-    protein_key_score_dict = Dict{ProteinKey, Float32}()
+    protein_key_score_dict = Dict{PGKey, Float32}()
     sizehint!(global_score_dict, length(protein_keys))
     sizehint!(protein_key_score_dict, length(protein_keys))
 
@@ -341,7 +338,7 @@ function _build_protein_score_dicts(
         key = protein_keys[row]
         score = Float32(scores[row])
         global_score_dict[key] = score
-        protein_key_score_dict[ProteinKey(key...)] = score
+        protein_key_score_dict[PGKey(key...)] = score
     end
     return global_score_dict, protein_key_score_dict
 end
@@ -416,7 +413,7 @@ any training split has fewer than 100 targets or 100 decoys.
 function build_global_protein_score_dicts(
     pg_refs::Vector{ProteinGroupFileReference},
     protein_to_cv_fold::Dictionary{
-        String,
+        UInt32,
         @NamedTuple{best_score::Float32, cv_fold::UInt8},
     },
     n_proteins::Int,

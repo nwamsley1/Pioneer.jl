@@ -391,7 +391,7 @@ function build_mbr_receiver_run_clusters(
     file_paths::Vector{String};
     q_value_threshold::Float32,
 )
-    passed_by_file = Dict{UInt32, BitSet}()
+    file_ids = Set{UInt32}()
     files_by_precursor = Dict{UInt32, Vector{UInt32}}()
     intensity_postings =
         Dict{UInt32, Vector{_MBRIntensityPosting}}()
@@ -402,19 +402,24 @@ function build_mbr_receiver_run_clusters(
             hasproperty(tbl, column) ||
                 error("MBR run-cluster features require column $column in $path")
         end
-        @inbounds for row in eachindex(tbl.precursor_idx)
-            file_idx = UInt32(tbl.ms_file_idx[row])
-            passed = get!(() -> BitSet(), passed_by_file, file_idx)
-            qval = Float32(tbl.qval[row])
-            isfinite(qval) && qval <= q_value_threshold || continue
-            precursor_idx = UInt32(tbl.precursor_idx[row])
-            if !(Int(precursor_idx) in passed)
-                push!(passed, Int(precursor_idx))
+        # Temporary: only this table's runs, dropped after the table.
+        passed_by_file = _mbr_run_passed_by_file(
+            tbl.precursor_idx, tbl.ms_file_idx, tbl.qval, q_value_threshold,
+        )
+        for (file_idx, passed) in passed_by_file
+            push!(file_ids, file_idx)
+            for precursor_idx in passed
                 push!(
-                    get!(() -> UInt32[], files_by_precursor, precursor_idx),
+                    get!(() -> UInt32[], files_by_precursor, UInt32(precursor_idx)),
                     file_idx,
                 )
             end
+        end
+        @inbounds for row in eachindex(tbl.precursor_idx)
+            file_idx = UInt32(tbl.ms_file_idx[row])
+            qval = Float32(tbl.qval[row])
+            isfinite(qval) && qval <= q_value_threshold || continue
+            precursor_idx = UInt32(tbl.precursor_idx[row])
             weight = Float32(tbl.weight[row])
             isfinite(weight) && weight > 0.0f0 || continue
             push!(
@@ -428,7 +433,7 @@ function build_mbr_receiver_run_clusters(
         end
     end
 
-    file_ids = sort!(collect(keys(passed_by_file)))
+    file_ids = sort!(collect(file_ids))
     isempty(file_ids) && return _MBRReceiverRunClusters()
     fit = _fit_mbr_run_clusters(intensity_postings, file_ids)
     support_by_precursor =
@@ -448,7 +453,7 @@ function build_mbr_receiver_run_clusters(
         fit.cluster_by_file,
         fit.cluster_sizes,
         support_by_precursor,
-        passed_by_file,
+        Dict{UInt32, BitSet}(),     # attached per receiver file; see _MBRCounterfactualEligibility
     )
 end
 

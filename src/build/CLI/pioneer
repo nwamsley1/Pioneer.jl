@@ -49,7 +49,7 @@ if [ -z "$JULIA_NUM_THREADS" ]; then
 fi
 
 # Valid subcommands
-VALID_COMMANDS="search predict download params-search params-predict convert-raw convert-mzml"
+VALID_COMMANDS="search predict download params-search params-predict convert-raw convert-mzml convert-bruker convert-sciex"
 # empirical params-empirical 
 
 show_help() {
@@ -78,11 +78,15 @@ show_help() {
     #echo "  params-empirical <empirical_lib_path> <library_outpath> [--params-path <params_out_path>]"
     #echo "                                              Generate parse parameter template"
     #echo "                                              Default params output path: ./parsespeclib_params.json"
-    echo "  convert-raw <data_path> [--output-dir <dir>] [--skip-existing] [--concurrent-files N] [--threads-per-file N]"
+    echo "  convert-raw <data_path> [--output-dir <dir>] [--skip-existing] [--threads-per-file N]"
     echo "                                              Convert Thermo RAW files via PioneerConverter"
     echo "                                              For additional converter options, run: pioneer convert-raw --help"
     echo "  convert-mzml <data_path> [options]"
     echo "                                              Convert mzML files"
+    echo "  convert-bruker <d_path> [--output-dir <dir>]"
+    echo "                                              Convert Bruker timsTOF .d folders to .tdfs"
+    echo "  convert-sciex <wiff_path> [--output-dir <dir>]"
+    echo "                                              Convert SCIEX .wiff/.wiff.scan runs to .scxs"
     echo ""
     echo "Examples:"
     echo "  pioneer params-predict yeast.poin fasta/ --params-path predict_params.json"
@@ -183,7 +187,14 @@ _GC_MARK_THREADS=$(( (_THREAD_COUNT + 1) / 2 ))
 if [ "$_GC_MARK_THREADS" -lt 1 ]; then
     _GC_MARK_THREADS=1
 fi
-export JULIA_NUM_GC_THREADS="${_GC_MARK_THREADS},1"
+# Library builds run without the concurrent sweep thread: with it, large builds intermittently crashed
+# (SIGSEGV) in the threaded fragment-index builder, and it gives no measurable speedup.
+if [[ "$SUBCOMMAND" == "predict" ]]; then
+    _GC_SWEEP_THREADS=0
+else
+    _GC_SWEEP_THREADS=1
+fi
+export JULIA_NUM_GC_THREADS="${_GC_MARK_THREADS},${_GC_SWEEP_THREADS}"
 
 # Check if subcommand was provided
 if [[ -z "$SUBCOMMAND" ]]; then
@@ -215,6 +226,12 @@ case "$SUBCOMMAND" in
         ;;
     convert-mzml)
         SUBCOMMAND="convertMzML"
+        ;;
+    convert-bruker)
+        SUBCOMMAND="convertBruker"
+        ;;
+    convert-sciex)
+        SUBCOMMAND="convertSciex"
         ;;
 esac
     #empirical)

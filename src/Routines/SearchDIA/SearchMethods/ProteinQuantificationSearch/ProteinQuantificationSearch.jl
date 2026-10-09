@@ -16,17 +16,18 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 """
-    MaxLFQSearch
+    ProteinQuantificationSearch
 
-Search method for performing MaxLFQ normalization and protein quantification.
+Search method for normalization, protein quantification, and output.
 
 This search:
 1. Normalizes quantitative values across runs
-2. Performs MaxLFQ protein quantification
+2. Quantifies proteins with sparse MaxLFQ or full MaxLFQ
 3. Generates long and wide format results
-4. Creates QC plots
+4. Writes per-run summary statistics
 """
-struct MaxLFQSearch <: SearchMethod end
+struct ProteinQuantificationSearch <: SearchMethod end
+uses_per_file_spectra(::ProteinQuantificationSearch) = false   # works from the PSM files; per-file hooks are empty
 
 # Note: FileReferences, SearchResultReferences, and FileOperations are already
 # included by importScripts.jl - no need to include them here
@@ -36,9 +37,9 @@ Type Definitions
 ==========================================================#
 
 """
-Results container for MaxLFQ search.
+Results container for protein quantification.
 """
-struct MaxLFQSearchResults <: SearchResults
+struct ProteinQuantificationSearchResults <: SearchResults
     precursors_long_path::String
     precursors_wide_path::String
     proteins_long_path::String
@@ -47,16 +48,17 @@ struct MaxLFQSearchResults <: SearchResults
 end
 
 """
-Parameters for MaxLFQ search.
+Parameters for protein quantification.
 """
 
-struct MaxLFQSearchParameters <: SearchParameters
+struct ProteinQuantificationSearchParameters <: SearchParameters
     # Run-to-run normalization on/off (the median-spline normalizer's tuning
     # constants — n_rt_bins, spline_n_knots — are hardcoded below since they
     # have no shipping override).
     run_to_run_normalization::Bool
 
     # LFQ parameters
+    quantification_method::Symbol
     q_value_threshold::Float32
     batch_size::Int64
     min_peptides::Int64
@@ -69,7 +71,7 @@ struct MaxLFQSearchParameters <: SearchParameters
     delete_temp::Bool
     params::Any  # Store full parameters for reference
 
-    function MaxLFQSearchParameters(params::PioneerParameters)
+    function ProteinQuantificationSearchParameters(params::PioneerParameters)
         output_params = params.output
         global_params = params.global_settings
         maxLFQ_params = params.maxLFQ
@@ -77,6 +79,7 @@ struct MaxLFQSearchParameters <: SearchParameters
 
         new(
             Bool(maxLFQ_params.run_to_run_normalization),
+            Symbol(get(maxLFQ_params, :quantification_method, "sparsemaxlfq")),
             _resolve_q_value_threshold(global_params),
             Int64(100000),  # Default batch size
             Int64(protein_scoring_params.min_peptides),
@@ -99,10 +102,10 @@ const MAXLFQ_NORM_SPLINE_N_KNOTS = 7
 Interface Implementation
 ==========================================================#
 
-get_parameters(::MaxLFQSearch, params::Any) = MaxLFQSearchParameters(params)
+get_parameters(::ProteinQuantificationSearch, params::Any) = ProteinQuantificationSearchParameters(params)
 
-function init_search_results(::MaxLFQSearchParameters, search_context::SearchContext)
-    return MaxLFQSearchResults(
+function init_search_results(::ProteinQuantificationSearchParameters, search_context::SearchContext)
+    return ProteinQuantificationSearchResults(
         joinpath(getDataOutDir(search_context), "precursors_long.arrow"),
         joinpath(getDataOutDir(search_context), "precursors_wide.arrow"),
         joinpath(getDataOutDir(search_context), "protein_groups_long.arrow"),
@@ -115,8 +118,8 @@ end
 Process a single file for MaxLFQ analysis.
 """
 function process_file!(
-    results::MaxLFQSearchResults,
-    params::MaxLFQSearchParameters,
+    results::ProteinQuantificationSearchResults,
+    params::ProteinQuantificationSearchParameters,
     search_context::SearchContext,
     ms_file_idx::Int64,
     spectra::MassSpecData
@@ -129,8 +132,8 @@ end
 No per-file results processing needed.
 """
 function process_search_results!(
-    ::MaxLFQSearchResults,
-    ::MaxLFQSearchParameters,
+    ::ProteinQuantificationSearchResults,
+    ::ProteinQuantificationSearchParameters,
     ::SearchContext,
     ::Int64,
     ::MassSpecData
@@ -138,22 +141,69 @@ function process_search_results!(
     return nothing
 end
 
-function reset_results!(::MaxLFQSearchResults)
+function reset_results!(::ProteinQuantificationSearchResults)
     return nothing
+end
+
+function precursor_output_string_pools(chunk_refs, policy::OutputSchemaPolicy, text::PrecursorOutputText)
+    names = Symbol[name for name in (:file_name, :species, :structural_mods)
+                   if output_column_enabled(policy, :precursors, name)]
+    return Dict(name => PooledArray(values; signed=true, compress=true)
+                for (name, values) in precursor_text_pools(chunk_refs, text, names))
+end
+
+function encode_precursor_output_strings(columns::NamedTuple, pools)
+    return NamedTuple{keys(columns)}(map(keys(columns)) do name
+        column = getproperty(columns, name)
+        haskey(pools, name) || return column
+        # Retain the full pool so Arrow sizes indices for all chunks from the start.
+        pooled_column = pools[name][Int[]]
+        append!(pooled_column, column)
+        return Arrow.DictEncode(pooled_column)
+    end)
+end
+
+"""
+    write_precursor_long_arrow(path, chunk_refs, text, policy; run_to_run_normalization)
+
+Stream precursor chunks into the final Arrow export and return per-run summary
+accumulators. The library text columns are restored from `text`. Prebuild string
+dictionaries so their indices fit every chunk.
+"""
+function write_precursor_long_arrow(
+    path::String, chunk_refs, text::PrecursorOutputText, policy::OutputSchemaPolicy;
+    run_to_run_normalization::Bool,
+)
+    file_names = text.file_names
+    pools = precursor_output_string_pools(chunk_refs, policy, text)
+    isfile(path) && rm(path)
+    run_stats = with_run_summary(file_names; temp_parent=dirname(abspath(path))) do accumulator
+        open(Arrow.Writer, path; file=true, ntasks=0) do writer
+            for chunk_ref in chunk_refs, tbl in Arrow.Stream(file_path(chunk_ref))
+                full = with_precursor_text(Tables.columntable(tbl), text)
+                accumulate_run_summary!(accumulator, full)
+                columns = drop_uncomputed_normalized(
+                    blank_unquantified_areas(enabled_output_table(policy, :precursors, full)),
+                    run_to_run_normalization,
+                )
+                Arrow.write(writer, encode_precursor_output_strings(columns, pools))
+            end
+        end
+    end
+    return run_stats
 end
 
 """
 Perform MaxLFQ analysis across all files.
 """
 function summarize_results!(
-    results::MaxLFQSearchResults,
-    params::MaxLFQSearchParameters,
+    results::ProteinQuantificationSearchResults,
+    params::ProteinQuantificationSearchParameters,
     search_context::SearchContext
 )
     # Get paths
     temp_folder = joinpath(getDataOutDir(search_context), "temp_data")
     passing_psms_folder = joinpath(temp_folder, "passing_psms")
-    qc_plot_folder = joinpath(getDataOutDir(search_context), "qc_plots")
     precursors_long_path = joinpath(getDataOutDir(search_context), "precursors_long.arrow")
     protein_long_path = joinpath(getDataOutDir(search_context), "protein_groups_long.arrow")
     spec_lib = getSpecLib(search_context)
@@ -164,13 +214,17 @@ function summarize_results!(
     # that yielded no PSMs after upstream filtering — they lack the columns
     # MaxLFQ expects).
     indexed_paths = get_all_indexed_paths(getPassingPsms, search_context)
+    paths = String[path for (_, path) in indexed_paths]
+    sidecar_index = index_sidecar_paths(paths)
     existing_passing_psm_paths = String[]
     existing_passing_psm_run_ids = UInt32[]
+    psm_refs = PSMFileReference[]
     for (file_idx, path) in indexed_paths
-        ref = PSMFileReference(path)
+        ref = PSMFileReference(path; sidecar_paths=sidecar_index[path])
         if row_count(ref) > 0
             push!(existing_passing_psm_paths, path)
             push!(existing_passing_psm_run_ids, UInt32(file_idx))
+            push!(psm_refs, ref)
         end
     end
 
@@ -181,8 +235,6 @@ function summarize_results!(
         @user_warn "No PSM files found for MaxLFQ analysis"
         return nothing
     end
-
-    psm_refs = [PSMFileReference(path) for path in existing_passing_psm_paths]
 
     if !params.params.output.write_decoys
         decoy_filter_pipeline = TransformPipeline() |>
@@ -239,20 +291,37 @@ function summarize_results!(
         :min_peptides => params.min_peptides
     ))
 
+    inference_results = get_results(search_context, ProteinInferenceSearch)
+    protein_group_names = inference_results isa ProteinInferenceSearchResults ?
+        inference_results.protein_group_names : String[]
+    precursor_text = PrecursorOutputText(precursors, all_file_names, protein_group_names)
+
     # Chunked precursor CSV writing (bounded memory per chunk)
     @user_info "Writing precursor tables..."
-    precursors_wide_path = writePrecursorCSV_chunked(
+    writePrecursorCSV_chunked(
         chunk_refs,
         getDataOutDir(search_context),
-        all_file_names,
+        precursor_text,
         params.run_to_run_normalization,
         proteins,
         output_schema_policy = output_schema_policy,
         write_csv = params.write_csv
     )
 
-    @user_info "Performing MaxLFQ..."
-    # Chunked MaxLFQ protein quantification (bounded memory per chunk)
+    @user_info "Performing $(params.quantification_method) protein quantification..."
+    quantification_metadata = Dict{String, Any}(
+        "method" => String(params.quantification_method),
+        "run_to_run_normalization" => params.run_to_run_normalization ? "pioneer_median_spline" : "none",
+    )
+    if params.quantification_method == :sparsemaxlfq
+        merge!(quantification_metadata, Dict(
+            "partners" => SPARSE_MAXLFQ_PARTNERS,
+            "seed" => SPARSE_MAXLFQ_SEED,
+        ))
+    end
+    write(joinpath(getDataOutDir(search_context), "protein_quantification.json"),
+        JSON.json(quantification_metadata, 4))
+    # Quantify protein-aligned input chunks incrementally.
     precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
     LFQ_chunked(
         chunk_refs,
@@ -265,17 +334,19 @@ function summarize_results!(
         params.q_value_threshold,
         build_accession_to_species(precursors),
         output_schema_policy = output_schema_policy,
-        batch_size = params.batch_size
+        batch_size = params.batch_size,
+        quantification_method = params.quantification_method,
+        protein_group_names = protein_group_names
     )
     chunk_paths = [file_path(ref) for ref in chunk_refs]
 
     # Create FileReference for output metadata tracking
     protein_ref = ProteinQuantFileReference(protein_long_path)
-    @user_info "MaxLFQ: $(n_protein_groups(protein_ref)) protein groups across $(n_experiments(protein_ref)) experiments"
+    @user_info "Protein quantification: $(n_protein_groups(protein_ref)) protein groups across $(n_experiments(protein_ref)) experiments"
 
     @user_info "Writing protein group results..."
-    # Create wide format protein table (protein groups table is small, no chunking needed)
-    proteins_wide_path = writeProteinGroupsCSV(
+    # Export protein groups through bounded buffers.
+    writeProteinGroupsCSV(
         results.proteins_long_path,
         getSequence(precursors),
         getIsotopicMods(precursors),
@@ -287,35 +358,20 @@ function summarize_results!(
         write_csv = params.write_csv
     )
 
-    # Concatenate chunks into a final Arrow file-format export for QC plots.
+    # Concatenate chunks into the final Arrow file-format export.
+    # The per-run summary is accumulated from the same chunks on this pass.
     @debug_l1 "Concatenating chunks to precursors_long.arrow..."
-    isfile(precursors_long_path) && rm(precursors_long_path)
-    open(Arrow.Writer, precursors_long_path; file=true) do arrow_writer
-        for chunk_ref in chunk_refs
-            let tbl = Arrow.Table(file_path(chunk_ref))
-                # Dictionary-encode the repeated string columns here, at the final write only --
-                # see OUTPUT_DICT_ENCODED_COLUMNS. -14.3% on this file, values unchanged.
-                Arrow.write(arrow_writer, dict_encode_output_columns(
-                    enabled_output_table(output_schema_policy, :precursors, tbl)))
-            end
-        end
-    end
+    run_stats = write_precursor_long_arrow(
+        precursors_long_path, chunk_refs, precursor_text, output_schema_policy;
+        run_to_run_normalization = params.run_to_run_normalization,
+    )
     chunk_refs = nothing
     GC.gc()
 
-    @user_info "Creating QC plots..."
-    # Create QC plots
-    qc_plot_path = joinpath(qc_plot_folder, "QC_PLOTS.pdf")
-    isfile(qc_plot_path) && rm(qc_plot_path)
-    create_qc_plots(
-        precursors_wide_path,
-        precursors_long_path,
-        proteins_wide_path,
-        search_context,
-        precursors,
-        params,
-        all_file_names
-    )
+    @user_info "Writing run summary..."
+    add_protein_group_counts!(run_stats, protein_long_path, all_file_names)
+    write_run_summary(joinpath(getDataOutDir(search_context), "run_summary.tsv"),
+                      run_stats, search_context)
 
     # Cleanup chunk files after dropping Arrow.Table references.
     if isdir(chunk_dir)

@@ -22,6 +22,7 @@ import {
   buildLibJson,
   buildSearchJson,
   convertCommandLine,
+  defaultConvertOutput,
   buildConfigToState,
   computeExtras,
   extraLeafPaths,
@@ -312,6 +313,12 @@ export default function App() {
   const [uninstalling, setUninstalling] = useState(false)
   const [uninstallError, setUninstallError] = useState('')
   const [viewJobId, setViewJobId] = useState<string | null>(null)
+  /** The log drawer follows the active job: when one run finishes and the
+   *  next starts, the view moves with it. Clicking a *different* job pins the
+   *  view there until the active job is clicked again (or the pinned job is
+   *  deleted). A ref, because the scheduler effect reads it without wanting
+   *  to re-run on every pin change. */
+  const pinnedJobId = useRef<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(300)
   const [confirmCancel, setConfirmCancel] = useState(false)
@@ -348,6 +355,8 @@ export default function App() {
     search: SearchParams
     build: BuildParams
     convert: ConvertParams
+    extras: Record<string, Json | null>
+    threads: number
   } | null>(null)
 
   const jobSeq = useRef(0)
@@ -395,7 +404,8 @@ export default function App() {
         const saved = JSON.parse(raw)
         if (saved.search) setSearch((p) => ({ ...p, ...saved.search }))
         if (saved.build) setBuild((p) => ({ ...p, ...saved.build }))
-        if (saved.convert) setConvert((p) => ({ ...p, ...saved.convert }))
+        // Not the ZT Scan DIA answer: SCIEX conversion asks it afresh for every batch.
+        if (saved.convert) setConvert((p) => ({ ...p, ...saved.convert, ztScan: '' }))
         if (saved.command) setCommand(saved.command)
         if (typeof saved.threads === 'number') setThreads(saved.threads)
         if (typeof saved.jobName === 'string') setJobName(saved.jobName)
@@ -467,7 +477,7 @@ export default function App() {
       // Stash only on the way in. Clicking from one run straight to another must
       // not overwrite the draft with the first run's params.
       if (!current) {
-        stashedDraft.current = { command, search, build, convert }
+        stashedDraft.current = { command, search, build, convert, extras, threads }
       }
       return job.id
     })
@@ -478,19 +488,25 @@ export default function App() {
     // over an undefined list.
     if (job.snapshot.cmd === 'searchdia') {
       setSearch({ ...SEARCH_DEFAULTS, ...job.snapshot.search })
+      setExtras((e) => ({ ...e, searchdia: job.snapshot.cmd === 'searchdia' ? job.snapshot.extras ?? null : null }))
     }
     else if (job.snapshot.cmd === 'buildspeclib') {
       // Stored runs from before digestion specificity was added do not carry
       // the field. Merge defaults so recalling one still renders and emits a
       // full-specific build. The same applies to the cleavage rule.
       setBuild({ ...BUILD_DEFAULTS, ...job.snapshot.build })
+      setExtras((e) => ({ ...e, buildspeclib: job.snapshot.cmd === 'buildspeclib' ? job.snapshot.extras ?? null : null }))
     } else if (job.snapshot.cmd === 'downloadspeclib') setDownload(job.snapshot.download)
     // Same reason as the build merge above: runs stored before the mzML
     // converter existed carry no `format`, and recalling one must still render
     // a form with a format selected rather than neither segment lit.
     else setConvert({ ...CONVERT_DEFAULTS, ...job.snapshot.convert })
+    // The run's thread count is part of how it was launched, and the picker
+    // is what the next run reads. Rows restored from before it was recorded
+    // carry 0 and leave the picker alone.
+    if (job.threads > 0) setThreads(job.threads)
     setRunError('')
-  }, [command, search, build, convert])
+  }, [command, search, build, convert, extras, threads])
 
   /** Leave inspection and restore the draft, if there is one to restore. */
   const restoreDraft = useCallback(() => {
@@ -499,6 +515,8 @@ export default function App() {
     setSearch(d.search)
     setBuild(d.build)
     setConvert(d.convert)
+    setExtras(d.extras)
+    setThreads(d.threads)
     stashedDraft.current = null
     setInspectingJobId(null)
   }, [])
@@ -679,7 +697,7 @@ export default function App() {
           // whole point of the list is that a batch arrives at once. The mode
           // follows what was dropped, so neither has to be chosen first.
           if (isDir) {
-            setConvert((c) => ({ ...c, input: path, inputMode: 'folder' }))
+            setConvert((c) => ({ ...c, input: path, inputMode: 'folder', ztScan: c.input === path ? c.ztScan : '' }))
           } else {
             setConvert((c) => {
               const have = new Set(c.inputFiles)
@@ -762,23 +780,26 @@ export default function App() {
 
   const info = (k: string): PathInfo => pathInfos[k] ?? EMPTY_PATH_INFO
 
-  /** The library a queued or running build/download is about to produce, so a
-   *  search that consumes it can be queued behind it rather than waiting for
-   *  the folder to appear. Most recently queued wins when there are several. */
-  const pendingLibrary = useMemo(() => {
+  /** The libraries the queued or running builds/downloads are about to
+   *  produce, most recently queued first, so a search that consumes one can be
+   *  queued behind it rather than waiting for the folder to appear. */
+  const pendingLibraries = useMemo(() => {
+    const out: string[] = []
     for (let i = jobs.length - 1; i >= 0; i--) {
       const j = jobs[i]
       if (j.status !== 'queued' && j.status !== 'running') continue
       if (j.snapshot.cmd !== 'buildspeclib' && j.snapshot.cmd !== 'downloadspeclib') continue
       const path = libraryOf(j)
-      if (path) return path
+      if (path) out.push(path)
     }
-    return null
+    return out
   }, [jobs])
+  const pendingLibrary = pendingLibraries[0] ?? null
 
-  // Fill an empty library field from that job. The Run handler already does
-  // this at the moment a build is queued; this also covers arriving at
-  // SearchDIA with the field cleared, or a build queued before it was.
+  // Fill an empty library field from the latest such job. The Run handler
+  // already does this at the moment a build is queued; this also covers
+  // arriving at SearchDIA with the field cleared, or a build queued before it
+  // was.
   useEffect(() => {
     if (!pendingLibrary) return
     setSearch((p) => (p.library.trim() ? p : { ...p, library: pendingLibrary }))
@@ -787,11 +808,11 @@ export default function App() {
   const searchNotes = useMemo(
     () => ({
       msData: msDataNote(search.msData, info('msData')),
-      library: pendingLibraryNote(search.library, info('library'), pendingLibrary),
+      library: pendingLibraryNote(search.library, info('library'), pendingLibraries),
       results: resultsNote(search.results, info('results')),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [search.msData, search.library, search.results, pathInfos, pendingLibrary],
+    [search.msData, search.library, search.results, pathInfos, pendingLibraries],
   )
 
   const fastaNotes = useMemo(
@@ -839,21 +860,24 @@ export default function App() {
   const verifyConversionProduced = useCallback(async (job: Job) => {
     if (job.snapshot.cmd !== 'convertraw') return
     const c = job.snapshot.convert
-    const dir = c.outputDir.trim() || `${c.input.trim().replace(/[\\/]$/, '')}/arrow_out`
+    const dir = c.outputDir.trim() || defaultConvertOutput(c)
     if (!dir) return
     const info = await backend.inspectPath(dir)
-    if (info.arrow_count > 0) return
+    const bruker = c.format === 'bruker'
+    const sciex = c.format === 'sciex'
+    if ((bruker ? info.tdfs_count : sciex ? info.scxs_count : info.arrow_count) > 0) return
+    const out = bruker ? '.tdfs runs' : sciex ? '.scxs runs' : '.arrow files'
     setJobs((prev) =>
       prev.map((j) =>
         j.id === job.id
           ? {
               ...j,
               status: 'failed' as JobStatus,
-              failMsg: 'The converter reported success but wrote no .arrow files.',
+              failMsg: `The converter reported success but wrote no ${out}.`,
               logLines: [
                 ...j.logLines,
                 {
-                  text: `ERROR: no .arrow files in ${dir}. The converter exited 0 but converted nothing — check the messages above for files it could not open.`,
+                  text: `ERROR: no ${out} in ${dir}. The converter exited 0 but converted nothing — check the messages above for files it could not open.`,
                   stream: 'app' as const,
                   transient: false,
                 },
@@ -877,6 +901,28 @@ export default function App() {
       .onJobLine((ev) => {
         setJobs((prev) =>
           prev.map((j) => (j.id === ev.job_id ? { ...j, logLines: applyLine(j.logLines, ev) } : j)),
+        )
+      })
+      .then(keep)
+
+    // A file in a multi-file job failed and the job carried on: record it and say
+    // so in the log. The drawer offers to stop the job from here.
+    backend
+      .onJobStepFailed(({ job_id, total, message }) => {
+        setJobs((prev) =>
+          prev.map((j) =>
+            j.id === job_id
+              ? {
+                  ...j,
+                  stepFailures: [...(j.stepFailures ?? []), message],
+                  stepTotal: total,
+                  logLines: [
+                    ...j.logLines,
+                    { text: `WARNING: ${message} Continuing with the remaining files.`, stream: 'app' as const, transient: false },
+                  ],
+                }
+              : j,
+          ),
         )
       })
       .then(keep)
@@ -927,6 +973,10 @@ export default function App() {
     startedIds.current.add(next.id)
     const appLine = (text: string): LogLine => ({ text, stream: 'app', transient: false })
 
+    // Follow the job that is now active, unless the user has pinned the view
+    // to another one.
+    if (pinnedJobId.current === null) setViewJobId(next.id)
+
     setJobs((prev) =>
       prev.map((j) =>
         j.id === next.id
@@ -942,10 +992,15 @@ export default function App() {
     // The ConvertRAW workflow drives two binaries. Which one is a property of
     // the run, not of the tab, so it is read off the snapshot rather than the
     // command id -- that way a restored mzML run re-runs as an mzML run.
+    const convertFormat = next.snapshot.cmd === 'convertraw' ? next.snapshot.convert.format : null
     const backendCmd: BackendCommand =
-      next.snapshot.cmd === 'convertraw' && next.snapshot.convert.format === 'mzml'
+      convertFormat === 'mzml'
         ? 'convertmzml'
-        : next.cmd
+        : convertFormat === 'bruker'
+          ? 'convertbruker'
+          : convertFormat === 'sciex'
+            ? 'convertsciex'
+            : next.cmd
 
     backend
       .startJob(next.id, backendCmd, next.invocation, next.threads)
@@ -1001,6 +1056,8 @@ export default function App() {
         // files -- switch the format" possible, and that message is more use
         // than an empty box.
         if (key === 'inputMode' && value !== p.inputMode) next.input = ''
+        // A different SCIEX batch is asked again whether it is ZT Scan DIA.
+        if (key === 'input' && value !== p.input) next.ztScan = ''
         return next
       })
     else if (key === 'predictionModel') switchModel(value)
@@ -1057,22 +1114,52 @@ export default function App() {
    *  selection would make that impossible. Duplicates are dropped -- the same
    *  file twice would be the same search twice. */
   const addMsFiles = async () => {
+    // A file chosen inside a .tdfs / .scxs run adds the run (see asRunPath); two files of one run add it once.
     const picked = await backend.pickFiles('Choose the files to search', 'MS data', ['arrow'])
     if (picked.length === 0) return
+    const runs = [...new Set(picked.map(backend.asRunPath))]
     setSearch((p) => {
       const have = new Set(p.msDataFiles)
-      return { ...p, msDataFiles: [...p.msDataFiles, ...picked.filter((f) => !have.has(f))] }
+      return { ...p, msDataFiles: [...p.msDataFiles, ...runs.filter((f) => !have.has(f))] }
     })
     setRunError('')
+  }
+
+  /** Bruker timsTOF .tdfs and SCIEX .scxs runs are folders, which the file picker cannot select, so they have
+   *  their own folder picker. Anything picked that is not a .tdfs / .scxs folder is refused, by name. */
+  const addMsTdfs = async () => {
+    const picked = await backend.pickFolders('Choose the .tdfs / .scxs runs to search')
+    if (picked.length === 0) return
+    const isRun = (f: string) => /\.(tdfs|scxs)[\\/]?$/i.test(f.trim())
+    const runs = picked.filter(isRun)
+    setSearch((p) => {
+      const have = new Set(p.msDataFiles)
+      return { ...p, msDataFiles: [...p.msDataFiles, ...runs.filter((f) => !have.has(f))] }
+    })
+    setRunError(
+      runs.length < picked.length
+        ? `Not a .tdfs or .scxs run: ${picked.filter((f) => !isRun(f)).join(', ')}`
+        : '',
+    )
   }
 
   const removeMsFile = (index: number) => {
     setSearch((p) => ({ ...p, msDataFiles: p.msDataFiles.filter((_, i) => i !== index) }))
   }
 
+  const clearMsFiles = () => {
+    setSearch((p) => ({ ...p, msDataFiles: [] }))
+  }
+
   const browseConvertInput = async () => {
     const picked = await backend.pickFolder(
-      convert.format === 'mzml' ? 'Choose a folder of .mzML files' : 'Choose a folder of .raw files',
+      convert.format === 'mzml'
+        ? 'Choose a folder of .mzML files'
+        : convert.format === 'bruker'
+          ? 'Choose a Bruker .d folder, or a folder of them'
+          : convert.format === 'sciex'
+            ? 'Choose a folder of SCIEX .wiff files'
+            : 'Choose a folder of .raw files',
     )
     if (picked) onParam('input', picked)
   }
@@ -1098,6 +1185,10 @@ export default function App() {
 
   const removeConvertFile = (index: number) => {
     setConvert((p) => ({ ...p, inputFiles: p.inputFiles.filter((_, i) => i !== index) }))
+  }
+
+  const clearConvertFiles = () => {
+    setConvert((p) => ({ ...p, inputFiles: [] }))
   }
 
   const browseConvertOutput = async () => {
@@ -1223,13 +1314,15 @@ export default function App() {
     setRunError('')
   }
 
+  /** Pioneer reads the calibration run as Arrow (or a .tdfs / .scxs run: pick any file inside it). */
   const browseCalibration = async () => {
-    const picked = await backend.pickFile('Choose one run from this experiment', 'MS data', [
-      'arrow',
-      'mzML',
-      'mzml',
-      'raw',
-    ])
+    const picked = await backend.pickFile('Choose one run from this experiment', 'MS data', ['arrow'])
+    if (picked) onParam('calibrationFile', backend.asRunPath(picked))
+  }
+
+  /** A .tdfs / .scxs run is a folder: its own folder picker (calibrationNote rejects other folders). */
+  const browseCalibrationTdfs = async () => {
+    const picked = await backend.pickFolder('Choose one .tdfs or .scxs run from this experiment')
     if (picked) onParam('calibrationFile', picked)
   }
 
@@ -1493,8 +1586,8 @@ export default function App() {
         : isDownload
           ? { cmd: 'downloadspeclib' as const, download }
           : isSearch
-            ? { cmd: 'searchdia' as const, search: s }
-            : { cmd: 'buildspeclib' as const, build },
+            ? { cmd: 'searchdia' as const, search: s, extras: currentExtras }
+            : { cmd: 'buildspeclib' as const, build, extras: currentExtras },
       target:
         (isConvert
           ? c.outputDir || c.input
@@ -1540,15 +1633,34 @@ export default function App() {
         return
       }
       added.push(makeJob(id, runNo, resolveRunName(jobName, taken), { ...search, msData }))
-    } else if (isSearch && search.msDataMode === 'files') {
+    } else if (isSearch && (search.msDataMode === 'files' || search.msDataBatch)) {
       // One run per file. Pioneer has no way to be handed a list -- it takes a
       // directory and searches everything in it -- so each run gets a directory
       // of its own holding a single link to its file, plus a results folder
       // named after that file. Together those are what "search these
       // separately" means: no shared FDR, no match-between-runs across files
       // that are meant to be compared, and one output tree per file.
+      //
+      // A folder searched separately fans out over the .arrow files inside it
+      // -- the same set a folder-mode run would have searched as one.
+      let files = search.msDataFiles
+      if (search.msDataMode === 'folder') {
+        try {
+          // The folder field also accepts a single file; that is a batch of one.
+          files = info('msData').is_file
+            ? [search.msData.trim()]
+            : await backend.listArrowFiles(search.msData)
+        } catch (e) {
+          setRunError(String(e))
+          return
+        }
+        if (!files.length) {
+          setRunError('No .arrow files or .tdfs / .scxs runs in that folder.')
+          return
+        }
+      }
       const base = resolveRunName(jobName, taken)
-      for (const file of search.msDataFiles) {
+      for (const file of files) {
         const stem = fileStem(file)
         const { id, runNo } = await allocate()
         let msData: string
@@ -1626,8 +1738,14 @@ export default function App() {
       // kept, so a workflow tab still gives back the work in progress.
       const first = added[0].id
       setInspectingJobId((current) => (current ? first : null))
-      setViewJobId(first)
-      setDrawerOpen(true)
+      // With nothing running the new job starts at once, so show it. With a
+      // run in progress the drawer stays on that run: queuing more work is
+      // not a reason to lose sight of the log being watched.
+      if (!jobs.some((j) => j.status === 'running')) {
+        pinnedJobId.current = null
+        setViewJobId(first)
+        setDrawerOpen(true)
+      }
     }
     setRunError(failure)
   }
@@ -1652,7 +1770,7 @@ export default function App() {
       : isDownload
         ? validateDownloadRun(download, downloadTargetExists)
         : isSearch
-          ? validateSearchRun(search, searchNotes, pendingLibrary)
+          ? validateSearchRun(search, searchNotes, pendingLibraries)
           : validateBuildRun(build, fastaNotes, libNote, calibNote)
     if (block) {
       setRunError(block.msg)
@@ -1844,6 +1962,9 @@ export default function App() {
         onViewJob={(id) => {
           const job = jobs.find((j) => j.id === id)
           if (job) inspectJob(job)
+          // Clicking the active job means "follow along"; any other job pins
+          // the view there.
+          pinnedJobId.current = job?.status === 'running' ? null : id
           if (drawerOpen && viewJobId === id) setDrawerOpen(false)
           else {
             setViewJobId(id)
@@ -1982,6 +2103,7 @@ export default function App() {
                 onBrowseInput={browseConvertInput}
                 onAddFiles={addConvertFiles}
                 onRemoveFile={removeConvertFile}
+                onClearFiles={clearConvertFiles}
                 onBrowseOutput={browseConvertOutput}
                 onToggleAdvanced={() => setAdvancedOpen((o) => !o)}
               />
@@ -2008,7 +2130,9 @@ export default function App() {
                 onToggle={onToggle}
                 onBrowse={onBrowseSearch}
                 onAddMsFiles={addMsFiles}
+                onAddMsTdfs={addMsTdfs}
                 onRemoveMsFile={removeMsFile}
+                onClearMsFiles={clearMsFiles}
                 onToggleMsBatch={() => onToggle('msDataBatch')}
                 onOpenLoad={() => setLoadOpen(true)}
                 onGoToBuild={() => setCommand('buildspeclib')}
@@ -2032,6 +2156,7 @@ export default function App() {
                 onRemoveFasta={removeFasta}
                 onBrowseLibPath={browseLibPath}
                 onBrowseCalibration={browseCalibration}
+                onBrowseCalibrationTdfs={browseCalibrationTdfs}
                 onModField={onModField}
                 onRemoveMod={removeMod}
                 onAddMod={addMod}
@@ -2115,6 +2240,7 @@ export default function App() {
               if (kind === 'delete') {
                 // Also from the store, or the next read brings it back.
                 backend.historyDelete(id).catch(() => undefined)
+                if (pinnedJobId.current === id) pinnedJobId.current = null
                 setJobs((prev) => {
                   const rest = prev.filter((j) => j.id !== id)
                   if (viewJobId === id) {

@@ -1,5 +1,5 @@
 import { DEFAULT_CLEAVAGE } from './enzymes'
-import { modEntry } from './koinaMods'
+import { DEFAULT_RT_MODEL, modEntry } from './koinaMods'
 
 export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'convertraw'
 
@@ -7,7 +7,7 @@ export type CommandId = 'searchdia' | 'buildspeclib' | 'downloadspeclib' | 'conv
  *  ConvertRAW page drives two different binaries, so the workflow the user
  *  picked and the program that ends up being spawned are not the same thing.
  *  Mirrors the Rust `pioneer::Command` enum. */
-export type BackendCommand = CommandId | 'convertmzml'
+export type BackendCommand = CommandId | 'convertmzml' | 'convertbruker' | 'convertsciex'
 
 /** One library offered by the Hugging Face repository, as reported by
  *  `DownloadSpecLib --list --json`. Mirrors LibraryEntry in catalog.jl — the
@@ -56,18 +56,16 @@ export interface SearchParams {
   msDataMode: 'folder' | 'files'
   /** The chosen files, when msDataMode is 'files'. */
   msDataFiles: string[]
-  /** With a chosen file list, whether each file is its own search.
+  /** Whether each file is its own search.
    *
-   *  False by default, matching folder mode: a list of files is most often a
-   *  subset of one experiment, and searching it as one -- sharing FDR and
-   *  match-between-runs across it -- is what picking files out of a folder
-   *  usually means. Choosing files does not by itself say the files are
-   *  unrelated.
+   *  False by default: a folder, or a list of files, is most often one
+   *  experiment, and searching it as one -- sharing FDR and match-between-runs
+   *  across it -- is what handing over a set of files usually means.
    *
    *  True gives one run per file, each with its own results folder, so
    *  method-development files are not pooled with the very files they are
-   *  meant to be compared against. Ignored in folder mode, where a folder is
-   *  always one experiment. */
+   *  meant to be compared against. In folder mode the runs fan out over the
+   *  .arrow files inside the folder. */
   msDataBatch: boolean
   msData: string
   library: string
@@ -102,7 +100,7 @@ export const SEARCH_DEFAULTS: SearchParams = {
   nIsotopes: '2',
   nce: '26',
   minPeptides: '1',
-  runToRunNorm: false,
+  runToRunNorm: true,
   matchBetweenRuns: true,
   debugLogging: false,
 }
@@ -227,6 +225,11 @@ export interface BuildParams {
   libPath: string
   /** Key into PREDICTION_MODELS; emitted as `library_params.prediction_model`. */
   predictionModel: string
+  /** Bruker timsTOF library: predict ion mobility too, emitted as
+   *  `library_params.im_model: "alphapept_ccs"`. Searching timsTOF (.tdfs) data needs it. */
+  timsTOF: boolean
+  /** Key into RT_MODELS (koinaMods.ts); emitted as `library_params.rt_model`. */
+  rtModel: string
   /** Optional MS data file used to auto-detect fragment and precursor m/z
    *  bounds. Without it Pioneer falls back to fixed defaults. */
   calibrationFile: string
@@ -263,6 +266,9 @@ export interface BuildParams {
    *  where cleavage may occur, this says how much of the peptide has to
    *  respect it. */
   digestSpecificity: 'full' | 'semi' | 'semi-n' | 'semi-c'
+  /** fasta_digest_params.nterm_met_excision: emit each protein N-terminal peptide
+   *  both with and without its initiator Met (MPEPTIDEK and PEPTIDEK). */
+  ntermMetExcision: boolean
   maxVarMods: string
   addDecoys: boolean
   includeContaminants: boolean
@@ -278,6 +284,8 @@ export const BUILD_DEFAULTS: BuildParams = {
   fastaFiles: [],
   libPath: '',
   predictionModel: 'altimeter',
+  timsTOF: false,
+  rtModel: DEFAULT_RT_MODEL,
   calibrationFile: '',
   // Mirrors assets/example_config/defaultBuildLibParams.json, so an untouched
   // form emits what Pioneer would have defaulted to anyway.
@@ -299,6 +307,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   cleavageRegex: DEFAULT_CLEAVAGE,
   customEnzyme: false,
   digestSpecificity: 'full',
+  ntermMetExcision: true,
   maxVarMods: '1',
   addDecoys: true,
   includeContaminants: true,
@@ -322,7 +331,7 @@ export const BUILD_DEFAULTS: BuildParams = {
  *  Held as an explicit field rather than sniffed from the input path, because
  *  in Folder mode the path says nothing about what is inside it, and a folder
  *  can hold both. */
-export type ConvertFormat = 'raw' | 'mzml'
+export type ConvertFormat = 'raw' | 'mzml' | 'bruker' | 'sciex'
 
 /** ConvertRAW's two converters are both driven entirely by CLI flags — there is
  *  no params JSON for either. Defaults are each converter's own. */
@@ -344,12 +353,15 @@ export interface ConvertParams {
   /** Blank means the converter's default of <input_dir>/arrow_out. Both
    *  converters use the same default, so this note holds either way. */
   outputDir: string
+  /** SCIEX only: whether the runs are ZT Scan DIA. The .wiff does not record the
+   *  scan mode, so it is always asked: '' is unanswered and blocks conversion;
+   *  'yes' writes <name>.zt.scxs marked zt_scan_dia, 'no' plain .scxs. */
+  ztScan: '' | 'yes' | 'no'
   skipExisting: boolean
   /** Scan-reader threads within the single file being converted.
    *
-   *  PioneerConverter parallelises on two levels and the knobs multiply, so
-   *  files-at-a-time stays pinned at 1 (see buildConvertArgs) and this is the
-   *  only one exposed. It is deliberately not the sidebar thread count: that
+   *  PioneerConverter processes files sequentially and parallelises scan reads
+   *  within the current file. This is separate from the sidebar thread count: that
    *  drives JULIA_NUM_THREADS, and the converter is a .NET program that never
    *  reads it.
    *
@@ -359,9 +371,8 @@ export interface ConvertParams {
   batchSize: string
   /** RAW only. */
   scanChunkSize: string
-  /** mzML only: files converted at the same time. The Julia converter has one
-   *  level of parallelism rather than two, so unlike the RAW path this is
-   *  exposed directly instead of being pinned at 1. */
+  /** mzML only: files converted at the same time. RAW conversion is always
+   *  sequential across files. */
   concurrentFiles: string
   /** mzML only. convertMzML omits scan headers by default; they roughly double
    *  the Arrow file and nothing in SearchDIA reads them, so this stays off
@@ -375,9 +386,10 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   input: '',
   inputFiles: [],
   outputDir: '',
+  ztScan: '',
   skipExisting: false,
   threadsPerFile: '3',
-  batchSize: '10000',
+  batchSize: '1000',
   scanChunkSize: '128',
   concurrentFiles: '2',
   includeScanHeader: false,
@@ -419,10 +431,15 @@ export interface LogLine {
  *  Stored as the form's own params rather than the serialized params file:
  *  ConvertRAW's `paramsJson` is a display command line and cannot be parsed back,
  *  and even for the Julia commands round-tripping through the Pioneer JSON would
- *  lose anything the form models but the config does not. */
+ *  lose anything the form models but the config does not.
+ *
+ *  `extras` are the keys of an edited or loaded config that the form does not
+ *  model (the "advanced" JSON). They are part of what the run was launched
+ *  with, so recalling the run must bring them back too; runs stored before
+ *  they were recorded carry none. */
 export type JobSnapshot =
-  | { cmd: 'searchdia'; search: SearchParams }
-  | { cmd: 'buildspeclib'; build: BuildParams }
+  | { cmd: 'searchdia'; search: SearchParams; extras?: Record<string, unknown> | null }
+  | { cmd: 'buildspeclib'; build: BuildParams; extras?: Record<string, unknown> | null }
   | { cmd: 'downloadspeclib'; download: DownloadParams }
   | { cmd: 'convertraw'; convert: ConvertParams }
 
@@ -442,6 +459,11 @@ export interface Job {
   status: JobStatus
   logLines: LogLine[]
   failMsg: string
+  /** Steps of a multi-file job that failed while the job carried on, one
+   *  message each. Absent on jobs restored from before this existed. */
+  stepFailures?: string[]
+  /** How many steps the job has, once one has failed (for "n of m steps failed"). */
+  stepTotal?: number
   /** Serialized params, held so the job can be started when it reaches the
    *  front of the queue rather than at enqueue time. */
   paramsJson: string
@@ -468,6 +490,12 @@ export interface PathInfo {
   raw_count: number
   mzml_count: number
   arrow_count: number
+  /** Bruker timsTOF directories: `.tdfs` runs (searchable) and raw `.d` bundles. */
+  tdfs_count: number
+  d_count: number
+  /** SCIEX: `.scxs` runs (directories, searchable) and raw `.wiff` files. */
+  scxs_count: number
+  wiff_count: number
   has_config_json: boolean
   is_pion_library: boolean
   error: string | null
@@ -483,6 +511,10 @@ export const EMPTY_PATH_INFO: PathInfo = {
   raw_count: 0,
   mzml_count: 0,
   arrow_count: 0,
+  tdfs_count: 0,
+  d_count: 0,
+  scxs_count: 0,
+  wiff_count: 0,
   has_config_json: false,
   is_pion_library: false,
   error: null,

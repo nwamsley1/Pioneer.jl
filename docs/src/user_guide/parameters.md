@@ -11,8 +11,8 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 * **`global.q_value_threshold`** — final FDR cutoff for output (default `0.01`). Loosen to `0.05` for exploratory work.
 * **`search.n_isotopes`** — number of fragment isotopes used in matching (default `2`, M and M+1). Set `1` for non-Altimeter libraries that do not model M+1 intensities (Prosit, UniSpec).
 * **`acquisition.nce`** — initial NCE guess for the pre-search before NCE tuning (default `26`, suitable for Thermo Orbitrap/Astral). If the auto-fitted NCE in the QC plot is far from this value, re-run with a closer guess.
-* **`optimization.machine_learning.max_psm_memory_mb`** — memory budget for in-memory LightGBM training (default `2000` MB). Raise on workstations with more RAM; lower to force the out-of-memory path earlier.
-* **`maxLFQ.run_to_run_normalization`** — apply between-run median-spline normalization to peak areas (default `false`). Turn on when systemic between-run intensity bias is expected.
+* **`optimization.machine_learning.max_psm_memory_mb`** — table-size budget for run-level protein training (default `2000` MB). Larger tables use a representative training pool. This is not a total search RAM limit; precursor training uses its own fixed pool cap.
+* **`maxLFQ.run_to_run_normalization`** — apply between-run median-spline normalization to peak areas (default `true`). Turn off when between-run intensity differences are biological rather than systematic.
 
 ### Global
 
@@ -36,8 +36,7 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `optimization.machine_learning.max_psm_memory_mb` | Real | `2000` | Memory budget (MB) for in-memory PSM scoring. Above this, ScoringSearch switches to the out-of-memory path. |
-| `optimization.machine_learning.pep_bin_size` | Int | `10` | PSMs per bin in the empirical q-value/PEP histogram. Smaller is finer-grained but noisier; larger is smoother but coarser. |
+| `optimization.machine_learning.max_psm_memory_mb` | Real | `2000` | Table-size budget (MB) for run-level protein training; larger tables use a representative training pool. Does not limit total search RAM. |
 
 ### Optimization (Chromatogram Integration)
 
@@ -54,12 +53,19 @@ Most parameters work at their defaults. The few worth tuning per experiment:
 | `proteinScoring.global_protein_inference` | Bool | `true` | Run protein inference once across the union of passing PSMs from every file. Set `false` for the legacy per-file path. |
 | `proteinScoring.write_qc_plots` | Bool | `false` | Emit protein-scoring QC plots. |
 
-### MaxLFQ
+### Protein Quantification
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `maxLFQ.run_to_run_normalization` | Bool | `false` | Apply between-run median-spline normalization to peak areas. |
-| `maxLFQ.max_chunk_size_mb` | Int | `1024` | Maximum chunk size (MB) for the chunked merge during MaxLFQ. |
+| `maxLFQ.quantification_method` | String | `"sparsemaxlfq"` | Protein quantification method: `"sparsemaxlfq"` or `"maxlfq"`. |
+| `maxLFQ.run_to_run_normalization` | Bool | `true` | Apply between-run median-spline normalization to peak areas. |
+| `maxLFQ.max_chunk_size_mb` | Int | `1024` | Maximum chunk size (MB) for the chunked merge during protein quantification. |
+
+Protein quantification defaults to sparse MaxLFQ with 16 partner proposals per
+run and a fixed seed, plus connections that preserve the full overlap graph’s
+connected components. It uses shared-precursor ratios on those selected run pairs;
+results can differ from full MaxLFQ. For comparisons, select `"maxlfq"`.
+The selected method and its settings are saved in `protein_quantification.json`.
 
 ### Output
 
@@ -130,6 +136,7 @@ Header-parsing regex patterns can be configured three ways:
 | `fasta_digest_params.cleavage_regex` | String | `[KR][^_\|$]` | Cleavage rule. To exclude cleavage before proline use `[KR][^P\|$]`. |
 | `fasta_digest_params.missed_cleavages` | Int | `1` | Maximum missed cleavages. |
 | `fasta_digest_params.specificity` | String | `"full"` | Digestion specificity: `"full"`, `"semi"` (either terminus), `"semi-n"` (C terminus required), or `"semi-c"` (N terminus required). Protein termini count as enzymatic. |
+| `fasta_digest_params.nterm_met_excision` | Bool | `true` | N-terminal Met excision. Each protein N-terminal peptide is emitted both with and without its initiator Met (`MPEPTIDEK` and `PEPTIDEK`); the excised form is length-filtered on its own and costs no missed cleavage. |
 | `fasta_digest_params.max_var_mods` | Int | `1` | Maximum variable modifications per peptide. |
 | `fasta_digest_params.add_decoys` | Bool | `true` | Generate decoy sequences. |
 | `fasta_digest_params.entrapment_r` | Float | `0` | Entrapment-sequence ratio. |
@@ -143,6 +150,16 @@ Header-parsing regex patterns can be configured three ways:
 | `variable_mods.{pattern, mass, name}` | [String], [Float], [String] | Met oxidation (`Unimod:35`, +15.99491 Da) | Variable modifications. |
 | `fixed_mods.{pattern, mass, name}` | [String], [Float], [String] | Cys carbamidomethyl (`Unimod:4`, +57.021464 Da) | Fixed modifications. |
 | `isotope_mod_groups` | [Object] | `[]` | Multiplexed labelling channels. |
+
+Modification names must be UNIMOD accessions (`Unimod:<id>`); they are sent to
+Koina verbatim. Before any prediction is requested, every fixed and variable
+modification (accession and residue) is checked against what the selected
+`prediction_model` **and** `rt_model` were trained on, and a build whose
+modifications either model cannot predict is refused — the error names the
+offending modifications and the models that would accept the whole selection.
+Leaving cysteine without a fixed modification means *unmodified cysteine*, which
+only `prosit_2025_40ptm` (fragments) and both retention-time models can
+predict; every other fragment model assumes carbamidomethyl-C.
 
 ### Collision Energy
 
@@ -159,6 +176,15 @@ Header-parsing regex patterns can be configured three ways:
 | `library_params.frag_mz_max` | Float | `2020.0` | Manual upper fragment m/z bound. |
 | `library_params.prec_mz_min` | Float | `390.0` | Lower precursor m/z bound. |
 | `library_params.prec_mz_max` | Float | `1010.0` | Upper precursor m/z bound. |
+| `library_params.im_model` | String | `""` | Koina ion-mobility model for timsTOF libraries (`"alphapept_ccs"` or `"im2deep"`); adds `ccs` / `inv_ion_mobility` precursor columns. Empty skips it. |
+| `library_params.frag_index_local_id_type` | String | `"auto"` | Width of the fragment index's partition-local precursor IDs: `"auto"`, `"UInt16"` or `"UInt32"`. UInt16 partitions hold at most 65,535 precursors and a denser partition is split, so on large libraries the effective partition width drops below its nominal width (about 2.5 Da at 5 Da for a 10 M-precursor library). `"auto"` picks UInt32 only in that case. The choice is logged and recorded in the library's `config.json`. |
+
+### Prediction Models
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `library_params.prediction_model` | String | `"altimeter"` | Koina fragment-intensity model: `altimeter`, `prosit_2020_hcd`, `prosit_2024_ptm`, or `prosit_2025_40ptm`. |
+| `library_params.rt_model` | String | `"chronologer"` | Koina retention-time model: `chronologer` (hydrophobic index, %ACN) or `prosit_2024_irt_ptm` (Prosit iRT, the sibling of the Prosit PTM fragment models). Either scale works for the search, which calibrates RT↔iRT per file. The choice is recorded in the library's `config.json`. |
 
 ### Top-level
 
@@ -189,8 +215,11 @@ A successful `BuildSpecLib` run writes a `.poin` directory containing:
 | `proteins_table.arrow` | Protein metadata. |
 | `detailed_fragments.jls` | Per-precursor fragment ions, m/z-sorted within each precursor. |
 | `precursor_to_fragment_indices.jls` | Per-precursor fragment range pointers. |
-| `partitioned_fragment_index.jls` | MainSearch partitioned fragment index. |
-| `presearch_partitioned_fragment_index.jls` | Pre-search partitioned fragment index. |
+| `partitioned_fragment_index.jls` | MainSearch partitioned fragment index (5 Da precursor partitions). |
+| `presearch_partitioned_fragment_index.jls` | Pre-search partitioned fragment index (5 Da). |
+| `partitioned_fragment_index_w10.jls`, `presearch_partitioned_fragment_index_w10.jls` | The same two indexes with 10 Da partitions. SearchDIA loads one pair per search, chosen from the data's MS2 isolation windows (10 Da for windows of 7.5 m/z or wider, such as timsTOF diaPASEF). |
+| `fragment_indices.json` | Lists the fragment indexes and their partition widths. Libraries built before it existed have only the 5 Da pair. |
 | `spline_knots.jls` | Spline knots for `SplineCompactFrag` libraries (Altimeter). |
-| `config.json` | Snapshot of the validated build parameters. |
+| `config.json` | Snapshot of the validated build parameters, plus `pioneer_version`, `build_date` and `fasta_provenance` (name, size, SHA-256 and bundled path of each input FASTA). |
+| `fasta/` | Copies of every input FASTA, including contaminants. A `<fasta>.provenance.json` placed next to an input FASTA (for example with its UniProt release, source URL and download time) is copied too, and its fields are merged into that FASTA's `fasta_provenance` record. |
 | `build_log.txt` | Build log. |

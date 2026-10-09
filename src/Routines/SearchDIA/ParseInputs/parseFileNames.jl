@@ -15,48 +15,45 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+"""
+    parseFileNames(ms_table_paths::Vector{String})
+
+Run names used for the `file_name` column and the wide-table headers: the
+full file name with the extension removed. Names are never shortened, so
+`20240101_lab_sampleA.arrow` stays `20240101_lab_sampleA`. The `.zt` that
+convertSciex adds to ZT Scan DIA outputs is part of the extension:
+`run1.zt.scxs` is run `run1`.
+"""
 function parseFileNames(
     ms_table_paths::Vector{String})
-    file_names = first.(
-                    split.(
-                        basename.(ms_table_paths), '.'
-                        ))
-    split_file_names = split.(file_names, "_")
+    file_names = [String(chopsuffix(first(splitext(basename(p))), ".zt")) for p in ms_table_paths]
+    for (i, fname) in enumerate(file_names)
+        if fname == ""
+            file_names[i] = string(i)
+        end
+    end
+    return file_names
+end
 
-            #If file names have inconsistnat number of delimiters, give up on parsing and use the entire file name
-            unique_split_file_name_lengths = unique(length.(split_file_names))
-            parsed_file_names = copy(split_file_names)
-            M = length(parsed_file_names)
-    
-            if length(unique_split_file_name_lengths) == 1
-                N = first(unique_split_file_name_lengths)
-                M = length(file_names)
-                split_strings = Array{String}(undef, (M, N))
-                for i in 1:N
-                    for j in 1:M
-                        split_strings[j, i] = split_file_names[j][i]
-                    end
-                end
-                cols_to_keep = zeros(Bool, N)
-                for (col_idx, col) in enumerate(eachcol(split_strings))
-                    if length(unique(col))>1
-                        cols_to_keep[col_idx] = true
-                    end
-                end
-                parsed_file_names = Vector{String}(undef, M)
-                split_strings = split_strings[:, cols_to_keep]
-                for i in 1:M
-                    parsed_file_names[i] = join(split_strings[i,:], "_")
-                end
-            else
-                parsed_file_names = file_names
-            end
-    
-            for (i, fname) in enumerate(parsed_file_names)
-                if fname == ""
-                    parsed_file_names[i] = string(i)
-                end
-            end
-            
-            return parsed_file_names#, parsed_fnames, file_path_to_parsed_name
+"""
+    distinguishingFileNames(file_names::Vector{String})
+
+Short labels for plots: the `_`-delimited tokens that differ between the
+runs, with every token shared by all of them dropped, so
+`20240101_lab_rep1` / `20240101_lab_rep2` label as `rep1` / `rep2`. Falls
+back to the full names when the runs do not split into the same number of
+tokens, and to the full name when nothing distinguishes a run. Labels only:
+the `file_name` column and the wide-table headers keep the full name
+(`parseFileNames`).
+"""
+function distinguishingFileNames(file_names::Vector{String})
+    split_names = split.(file_names, "_")
+    length(unique(length.(split_names))) == 1 || return copy(file_names)
+    n_tokens = first(length.(split_names))
+    keep = [length(unique(s[i] for s in split_names)) > 1 for i in 1:n_tokens]
+    labels = [join((s[i] for i in 1:n_tokens if keep[i]), "_") for s in split_names]
+    for (i, label) in enumerate(labels)
+        isempty(label) && (labels[i] = file_names[i])
+    end
+    return labels
 end

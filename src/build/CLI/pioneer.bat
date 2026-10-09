@@ -23,7 +23,7 @@ if not defined PIONEER_VERSION set "PIONEER_VERSION=unknown"
 
 set SUBCOMMAND=
 set SUBCOMMAND_ARGS=
-set VALID_COMMANDS=search predict params-search params-predict convert-raw convert-mzml
+set VALID_COMMANDS=search predict params-search params-predict convert-raw convert-mzml convert-bruker convert-sciex
 rem empirical params-empirical 
 
 :parse_args
@@ -130,11 +130,15 @@ echo                                                 Default params output path:
 rem echo   params-empirical ^<empirical_lib_path^> ^<library_outpath^> [--params-path ^<params_out_path^>]
 rem echo                                                 Generate parse parameter template
 rem echo                                                 Default params output path: ./parsespeclib_params.json
-echo   convert-raw ^<data_path^> [--output-dir ^<dir^>] [--skip-existing] [--concurrent-files N] [--threads-per-file N]
+echo   convert-raw ^<data_path^> [--output-dir ^<dir^>] [--skip-existing] [--threads-per-file N]
 echo                                                 Convert Thermo RAW files via PioneerConverter
 echo                                                 For additional converter options, run: pioneer convert-raw --help
 echo   convert-mzml ^<data_path^> [options]
 echo                                                 Convert mzML files
+echo   convert-bruker ^<d_path^> [--output-dir ^<dir^>]
+echo                                                 Convert Bruker timsTOF .d folders to .tdfs
+echo   convert-sciex ^<wiff_path^> [--output-dir ^<dir^>]
+echo                                                 Convert SCIEX .wiff/.wiff.scan runs to .scxs
 echo.
 echo Examples:
 echo   pioneer params-predict yeast.poin fasta/ --params-path predict_params.json
@@ -180,7 +184,11 @@ if "%JULIA_NUM_THREADS%"=="auto" (
 )
 set /a _GC_MARK_THREADS=(_THREAD_COUNT + 1) / 2
 if %_GC_MARK_THREADS% LSS 1 set _GC_MARK_THREADS=1
-set JULIA_NUM_GC_THREADS=%_GC_MARK_THREADS%,1
+rem Library builds run without the concurrent sweep thread: with it, large builds intermittently crashed
+rem (SIGSEGV) in the threaded fragment-index builder, and it gives no measurable speedup.
+set _GC_SWEEP_THREADS=1
+if /I "%SUBCOMMAND%"=="predict" set _GC_SWEEP_THREADS=0
+set JULIA_NUM_GC_THREADS=%_GC_MARK_THREADS%,%_GC_SWEEP_THREADS%
 
 rem Map aliases to canonical executable names
 if /I "%SUBCOMMAND%"=="search" set SUBCOMMAND=SearchDIA
@@ -190,6 +198,8 @@ rem if /I "%SUBCOMMAND%"=="params-empirical" set SUBCOMMAND=GetParseSpecLibParam
 if /I "%SUBCOMMAND%"=="params-search" set SUBCOMMAND=GetSearchParams
 if /I "%SUBCOMMAND%"=="params-predict" set SUBCOMMAND=GetBuildLibParams
 if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
+if /I "%SUBCOMMAND%"=="convert-bruker" set SUBCOMMAND=convertBruker
+if /I "%SUBCOMMAND%"=="convert-sciex" set SUBCOMMAND=convertSciex
 if /I "%SUBCOMMAND%"=="convert-raw" set SUBCOMMAND=PioneerConverter
 
 

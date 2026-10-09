@@ -30,6 +30,7 @@
         "cleavage_regex": "[KR][^_|$]",
         "missed_cleavages": 1,
         "specificity": "full",
+        "nterm_met_excision": true,
         "max_var_mods": 1,
         "add_decoys": true,
         "entrapment_r": 0,
@@ -57,12 +58,15 @@
 
     "comment_library": "=== Library m/z bounds ===",
     "comment_library": "=== If auto_detect_frag_bounds=true, bounds are determined from the calibration_raw_file; otherwise manual values are used ===",
+    "comment_library_index": "=== frag_index_local_id_type: 'auto' (UInt32 local IDs only when a partition would exceed 65,535 precursors), 'UInt16' or 'UInt32'. im_model: Koina ion-mobility model ('alphapept_ccs' or 'im2deep') adding ccs / inv_ion_mobility precursor columns; empty skips it ===",
     "library_params": {
         "auto_detect_frag_bounds": true,
         "frag_mz_min": 150.0,
         "frag_mz_max": 2020.0,
         "prec_mz_min": 390.0,
-        "prec_mz_max": 1010.0
+        "prec_mz_max": 1010.0,
+        "frag_index_local_id_type": "auto",
+        "im_model": ""
     },
 
     "comment_processing": "=== Processing settings ===",

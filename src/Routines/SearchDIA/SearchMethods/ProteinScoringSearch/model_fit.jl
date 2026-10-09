@@ -535,7 +535,7 @@ end
 
 """
     assign_protein_group_cv_folds!(all_protein_groups::DataFrame, 
-                                  protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
+                                  protein_to_cv_fold::Dictionary{UInt32, @NamedTuple{best_score::Float32, cv_fold::UInt8}})
 
 Assign CV fold to each protein group based on a pre-built mapping.
 
@@ -548,7 +548,7 @@ Adds cv_fold column to protein groups DataFrame based on the mapping
 """
 function assign_protein_group_cv_folds!(
     all_protein_groups::DataFrame,
-    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}}
+    protein_to_cv_fold::Dictionary{UInt32, @NamedTuple{best_score::Float32, cv_fold::UInt8}}
 )
     # Assign cv_fold to protein groups using the pre-built mapping
     cv_folds = Vector{UInt8}(undef, nrow(all_protein_groups))
@@ -574,7 +574,7 @@ end
 
 """
     apply_protein_scores_multifold!(pg_refs::Vector{ProteinGroupFileReference},
-                                    protein_to_cv_fold::Dict{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
+                                    protein_to_cv_fold::Dict{UInt32, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
                                     models::Dict{UInt8, LightGBMModel},
                                     feature_names::Vector{Symbol})
 
@@ -591,7 +591,7 @@ probability.
 """
 function apply_protein_scores_multifold!(
     pg_refs::Vector{ProteinGroupFileReference},
-    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
+    protein_to_cv_fold::Dictionary{UInt32, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     models::Dict{UInt8, LightGBMModel},
     feature_names::Vector{Symbol};
     use_model_scores::Bool,
@@ -629,8 +629,8 @@ function apply_protein_scores_multifold!(
                 df[!, :pg_score] = _initial_protein_probabilities(df.old_pg_score)
             end
             
-            # Sort by pg_score and target in descending order
-            sort!(df, [:pg_score, :target], rev = [true, true])
+            # Sort by descending protein score
+            sort!(df, :pg_score, rev = true)
             
             # Remove temporary training-only columns before returning.
             columns_to_remove = Symbol[:cv_fold]
@@ -679,7 +679,7 @@ end
                                      qc_folder::String,
                                      pg_refs::Vector{ProteinGroupFileReference},
                                      precursors::LibraryPrecursors;
-                                     protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
+                                     protein_to_cv_fold::Dictionary{UInt32, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
                                      skip_scoring = false)
 
 Perform run-level protein LightGBM scoring with library-derived CV folds.
@@ -705,7 +705,7 @@ function perform_protein_scoring_multifold(
     qc_folder::String,
     pg_refs::Vector{ProteinGroupFileReference},
     precursors::LibraryPrecursors;
-    protein_to_cv_fold::Dictionary{String, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
+    protein_to_cv_fold::Dictionary{UInt32, @NamedTuple{best_score::Float32, cv_fold::UInt8}},
     file_idx_to_name::Union{Nothing, AbstractDict{Int64, String}} = nothing,
     skip_scoring = false,
     write_qc_plots::Bool = true,

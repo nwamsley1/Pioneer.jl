@@ -14,6 +14,7 @@
         "nce": 26.0
     },
     "library_params": {
+        "frag_index_local_id_type": "UInt32",
         "rt_bin_tol": 1.0,
         "frag_bin_tol_ppm": 10.0,
         "y_start_index": 4,

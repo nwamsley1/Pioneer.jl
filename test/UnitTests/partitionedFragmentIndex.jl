@@ -7,6 +7,7 @@ using Pioneer: SoAFragBins, LocalFragment, Counter, LocalPartition,
     F32x8, _vbroadcast8, _vload8, _vcmpge_mask, _find_first_ge,
     _findFirstFragBin_hybrid, searchFragmentBinUnconditional!,
     queryFragmentHinted!, _score_partition_hinted!, _find_rt_bin_start
+using StaticArrays: SVector
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -134,6 +135,115 @@ function brute_force_query!(counter::Counter{UInt16, UInt8},
             end
         end
     end
+end
+
+"""Independent partition oracle: retain RT/peak/bin encounter order and OR masks."""
+function brute_force_partition_windows!(counter, partition, irt_low, irt_high,
+        masses, intensities, model; intensity_threshold=0.0f0)
+    bins = getFragBins(partition)
+    fragments = getFragments(partition)
+    for rt_bin in getRTBins(partition)
+        getHigh(rt_bin) >= irt_low && getLow(rt_bin) < irt_high || continue
+        isempty(getSubBinRange(rt_bin)) && continue
+        for peak_i in eachindex(masses)
+            intensity = intensities[peak_i]::Float32
+            intensity < intensity_threshold && continue
+            @fastmath _, low, high = Pioneer.getCorrectedMzAndBounds(
+                model, masses[peak_i]::Float32, intensity)
+            for bin_i in getSubBinRange(rt_bin)
+                bins.highs[bin_i] >= low && bins.lows[bin_i] <= high || continue
+                for frag_i in bins.first_bins[bin_i]:bins.last_bins[bin_i]
+                    fragment = fragments[frag_i]
+                    Pioneer.or!(counter, getPrecID(fragment), getScore(fragment))
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+"""Repeat the same m/z bins in three RT bins, with empty bins before/between them."""
+function make_window_reuse_partition()
+    centers = Float32[100, 110, 120, 130, 140]
+    local_ids = ([9, 2, 12, 4, 7], [5, 11, 3, 10, 1], [15, 6, 14, 8, 13])
+    rt_bounds = ((1.0f0, 2.0f0), (2.0f0, 3.0f0), (4.0f0, 5.0f0))
+    lows, highs = Float32[], Float32[]
+    first_bins, last_bins = UInt32[], UInt32[]
+    fragments = LocalFragment[]
+    rt_bins = [FragIndexBin{Float32}(0.0f0, 1.0f0, UInt32(1), UInt32(0))]
+    for r in 1:3
+        first_bin = UInt32(length(lows) + 1)
+        for (j, mz) in enumerate(centers)
+            push!(lows, mz - 0.001f0)
+            push!(highs, mz + 0.001f0)
+            push!(first_bins, UInt32(length(fragments) + 1))
+            mask = UInt8(1) << UInt8(mod(j + r - 2, 8))
+            push!(fragments, LocalFragment(UInt16(local_ids[r][j]), mask))
+            push!(fragments, LocalFragment(UInt16(16), mask))
+            push!(last_bins, UInt32(length(fragments)))
+        end
+        low_rt, high_rt = rt_bounds[r]
+        push!(rt_bins, FragIndexBin{Float32}(low_rt, high_rt, first_bin, UInt32(length(lows))))
+        r == 2 && push!(rt_bins, FragIndexBin{Float32}(3.0f0, 4.0f0, UInt32(11), UInt32(10)))
+    end
+    append!(highs, fill(Inf32, 7))
+    bins = SoAFragBins{Float32}(lows, highs, first_bins, last_bins)
+    return LocalPartition{Float32}(bins, rt_bins, fragments, UInt32.(101:116),
+        UInt16(16), make_soa_hints(bins, rt_bins))
+end
+
+function window_test_spline(base::Float32, slope::Float32, low::Float32, high::Float32)
+    width = high - low
+    change = slope * width
+    coefficients = SVector{8, Float32}(base, change, 0, 0, base + change, change, 0, 0)
+    return Pioneer.UniformSpline{8, Float32}(coefficients, 3, low, high, width)
+end
+
+"""Real intensity/scout models with varying bias, spread, and extrapolated tails."""
+function window_reuse_models(; bias_shift=0.0f0)
+    mz_bias = window_test_spline(0.002f0 + bias_shift, 0.00002f0, 90.0f0, 150.0f0)
+    intensity_bias = window_test_spline(0.0f0, 0.0002f0, 1.0f0, 10.0f0)
+    spread = window_test_spline(1.5f0, 0.04f0, 1.0f0, 10.0f0)
+    rt_bias = window_test_spline(0.0f0, 0.0f0, 0.0f0, 5.0f0)
+    mz_spread = window_test_spline(1.0f0, 0.001f0, 90.0f0, 150.0f0)
+    extrap(s) = Pioneer.make_spline_extrap(s, s.first, s.last)
+    intensity = Pioneer.IntensityMassErrorModel(
+        mz_bias, intensity_bias, spread, rt_bias,
+        extrap(mz_bias), extrap(intensity_bias), extrap(spread), extrap(rt_bias),
+        2.0f0, 0.03f0, mz_spread, extrap(mz_spread), 1.0f0, 0.0f0, 0.0f0,
+        -10.0f0, 0.03f0, 0.0f0, 5.0f0)
+    scout = Pioneer.ScoutCalibratedMassErrorModel(mz_bias, extrap(mz_bias),
+        intensity_bias, extrap(intensity_bias), true, 0.006f0)
+    scout_no_intensity = Pioneer.ScoutCalibratedMassErrorModel(mz_bias, extrap(mz_bias),
+        intensity_bias, extrap(intensity_bias), false, 0.006f0)
+    return (intensity, scout, scout_no_intensity)
+end
+
+struct PartitionWindowCountingModel{M} <: Pioneer.AbstractMassErrorModel
+    model::M
+    calls::Base.RefValue{Int}
+end
+
+function Pioneer.getCorrectedMzAndBounds(model::PartitionWindowCountingModel,
+        mz::Float32, intensity::Float32)
+    model.calls[] += 1
+    return Pioneer.getCorrectedMzAndBounds(model.model, mz, intensity)
+end
+
+function partition_counter_state(counter)
+    return (ids=copy(counter.ids[1:(counter.size - 1)]), counts=copy(counter.counts))
+end
+
+function accepted_partition_windows(masses, intensities, model, threshold)
+    lows, highs = Float32[], Float32[]
+    for i in eachindex(masses)
+        intensity = intensities[i]::Float32
+        intensity < threshold && continue
+        @fastmath _, low, high = Pioneer.getCorrectedMzAndBounds(model, masses[i]::Float32, intensity)
+        push!(lows, low)
+        push!(highs, high)
+    end
+    return lows, highs
 end
 
 # ─── Tests ───────────────────────────────────────────────────────────────────
@@ -374,6 +484,119 @@ end
             _score_partition_hinted!(lc, partition, 0.0f0, 5.0f0, masses, intensities, mem;
                                       linear_threshold=threshold)
             @test extract_local_scores(lc) == ref
+        end
+    end
+
+    @testset "Mass windows reused across RT bins" begin
+        partition = make_window_reuse_partition()
+        masses = Union{Missing, Float32}[100.001f0, 110.006f0, 120.0f0, 130.012f0, 140.0f0]
+        intensities = Union{Missing, Float32}[1.0f0, 16.0f0, 8.0f0, 16.0f0, 4096.0f0]
+        models = (MassErrorModel(2.0f0, (10.0f0, 20.0f0)), window_reuse_models()...)
+        for model in models, threshold in (0.0f0, 16.0f0),
+                rt_range in ((0.0f0, 5.0f0), (2.0f0, 4.5f0), (1.0f0, 2.0f0))
+            reference = Counter(UInt16, UInt8, 17)
+            brute_force_partition_windows!(reference, partition, rt_range..., masses, intensities, model;
+                intensity_threshold=threshold)
+            # Cover both the compatible no-scratch call and caller-owned scratch.
+            for with_scratch in (false, true)
+                counter = Counter(UInt16, UInt8, 17)
+                low_buf, high_buf = Float32[], Float32[]
+                if with_scratch
+                    _score_partition_hinted!(counter, partition, rt_range..., masses, intensities, model;
+                        intensity_threshold=threshold, mz_low_buf=low_buf, mz_high_buf=high_buf)
+                    low, high = accepted_partition_windows(masses, intensities, model, threshold)
+                    @test low_buf[1:length(low)] == low
+                    @test high_buf[1:length(high)] == high
+                else
+                    _score_partition_hinted!(counter, partition, rt_range..., masses, intensities, model;
+                        intensity_threshold=threshold)
+                end
+                @test partition_counter_state(counter) == partition_counter_state(reference)
+            end
+        end
+
+        @testset "Intensity cutoff ties preserve precursor encounter order" begin
+            exact_masses = Union{Missing, Float32}[100, 110, 120, 130, 140]
+            tied_intensities = Union{Missing, Float32}[5, 10, 10, 2, 10]
+            counter = Counter(UInt16, UInt8, 17)
+            _score_partition_hinted!(counter, partition, 0.0f0, 5.0f0,
+                exact_masses, tied_intensities, MassErrorModel(0.0f0, (0.0f0, 0.0f0));
+                intensity_threshold=10.0f0, mz_low_buf=Float32[], mz_high_buf=Float32[])
+            @test counter.ids[1:(counter.size - 1)] == UInt16[2, 16, 12, 7, 11, 3, 1, 6, 14, 13]
+            @test counter.counts[16] == UInt8(0x7e)
+
+            # A zero-width observed window on either fragment-bin boundary matches.
+            for edges in (getFragBins(partition).lows, getFragBins(partition).highs)
+                boundary_masses = Union{Missing, Float32}[edges[1:5]...]
+                reference = Counter(UInt16, UInt8, 17)
+                Pioneer.reset!(counter)
+                model = MassErrorModel(0.0f0, (0.0f0, 0.0f0))
+                brute_force_partition_windows!(reference, partition, 0.0f0, 5.0f0,
+                    boundary_masses, tied_intensities, model; intensity_threshold=10.0f0)
+                _score_partition_hinted!(counter, partition, 0.0f0, 5.0f0,
+                    boundary_masses, tied_intensities, model; intensity_threshold=10.0f0,
+                    mz_low_buf=Float32[], mz_high_buf=Float32[])
+                @test partition_counter_state(counter) == partition_counter_state(reference)
+                @test counter.size > 1
+            end
+        end
+
+        @testset "Correct once per accepted peak and replace previous scan/model windows" begin
+            low_buf, high_buf = fill(-1.0f0, 12), fill(-2.0f0, 12)
+            counter = Counter(UInt16, UInt8, 17)
+            changed_models = window_reuse_models(bias_shift=0.015f0)
+            scans = ((masses, intensities, models[2], 0.0f0),
+                (masses, intensities, changed_models[1], 16.0f0),
+                (masses[2:3], intensities[2:3], changed_models[2], 0.0f0),
+                (masses, reverse(intensities), models[3], 0.0f0))
+            previous_low = Float32[]
+            for (scan_masses, scan_intensities, model, threshold) in scans
+                counted = PartitionWindowCountingModel(model, Ref(0))
+                Pioneer.reset!(counter)
+                reference = Counter(UInt16, UInt8, 17)
+                brute_force_partition_windows!(reference, partition, 0.0f0, 5.0f0,
+                    scan_masses, scan_intensities, model; intensity_threshold=threshold)
+                _score_partition_hinted!(counter, partition, 0.0f0, 5.0f0,
+                    scan_masses, scan_intensities, counted; intensity_threshold=threshold,
+                    mz_low_buf=low_buf, mz_high_buf=high_buf)
+                low, high = accepted_partition_windows(scan_masses, scan_intensities, model, threshold)
+                @test counted.calls[] == length(low)
+                @test low_buf[1:length(low)] == low
+                @test high_buf[1:length(high)] == high
+                @test partition_counter_state(counter) == partition_counter_state(reference)
+                @test low != previous_low
+                previous_low = low
+            end
+        end
+
+        @testset "Lazy windows for empty, disjoint and filtered scans" begin
+            empty_partition = LocalPartition{Float32}(
+                SoAFragBins{Float32}(Float32[], Float32[], UInt32[], UInt32[]),
+                FragIndexBin{Float32}[], LocalFragment[], UInt32[], UInt16(0), UInt16[])
+            no_rt_partition = LocalPartition{Float32}(getFragBins(partition),
+                FragIndexBin{Float32}[], getFragments(partition), UInt32.(101:116),
+                UInt16(16), getSkipHints(partition))
+            unreadable = Union{Missing, Float32}[missing]
+            empty_scan = Union{Missing, Float32}[]
+            cases = ((empty_partition, 0.0f0, 5.0f0, unreadable, unreadable, 0.0f0),
+                (no_rt_partition, 0.0f0, 5.0f0, unreadable, unreadable, 0.0f0),
+                (partition, 6.0f0, 7.0f0, unreadable, unreadable, 0.0f0),
+                (partition, 0.0f0, 0.5f0, unreadable, unreadable, 0.0f0),
+                (partition, 0.0f0, 5.0f0, empty_scan, empty_scan, 0.0f0),
+                (partition, 0.0f0, 5.0f0, unreadable, Union{Missing, Float32}[1], 2.0f0))
+            for (part, rt_low, rt_high, scan_masses, scan_intensities, threshold) in cases
+                counter = Counter(UInt16, UInt8, 17)
+                low_buf, high_buf = fill(-1.0f0, 8), fill(-2.0f0, 8)
+                counted = PartitionWindowCountingModel(models[2], Ref(0))
+                _score_partition_hinted!(counter, part, rt_low, rt_high,
+                    scan_masses, scan_intensities, counted; intensity_threshold=threshold,
+                    mz_low_buf=low_buf, mz_high_buf=high_buf)
+                @test counted.calls[] == 0
+                @test counter.size == 1
+                @test all(iszero, counter.counts)
+                @test low_buf == fill(-1.0f0, 8)
+                @test high_buf == fill(-2.0f0, 8)
+            end
         end
     end
 

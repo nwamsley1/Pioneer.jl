@@ -36,7 +36,8 @@ function _digest_fully_specific_sequence(sequence::AbstractString,
                                          regex::Regex,
                                          max_length::Int,
                                          min_length::Int,
-                                         missed_cleavages::Int
+                                         missed_cleavages::Int,
+                                         nterm_met_excision::Bool
                                         )::Tuple{Vector{String}, Vector{UInt32}, Vector{UInt8}}
     
     function add_peptide!(peptides::Vector{String},
@@ -47,7 +48,8 @@ function _digest_fully_specific_sequence(sequence::AbstractString,
                           previous_sites::Vector{Int},
                           min_length::Int,
                           max_length::Int,
-                          missed_cleavages::Int)
+                          missed_cleavages::Int,
+                          nterm_met_excision::Bool)
         
         for i in 1:min(n, missed_cleavages + 1)
             previous_site = previous_sites[end - i + 1]
@@ -55,6 +57,15 @@ function _digest_fully_specific_sequence(sequence::AbstractString,
                 ((site - previous_site) <= max_length)
                 push!(peptides, String(@view sequence[previous_site+1:site]))
                 push!(starts, UInt32(previous_site + 1))
+            end
+            # N-terminal Met excision: the initiator Met is usually removed in
+            # vivo, so every protein N-terminal peptide is also emitted without
+            # it. This is a second start, not a cleavage site, so it costs no
+            # missed cleavage; the length window applies to the excised form.
+            if nterm_met_excision && previous_site == 0 &&
+                ((site - 1) >= min_length) && ((site - 1) <= max_length)
+                push!(peptides, String(@view sequence[2:site]))
+                push!(starts, UInt32(2))
             end
         end
 
@@ -70,24 +81,26 @@ function _digest_fully_specific_sequence(sequence::AbstractString,
     previous_sites = zeros(Int, missed_cleavages + 1)
     previous_sites[1] = 0
     n = 1
+    excise_start = nterm_met_excision && startswith(sequence, 'M')
 
     for site in eachmatch(regex, sequence, overlap = true)
         n = add_peptide!(peptides, starts, n, sequence, site.offset,
                         previous_sites, min_length, max_length,
-                        missed_cleavages)
+                        missed_cleavages, excise_start)
     end
 
     # Handle C-terminal peptides
     add_peptide!(peptides, starts, n, sequence, length(sequence),
                  previous_sites, min_length, max_length,
-                 missed_cleavages)
+                 missed_cleavages, excise_start)
 
     return peptides, starts, fill(UInt8(2), length(peptides))
 end
 
 """
     digest_sequence(sequence, regex, max_length, min_length, missed_cleavages,
-                    specificity) -> (peptides, starts, num_enzymatic_termini)
+                    specificity; nterm_met_excision = false)
+        -> (peptides, starts, num_enzymatic_termini)
 
 Digest a protein with configurable enzymatic specificity. `specificity` may be:
 
@@ -97,19 +110,26 @@ Digest a protein with configurable enzymatic specificity. `specificity` may be:
 - `"semi-c"`: the C terminus may be non-enzymatic; the N terminus must be enzymatic.
 
 Protein termini count as enzymatic.
+
+With `nterm_met_excision = true` and a sequence starting with `M`, every peptide
+that begins at residue 1 is also emitted starting at residue 2 (the form left
+after in-vivo initiator-Met excision), e.g. `MPEPTIDEK` yields both `MPEPTIDEK`
+and `PEPTIDEK`. Residue 2 then counts as an enzymatic N terminus, the length
+window is applied to the excised form itself, and no missed cleavage is charged.
 """
 function digest_sequence(sequence::AbstractString,
                          regex::Regex,
                          max_length::Int,
                          min_length::Int,
                          missed_cleavages::Int,
-                         specificity::AbstractString
+                         specificity::AbstractString;
+                         nterm_met_excision::Bool = false
                         )::Tuple{Vector{String}, Vector{UInt32}, Vector{UInt8}}
     normalized = normalize_digest_specificity(specificity)
 
     if normalized == "full"
         return _digest_fully_specific_sequence(
-            sequence, regex, max_length, min_length, missed_cleavages
+            sequence, regex, max_length, min_length, missed_cleavages, nterm_met_excision
         )
     end
 
@@ -135,8 +155,9 @@ function digest_sequence(sequence::AbstractString,
         push!(specific_ends, sequence_length)
     end
 
+    excise_start = nterm_met_excision && startswith(sequence, 'M')
     @inline start_is_enzymatic(start_idx::Int) =
-        start_idx == 1 || cleavage_mask[start_idx - 1]
+        start_idx == 1 || (excise_start && start_idx == 2) || cleavage_mask[start_idx - 1]
     @inline end_is_enzymatic(end_idx::Int) =
         end_idx == sequence_length || cleavage_mask[end_idx]
     @inline function internal_cleavages(start_idx::Int, end_idx::Int)
@@ -191,7 +212,7 @@ function digest_sequence(sequence::AbstractString,
 end
 
 """
-    digest_fasta(fasta::Vector{FastaEntry}, proteome_id::String; regex::Regex = r"[KR][^P|\$]", max_length::Int = 40, min_length::Int = 8, missed_cleavages::Int = 1, specificity::AbstractString = "full")::Vector{FastaEntry}
+    digest_fasta(fasta::Vector{FastaEntry}, proteome_id::String; regex::Regex = r"[KR][^P|\$]", max_length::Int = 40, min_length::Int = 8, missed_cleavages::Int = 1, specificity::AbstractString = "full", nterm_met_excision::Bool = true)::Vector{FastaEntry}
 
 Enzymatically digest protein sequences from FASTA entries into peptides.
 
@@ -203,6 +224,8 @@ Enzymatically digest protein sequences from FASTA entries into peptides.
 - `min_length::Int`: Minimum peptide length to include (default: 8)
 - `missed_cleavages::Int`: Maximum missed cleavages allowed (default: 1)
 - `specificity::AbstractString`: `"full"`, `"semi"`, `"semi-n"`, or `"semi-c"` (default: `"full"`)
+- `nterm_met_excision::Bool`: Also emit each protein N-terminal peptide without its initiator Met, so
+  both `MPEPTIDEK` and `PEPTIDEK` enter the library (default: `true`). See [`digest_sequence`](@ref).
 
 # Returns
 - `Vector{FastaEntry}`: Digested peptide entries as FastaEntry objects
@@ -251,7 +274,8 @@ function digest_fasta(fasta::Vector{FastaEntry},
                      max_length::Int = 40,
                      min_length::Int = 8,
                      missed_cleavages::Int = 1,
-                     specificity::AbstractString = "full")::Vector{FastaEntry}
+                     specificity::AbstractString = "full",
+                     nterm_met_excision::Bool = true)::Vector{FastaEntry}
 
     peptides_fasta = Vector{FastaEntry}()
     base_pep_id = one(UInt32)
@@ -262,7 +286,8 @@ function digest_fasta(fasta::Vector{FastaEntry},
             max_length,
             min_length,
             missed_cleavages,
-            specificity,
+            specificity;
+            nterm_met_excision = nterm_met_excision,
         )
         for (peptide, start_idx, num_enzymatic_termini) in
             zip(peptides, starts, enzymatic_termini)

@@ -13,7 +13,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
  *  already carries for validation focus, so nothing new is threaded through
  *  the forms. */
 export const DROP_FIELDS: Record<string, 'dir' | 'file' | 'either'> = {
-  // Either, because the field is two fields: a folder in "One folder" mode and
+  // Either, because the field is two fields: a folder in "Folder" mode and
   // a list of files in "Chosen files" mode. It was 'dir', so dropping a batch
   // of .arrow onto the list -- the one place a batch is what the field wants --
   // was refused with "this field takes a folder". The handler decides what to

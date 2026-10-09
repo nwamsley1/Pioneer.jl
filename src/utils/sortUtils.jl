@@ -1,4 +1,52 @@
 """
+Reusable buffers for the large, per-file permutations in MainSearch.
+
+The buffers intentionally use `Int32`: each permutation indexes one file, and
+other per-file search structures already have the same signed 32-bit row bound.
+Experiment-wide sorts must continue to use native `Int` indices.
+"""
+mutable struct Int32SortPermWorkspace
+    perm::Vector{Int32}
+    temp::Vector{Int32}
+end
+
+Int32SortPermWorkspace() = Int32SortPermWorkspace(Int32[], Int32[])
+
+const PARALLEL_SORT_MIN_ELEMS_PER_TASK = 50_000
+
+"""
+    parallel_sortperm_int32!(workspace, values; rev=false) -> Vector{Int32}
+
+Build a parallel permutation of a one-based, per-file vector using reusable
+`Int32` storage. Equal keys retain their input order, matching `sortperm`.
+"""
+function parallel_sortperm_int32!(
+    workspace::Int32SortPermWorkspace,
+    values::AbstractVector;
+    rev::Bool = false,
+)
+    n = length(values)
+    n <= typemax(Int32) || throw(ArgumentError(
+        "per-file sort has $n rows, exceeding the Int32 row-index limit $(typemax(Int32))"
+    ))
+    firstindex(values) == 1 || throw(ArgumentError("parallel permutation requires one-based indexing"))
+
+    resize!(workspace.perm, n)
+    resize!(workspace.temp, n)
+    n == 0 && return workspace.perm
+
+    AcceleratedKernels.sortperm!(
+        workspace.perm,
+        values;
+        rev = rev,
+        temp = workspace.temp,
+        max_tasks = Threads.nthreads(),
+        min_elems = PARALLEL_SORT_MIN_ELEMS_PER_TASK,
+    )
+    return workspace.perm
+end
+
+"""
     fast_df_sort!(df::DataFrame, cols::NTuple{N, Symbol};
                   rev::NTuple{N, Bool}=ntuple(_ -> false, Val(N))) where N
 

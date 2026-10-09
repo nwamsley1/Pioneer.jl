@@ -58,32 +58,33 @@ Zhang B, Chambers MC, Tabb DL. Proteomic parsimony through bipartite graph analy
 and transparency. J Proteome Res. 2007 Sep;6(9):3549-57. doi: 10.1021/pr070230d.
 """
 function _infer_proteins_single_group(
-    proteins::Vector{ProteinKey}, 
-    peptides::Vector{PeptideKey}
-)::InferenceResult
+    proteins::Vector{P},
+    peptides::Vector{Q},
+    names = StringGroupNames()
+)::InferenceResult{P, Q} where {N, S, P<:ProteinKey{N}, Q<:PeptideKey{S}}
     # Validate input lengths match
     if length(proteins) != length(peptides)
         throw(ArgumentError("proteins and peptides vectors must have the same length"))
     end
 
     # Build peptide-to-protein and protein-to-peptide mappings
-    peptide_to_proteins = Dictionary{PeptideKey, Set{ProteinKey}}()
-    original_groups = Dictionary{PeptideKey, ProteinKey}()
+    peptide_to_proteins = Dictionary{Q, Set{P}}()
+    original_groups = Dictionary{Q, P}()
     
     for i in 1:length(peptides)
         peptide_key = peptides[i]
         protein_key = proteins[i]
         
         if !haskey(peptide_to_proteins, peptide_key)
-            insert!(peptide_to_proteins, peptide_key, Set{ProteinKey}())
+            insert!(peptide_to_proteins, peptide_key, Set{P}())
             # Store the original protein group
             insert!(original_groups, peptide_key, protein_key)
         end
         
-        # Split the protein name string by ";" and treat each part as a protein
-        for protein_part in split(protein_key.name, ";")
-            individual_protein = ProteinKey(
-                protein_part, 
+        # Split the protein name into its members and treat each as a protein
+        for protein_part in group_members(names, protein_key.name)
+            individual_protein = P(
+                protein_part,
                 protein_key.is_target, 
                 protein_key.entrap_id
             )
@@ -92,12 +93,12 @@ function _infer_proteins_single_group(
     end
     
     # Map from protein to peptides
-    protein_to_peptides = Dictionary{ProteinKey, Set{PeptideKey}}()
+    protein_to_peptides = Dictionary{P, Set{Q}}()
     
     for (peptide_key, protein_set) in pairs(peptide_to_proteins)
         for protein_key in protein_set
             if !haskey(protein_to_peptides, protein_key)
-                insert!(protein_to_peptides, protein_key, Set{PeptideKey}())
+                insert!(protein_to_peptides, protein_key, Set{Q}())
             end
             
             push!(protein_to_peptides[protein_key], peptide_key)
@@ -105,8 +106,8 @@ function _infer_proteins_single_group(
     end
     
     # Find connected components (independent protein-peptide clusters)
-    visited_peptides = Set{PeptideKey}()
-    components = Vector{Tuple{Set{PeptideKey}, Set{ProteinKey}}}()  # (peptides, proteins)
+    visited_peptides = Set{Q}()
+    components = Vector{Tuple{Set{Q}, Set{P}}}()  # (peptides, proteins)
     
     for i in 1:length(peptides)
         peptide_key = peptides[i]
@@ -115,8 +116,8 @@ function _infer_proteins_single_group(
             continue
         end
         
-        component_peptides = Set{PeptideKey}()
-        component_proteins = Set{ProteinKey}()
+        component_peptides = Set{Q}()
+        component_proteins = Set{P}()
         queue = [peptide_key]
         
         while !isempty(queue)
@@ -146,8 +147,8 @@ function _infer_proteins_single_group(
     end
     
     # Initialize result dictionaries
-    peptide_to_protein = Dictionary{PeptideKey, ProteinKey}()
-    ambiguous_peptide_to_proteins = Dictionary{PeptideKey, Vector{ProteinKey}}()
+    peptide_to_protein = Dictionary{Q, P}()
+    ambiguous_peptide_to_proteins = Dictionary{Q, Vector{P}}()
     
     # Process each component independently
     for (component_peptides, component_proteins) in components
@@ -170,12 +171,12 @@ function _infer_proteins_single_group(
             if identical_sets
                 # Case where all proteins are indistinguishable
                 # Group proteins by their target status and entrapment group
-                protein_groups = Dictionary{Tuple{Bool, UInt8}, Vector{String}}()
+                protein_groups = Dictionary{Tuple{Bool, UInt8}, Vector{N}}()
                 
                 for protein in component_proteins
                     key = (protein.is_target, protein.entrap_id)
                     if !haskey(protein_groups, key)
-                        insert!(protein_groups, key, String[])
+                        insert!(protein_groups, key, N[])
                     end
                     push!(protein_groups[key], protein.name)
                 end
@@ -183,12 +184,11 @@ function _infer_proteins_single_group(
                 # Process each group and assign peptides
                 for ((is_target, entrap_id), protein_names) in pairs(protein_groups)
                     if !isempty(protein_names)
-                        # Get protein names sorted and joined
-                        sorted_protein_names = sort(protein_names)
-                        protein_group_name = join(sorted_protein_names, ";")
+                        # Name the group by its sorted members
+                        protein_group_name = merge_group(names, protein_names)
                         
                         # Create final protein key
-                        final_protein = ProteinKey(protein_group_name, is_target, entrap_id)
+                        final_protein = P(protein_group_name, is_target, entrap_id)
                         
                         # Assign to peptides with matching target status and entrapment group
                         for peptide_key in component_peptides
@@ -204,10 +204,10 @@ function _infer_proteins_single_group(
         
         # Apply greedy set cover for minimal protein list
         remaining_peptides = copy(component_peptides)
-        necessary_proteins = Set{ProteinKey}()
+        necessary_proteins = Set{P}()
         
         # Find peptides unique to a protein
-        unique_peptide_to_protein = Dictionary{PeptideKey, ProteinKey}()
+        unique_peptide_to_protein = Dictionary{Q, P}()
         
         for peptide_key in component_peptides
             proteins_for_peptide = intersect(peptide_to_proteins[peptide_key], component_proteins)
@@ -219,12 +219,12 @@ function _infer_proteins_single_group(
         # Case F handling: No protein has unique peptides
         if isempty(unique_peptide_to_protein) && !isempty(component_proteins)
             # Group proteins by their target status and entrapment group
-            protein_groups = Dictionary{Tuple{Bool, UInt8}, Vector{String}}()
+            protein_groups = Dictionary{Tuple{Bool, UInt8}, Vector{N}}()
             
             for protein in component_proteins
                 key = (protein.is_target, protein.entrap_id)
                 if !haskey(protein_groups, key)
-                    insert!(protein_groups, key, String[])
+                    insert!(protein_groups, key, N[])
                 end
                 push!(protein_groups[key], protein.name)
             end
@@ -232,12 +232,11 @@ function _infer_proteins_single_group(
             # Process each group and assign peptides
             for ((is_target, entrap_id), protein_names) in pairs(protein_groups)
                 if !isempty(protein_names)
-                    # Get protein names sorted and joined
-                    sorted_protein_names = sort(protein_names)
-                    protein_group_name = join(sorted_protein_names, ";")
+                    # Name the group by its sorted members
+                    protein_group_name = merge_group(names, protein_names)
                     
                     # Create final protein key
-                    final_protein = ProteinKey(protein_group_name, is_target, entrap_id)
+                    final_protein = P(protein_group_name, is_target, entrap_id)
                     
                     # Assign to peptides with matching target status and entrapment group
                     for peptide_key in component_peptides
@@ -251,7 +250,7 @@ function _infer_proteins_single_group(
         end
         
         # First include proteins with unique peptides
-        unique_proteins = Set{ProteinKey}()
+        unique_proteins = Set{P}()
         for (_, protein) in pairs(unique_peptide_to_protein)
             push!(unique_proteins, protein)
         end
@@ -269,7 +268,7 @@ function _infer_proteins_single_group(
         while !isempty(remaining_peptides) && !isempty(candidate_proteins)
             # Step 1: Merge indistinguishable proteins before greedy selection
             # Group proteins by (remaining peptide set, is_target, entrap_id)
-            peptide_set_to_proteins = Dictionary{Tuple{UInt64, Bool, UInt8}, Tuple{Set{PeptideKey}, Vector{ProteinKey}}}()
+            peptide_set_to_proteins = Dictionary{Tuple{UInt64, Bool, UInt8}, Tuple{Set{Q}, Vector{P}}}()
 
             for protein in candidate_proteins
 
@@ -279,23 +278,23 @@ function _infer_proteins_single_group(
                 group_key = (pep_set_hash, protein.is_target, protein.entrap_id)
 
                 if !haskey(peptide_set_to_proteins, group_key)
-                    insert!(peptide_set_to_proteins, group_key, (remaining_peps, ProteinKey[]))
+                    insert!(peptide_set_to_proteins, group_key, (remaining_peps, P[]))
                 end
                 push!(peptide_set_to_proteins[group_key][2], protein)
             end
 
             # Create merged candidates
-            merged_candidates = ProteinKey[]
+            merged_candidates = P[]
 
             for ((pep_set_hash, is_target, entrap_id), (pep_set, proteins)) in pairs(peptide_set_to_proteins)
                 if length(proteins) == 1
                     # No merge needed - single protein
                     push!(merged_candidates, proteins[1])
                 else
-                    # Merge proteins with identical remaining peptide sets
-                    protein_names = sort([p.name for p in proteins])
-                    merged_protein = ProteinKey(
-                        join(protein_names, ";"),
+                    # Merge proteins with identical remaining peptide sets. Candidates may already
+                    # be merged groups, so the merge is named by all their members, sorted.
+                    merged_protein = P(
+                        merge_group(names, [p.name for p in proteins]),
                         is_target,
                         entrap_id
                     )
@@ -318,9 +317,13 @@ function _infer_proteins_single_group(
             best_protein = nothing
             best_coverage = 0
 
+            # On equal coverage take the alphabetically first group (by its sorted members), so
+            # the choice does not depend on hash order.
             for protein in candidate_proteins
                 coverage = length(intersect(protein_to_peptides[protein], remaining_peptides))
-                if coverage > best_coverage
+                if coverage > best_coverage ||
+                   (coverage == best_coverage && coverage > 0 &&
+                    group_isless(names, protein.name, best_protein.name))
                     best_coverage = coverage
                     best_protein = protein
                 end
@@ -341,7 +344,7 @@ function _infer_proteins_single_group(
         end
 
         # Create a mapping to track peptides that can be uniquely attributed to a protein in the necessary set
-        peptide_to_necessary_protein = Dictionary{PeptideKey, ProteinKey}()
+        peptide_to_necessary_protein = Dictionary{Q, P}()
 
         for peptide_key in component_peptides
             # Get the original proteins that this peptide maps to (before any merging)
@@ -349,12 +352,12 @@ function _infer_proteins_single_group(
 
             # Count how many necessary proteins contain this peptide
             # For merged proteins (e.g., "B;C"), check if any component is in the original set
-            proteins_with_peptide = Set{ProteinKey}()
+            proteins_with_peptide = Set{P}()
             for protein in necessary_proteins
-                # Split protein name by ";" to handle merged protein groups
-                protein_components = split(protein.name, ";")
+                # Check each member of a merged protein group
+                protein_components = group_members(names, protein.name)
                 for component_name in protein_components
-                    component_protein = ProteinKey(component_name, protein.is_target, protein.entrap_id)
+                    component_protein = P(component_name, protein.is_target, protein.entrap_id)
                     if component_protein in original_protein_set
                         push!(proteins_with_peptide, protein)
                         break  # Only count this necessary protein once
@@ -400,11 +403,11 @@ Returns a Dictionary mapping (Bool, UInt8) to (Vector{ProteinKey}, Vector{Peptid
 The grouping is based on protein.is_target and protein.entrap_id.
 """
 function _group_by_population(
-    proteins::Vector{ProteinKey},
-    peptides::Vector{PeptideKey}
-)::Dictionary{Tuple{Bool, UInt8}, Tuple{Vector{ProteinKey}, Vector{PeptideKey}}}
+    proteins::Vector{P},
+    peptides::Vector{Q}
+)::Dictionary{Tuple{Bool, UInt8}, Tuple{Vector{P}, Vector{Q}}} where {P<:ProteinKey, Q<:PeptideKey}
 
-    groups = Dictionary{Tuple{Bool, UInt8}, Tuple{Vector{ProteinKey}, Vector{PeptideKey}}}()
+    groups = Dictionary{Tuple{Bool, UInt8}, Tuple{Vector{P}, Vector{Q}}}()
 
     for i in 1:length(proteins)
         prot = proteins[i]
@@ -415,7 +418,7 @@ function _group_by_population(
         group_key = (prot.is_target, prot.entrap_id)
 
         if !haskey(groups, group_key)
-            insert!(groups, group_key, (ProteinKey[], PeptideKey[]))
+            insert!(groups, group_key, (P[], Q[]))
         end
 
         push!(groups[group_key][1], prot)
@@ -441,6 +444,9 @@ and performs protein inference separately for each group. This ensures:
   multiple protein identifiers separated by semicolons in the name field, indicating that the peptide
   maps to multiple proteins.
 - `peptides::Vector{PeptideKey}`: Peptide identifiers corresponding to the proteins vector.
+- `names`: how protein names split into members and merge into groups: `StringGroupNames()` for
+  `String` names, or a `ProteinGroupRegistry` for integer accession IDs. Either way the result is
+  the same, up to the representation of the names.
 
 # Returns
 - `InferenceResult`: Contains unique assignments plus ambiguous peptide candidates from all
@@ -474,9 +480,10 @@ Internally groups by (protein.is_target, protein.entrap_id) and calls
 `_infer_proteins_single_group()` for each group independently.
 """
 function infer_proteins(
-    proteins::Vector{ProteinKey},
-    peptides::Vector{PeptideKey}
-)::InferenceResult
+    proteins::Vector{P},
+    peptides::Vector{Q};
+    names = StringGroupNames()
+)::InferenceResult{P, Q} where {P<:ProteinKey, Q<:PeptideKey}
     # Validate input lengths match
     if length(proteins) != length(peptides)
         throw(ArgumentError("proteins and peptides vectors must have the same length"))
@@ -484,19 +491,19 @@ function infer_proteins(
 
     # Handle empty input
     if isempty(proteins)
-        return InferenceResult(Dictionary{PeptideKey, ProteinKey}())
+        return InferenceResult(Dictionary{Q, P}())
     end
 
     # Step 1: Group by (is_target, entrap_id)
     groups = _group_by_population(proteins, peptides)
 
     # Step 2: Perform inference on each group
-    combined_result = Dictionary{PeptideKey, ProteinKey}()
-    combined_ambiguous_result = Dictionary{PeptideKey, Vector{ProteinKey}}()
+    combined_result = Dictionary{Q, P}()
+    combined_ambiguous_result = Dictionary{Q, Vector{P}}()
 
     for ((is_target, entrap_id), (group_proteins, group_peptides)) in pairs(groups)
         # Perform inference on this group using internal function
-        group_result = _infer_proteins_single_group(group_proteins, group_peptides)
+        group_result = _infer_proteins_single_group(group_proteins, group_peptides, names)
 
         # Merge results into combined dictionary
         for (pep, prot) in pairs(group_result.peptide_to_protein)

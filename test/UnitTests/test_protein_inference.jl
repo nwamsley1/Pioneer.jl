@@ -16,7 +16,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 using Test
-using Dictionaries
+using Dictionaries, Random
 
 # Include only the protein inference functions
 # (types are already loaded by importScripts.jl in runtests.jl)
@@ -671,7 +671,7 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
         result = infer_proteins(proteins, peptides)
 
         @test isa(result, InferenceResult)
-        @test isa(result.peptide_to_protein, Dictionary{PeptideKey, ProteinKey})
+        @test isa(result.peptide_to_protein, Dictionary{PeptideKey{String}, ProteinKey{String}})
         @test length(result.peptide_to_protein) == 1
 
         # Check that all unique peptides are present
@@ -840,4 +840,53 @@ include(joinpath(package_root, "src", "utils", "proteinInference.jl"))
 
     end
 
+end
+
+@testset "greedy ties break on the alphabetically first group" begin
+    # PQ is chosen for its unique peptide. The rest is a triangle: PY, PZ and PW each cover two
+    # remaining peptides, a three-way tie that PW wins. PY and PZ then cover the same remaining
+    # peptide and merge. Under the old hash-order rule the winner depended on the names' hashes.
+    rows = [("PQ", "UUU"), ("PQ;PY", "SSS"), ("PY;PZ", "AAA"), ("PZ;PW", "CCC"), ("PW;PY", "DDD")]
+    proteins = [ProteinKey(p, true, UInt8(0)) for (p, _) in rows]
+    peptides = [PeptideKey(s, true, UInt8(0)) for (_, s) in rows]
+    expected_assigned = Dict("UUU" => "PQ", "AAA" => "PY;PZ")
+    expected_ambiguous = Dict("SSS" => ["PQ", "PY;PZ"], "CCC" => ["PW", "PY;PZ"],
+                              "DDD" => ["PW", "PY;PZ"])
+    for order in ([1, 2, 3, 4, 5], [5, 4, 3, 2, 1], [3, 5, 1, 4, 2])
+        result = infer_proteins(proteins[order], peptides[order])
+        @test Dict(k.sequence => v.name for (k, v) in pairs(result.peptide_to_protein)) == expected_assigned
+        @test Dict(k.sequence => [c.name for c in v]
+                   for (k, v) in pairs(result.ambiguous_peptide_to_proteins)) == expected_ambiguous
+    end
+end
+
+@testset "integer inference matches string inference" begin
+    # Accession and sequence IDs are ranks of their strings, so a ProteinGroupRegistry run must
+    # reproduce the string run exactly once group IDs are turned back into names.
+    rng = Random.MersenneTwister(5)
+    accessions = ["P$(lpad(i, 2, '0'))" for i in 1:12]
+    rows = [(join(sort(unique(rand(rng, accessions, rand(rng, 1:3)))), ';'), "PEP$(rand(rng, 1:40))",
+             rand(rng, Bool), UInt8(rand(rng, 0:1))) for _ in 1:120]
+    unique!(rows)
+    string_result = infer_proteins([ProteinKey(a, t, e) for (a, _, t, e) in rows],
+                                   [PeptideKey(s, t, e) for (_, s, t, e) in rows])
+
+    accession_rank = Dict(a => UInt32(i) for (i, a) in enumerate(accessions))
+    sequences = sort!(unique([s for (_, s, _, _) in rows]))
+    sequence_rank = Dict(s => UInt32(i) for (i, s) in enumerate(sequences))
+    registry = ProteinGroupRegistry(length(accessions))
+    group(a) = Pioneer.intern_group!(registry, sort!(UInt32[accession_rank[m] for m in split(a, ';')]))
+    integer_result = infer_proteins([ProteinKey(group(a), t, e) for (a, _, t, e) in reverse(rows)],
+                                    [PeptideKey(sequence_rank[s], t, e) for (_, s, t, e) in reverse(rows)];
+                                    names = registry)
+    name(id) = join(accessions[registry.members[id]], ';')
+    @test Dict((k.sequence, k.is_target, k.entrap_id) => v.name
+               for (k, v) in pairs(string_result.peptide_to_protein)) ==
+          Dict((sequences[k.sequence], k.is_target, k.entrap_id) => name(v.name)
+               for (k, v) in pairs(integer_result.peptide_to_protein))
+    @test Dict((k.sequence, k.is_target, k.entrap_id) => sort([c.name for c in v])
+               for (k, v) in pairs(string_result.ambiguous_peptide_to_proteins)) ==
+          Dict((sequences[k.sequence], k.is_target, k.entrap_id) => sort([name(c.name) for c in v])
+               for (k, v) in pairs(integer_result.ambiguous_peptide_to_proteins))
+    @test !isempty(string_result.ambiguous_peptide_to_proteins)
 end

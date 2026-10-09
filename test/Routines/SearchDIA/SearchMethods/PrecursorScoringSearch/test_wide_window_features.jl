@@ -313,6 +313,7 @@ end
         lgbm_score = Float32[0.1, 0.9, 0.8, 0.2],
         weight = ones(Float32, 4),
         irt_obs = Float32[1, 2, 3, 4],
+        rt = Float32[1, 2, 3, 4],
         ms1_m0_intensity = Float32[1, 10, 20, 40],
         frag1_int = Float32[0, 3, 5, 0],
         frag2_int = Float32[0, 1, 2, 0],
@@ -324,7 +325,13 @@ end
         frag8_int = zeros(Float32, 4),
     )
     _add_shadow_peak_helper_columns!(psms)
-    best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
+    center_mzs = fill(500.0f0, 104)
+    isolation_widths = fill(4.0f0, 104)
+    best = Pioneer.select_best_per_precursor(
+        psms;
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+    )
     rank_table = fill(UInt16(99), 256)
     rank_table[0x00 + 1] = UInt16(1)
 
@@ -356,6 +363,7 @@ end
         lgbm_score = Float32[0.1, 0.9, 0.8, 0.2],
         weight = ones(Float32, 4),
         irt_obs = Float32[1, 2, 3, 4],
+        rt = Float32[1, 2, 3, 4],
         ms1_m0_intensity = Float32[1, 10, 20, 40],
         frag1_int = Float32[1, 3, 5, 9],
         frag2_int = Float32[0, 1, 2, 9],
@@ -367,12 +375,16 @@ end
         frag8_int = zeros(Float32, 4),
     )
     _add_shadow_peak_helper_columns!(psms)
-    best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
     center_mzs = Vector{Union{Missing, Float32}}(fill(missing, 104))
     isolation_widths = Vector{Union{Missing, Float32}}(fill(missing, 104))
     center_mzs[101:103] .= 500.0f0
     center_mzs[104] = 600.0f0
     isolation_widths[101:104] .= 4.0f0
+    best = Pioneer.select_best_per_precursor(
+        psms;
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+    )
     rank_table = fill(UInt16(99), 256)
     rank_table[0x03 + 1] = UInt16(8)
 
@@ -404,6 +416,7 @@ end
         lgbm_score = Float32[0.7, 0.9, 0.8, 0.1],
         weight = Float32[1, 1, 10, 1],
         irt_obs = Float32[1, 2, 3, 4],
+        rt = Float32[1, 2, 3, 4],
         ms1_m0_intensity = Float32[1, 2, 3, 4],
         frag1_int = Float32[99, 0, 0, 8],
         frag2_int = Float32[99, 4, 8, 0],
@@ -415,7 +428,13 @@ end
         frag8_int = zeros(Float32, 4),
     )
     _add_shadow_peak_helper_columns!(psms)
-    best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
+    center_mzs = fill(500.0f0, 104)
+    isolation_widths = fill(4.0f0, 104)
+    best = Pioneer.select_best_per_precursor(
+        psms;
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+    )
     rank_table = fill(UInt16(99), 256)
 
     Pioneer.add_trace_and_fragment_features!(
@@ -441,6 +460,7 @@ end
         lgbm_score = Float32[0.4, 0.9, 0.3, 0.2, 0.2, 0.2],
         weight = Float32[1, 10, 1, 2, 4, 2],
         irt_obs = Float32[1, 2, 3, 1.2, 2.2, 3.2],
+        rt = Float32[1, 2, 3, 1.2, 2.2, 3.2],
         ms1_m0_intensity = ones(Float32, 6),
         frag1_int = ones(Float32, 6),
         frag2_int = ones(Float32, 6),
@@ -463,7 +483,11 @@ end
     center_mzs[201:203] .= 502.0f0
     isolation_widths[[101, 102, 103, 201, 202, 203]] .= 2.0f0
 
-    best = Pioneer.select_best_per_precursor!(psms, :lgbm_score)
+    best = Pioneer.select_best_per_precursor(
+        psms;
+        center_mzs = center_mzs,
+        isolation_widths = isolation_widths,
+    )
     rank_table = fill(UInt16(99), 256)
 
     Pioneer.add_trace_and_fragment_features!(

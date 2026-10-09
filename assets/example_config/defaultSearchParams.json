@@ -18,8 +18,7 @@
             "deconvolution_solver": "huber"
         },
         "machine_learning": {
-            "max_psm_memory_mb": 2000,
-            "pep_bin_size": 10
+            "max_psm_memory_mb": 2000
         }
     },
     "proteinScoring": {
@@ -28,7 +27,8 @@
         "write_qc_plots": false
     },
     "maxLFQ": {
-        "run_to_run_normalization": false,
+        "quantification_method": "sparsemaxlfq",
+        "run_to_run_normalization": true,
         "max_chunk_size_mb": 1024
     },
     "output": {

@@ -147,7 +147,7 @@ struct ArrowTableReference <: MassSpecDataReference
 
     # Internal constructor
     function ArrowTableReference(file_paths::Vector{String})
-        file_paths = [arrow_path for arrow_path in file_paths if endswith(arrow_path, ".arrow")]
+        file_paths = [p for p in file_paths if endswith(p, ".arrow") || endswith(p, ".tdfs") || endswith(p, ".scxs")]
         file_id_to_name = parseFileNames(file_paths)
         if length(file_id_to_name) != length(file_paths)
             file_id_to_name = ["" for x in 1:length(file_id_to_name)]
@@ -171,7 +171,7 @@ struct ArrowTableReference <: MassSpecDataReference
 
     # Internal constructor
     function ArrowTableReference(file_dir::String)
-        file_paths = [arrow_path for arrow_path in readdir(file_dir, join=true) if endswith(arrow_path, ".arrow")]
+        file_paths = [p for p in readdir(file_dir, join=true) if is_ms_data_path(p)]
         if length(file_paths) == 0
             @user_warn "Could not find any files ending in `arrow` in the directory: $file_dir"
         end
@@ -206,7 +206,7 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     mass_err_samples::Vector{MassErrSample}
 
     # Indexing and scoring
-    id_to_col::SparsePrecMap{UInt16}
+    id_to_col::SparsePrecMap{UInt32}
     iso_splines::I
     
     # PSM scoring.
@@ -247,7 +247,27 @@ mutable struct SimpleLibrarySearch{I<:IsotopeSplineModel} <: SearchDataStructure
     scan_corrected_mz::Vector{Float32}
     scan_obs_low::Vector{Float32}
     scan_obs_high::Vector{Float32}
+    # Deconvolution convergence tolerance for the file being searched, overriding the stage's own
+    # `max_diff`; NaN (the default) means no override. Set per file by `zt_prepare_file!`.
+    deconv_tol::Float32
+    # Peak decode buffer for `.tdfs` data (`getPeaks!`). Owned by the task using this struct, so decoded peaks
+    # cannot be overwritten by another task. Unused for Arrow-backed data.
+    decode_buf::PeakDecodeBuffer
 end
+
+struct HuberCalibrationWinner
+    probability::Float32
+    file_idx::UInt32
+    scan_idx::UInt32
+end
+
+"""
+    deconv_tol(search_data, default) -> Float32
+
+The deconvolution convergence tolerance for the current file: the per-file override when one is set
+(scanning-quad files), otherwise the stage's `default`.
+"""
+@inline deconv_tol(sd::SimpleLibrarySearch, default::Real) = isnan(sd.deconv_tol) ? Float32(default) : sd.deconv_tol
 
 """
 Primary search context holding all data structures and state for search execution.
@@ -272,6 +292,10 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     
     # Models and mappings
     quad_transmission_model::Dict{Int64, QuadTransmissionModel}
+    # Scanning-quad (ZT) Q1 bin lattice, per file, filled lazily on first touch.
+    # `nothing` = checked and not a scanning acquisition. Key absent = not yet checked.
+    zt_geometry::Dict{Int64, Union{Nothing, ZTGeometry}}
+    zt_file_state::Dict{Int64, ZTFileState}
     mass_error_model::Dict{Int64, AbstractMassErrorModel}
     ms1_mass_error_model::Dict{Int64, AbstractMassErrorModel}
     #rt_to_irt_model::Dict{Int64, RtConversionModel}
@@ -285,12 +309,26 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     rt_index_paths::Base.Ref{Vector{String}}
     irt_errors::Dict{Int64, Float32}
     rt_tolerances::Dict{Int64, RTBinnedTolerance}
+    # Per-file ion-mobility calibration (packet data): 2 => (a, b, sigma), the z2 line
+    # library 1/K0 ~ a + b * packet IM scan index, used for every charge. Empty for files
+    # without mobility data. Fit in ParameterTuning (files short of PSMs get the median
+    # line, fill_missing_im_lines!), refit by MainSearch (add_im_error!).
+    im_models::Dict{Int64, Dict{Int, NTuple{3, Float32}}}
+    # Per-file instrument IM scan -> 1/K0 line (getImCalibration), recorded in ParameterTuning
+    # while the file is open so the median line can be formed without reopening files.
+    im_cals::Dict{Int64, NTuple{2, Float32}}
     irt_obs::Dict{UInt32, Float32}
+    # Max best-PSM weight per precursor across all files' passing PSMs, accumulated in
+    # build_rt_indices! for the chromatogram right-tail extension; freed after selection.
+    precursor_max_weight::Base.Ref{Union{Nothing, AbstractPrecursorMap{Float32}}}
     pg_score_to_qval::Ref{Any}
-    pg_name_to_global_pg_score::Ref{Dict{ProteinKey, Float32}}
-    global_pg_score_to_qval_dict::Ref{Dict{Tuple{String,Bool,UInt8}, Float32}}
+    pg_name_to_global_pg_score::Ref{Dict{PGKey, Float32}}
+    global_pg_score_to_qval_dict::Ref{Dict{Tuple{UInt32,Bool,UInt8}, Float32}}
     pg_score_to_pep::Ref{Any}
     
+    huber_calibration_winners::Vector{HuberCalibrationWinner}
+    calibration_qc::CalibrationQCState
+
     # Method results storage
     method_results::Dict{Type{<:SearchMethod}, Any}
     
@@ -328,6 +366,8 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
             spec_lib, temp_structures, mass_spec_data_reference,
             Ref{String}(), Ref{String}(), Ref{String}(), Ref{String}(),Ref{String}(),
             Dict{Int64, QuadTransmissionModel}(),
+            Dict{Int64, Union{Nothing, ZTGeometry}}(),
+            Dict{Int64, ZTFileState}(),
             Dict{Int64, AbstractMassErrorModel}(),
             Dict{Int64, AbstractMassErrorModel}(),
             Dict{Int64, NceModel}(),
@@ -339,8 +379,13 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
             Ref{Vector{String}}(),
             Dict{Int64, Float32}(),
             Dict{Int64, RTBinnedTolerance}(),
+            Dict{Int64, Dict{Int, NTuple{3, Float32}}}(),  # im_models
+            Dict{Int64, NTuple{2, Float32}}(),  # im_cals
             Dict{UInt32, Float32}(),
-            Ref{Any}(), Ref(Dict{ProteinKey, Float32}()), Ref(Dict{Tuple{String,Bool,UInt8}, Float32}()), Ref{Any}(),
+            Ref{Union{Nothing, AbstractPrecursorMap{Float32}}}(nothing),
+            Ref{Any}(), Ref(Dict{PGKey, Float32}()), Ref(Dict{Tuple{UInt32,Bool,UInt8}, Float32}()), Ref{Any}(),
+            HuberCalibrationWinner[],
+            CalibrationQCState(),
             Dict{Type{<:SearchMethod}, Any}(),  # Initialize method_results
             n_threads, n_precursors, buffer_size,
             0, 0, 1.0f0,  # Initialize library stats with defaults
@@ -355,8 +400,58 @@ end
 Interface Methods for Parameter Access
 ==========================================================#
 #MassSpecDataReference interface getters 
-getMSData(msdr::MassSpecDataReference, ms_file_idx::I) where {I<:Integer} = BasicMassSpecData(msdr.file_paths[ms_file_idx])
+getMSData(msdr::MassSpecDataReference, ms_file_idx::I) where {I<:Integer} = loadMassSpecData(msdr.file_paths[ms_file_idx])
+"Open an MS data file by its path: a `.tdfs` directory (TdfsMassSpecData), a `.scxs` directory (ScxsMassSpecData,
+SCIEX) or an Arrow file (BasicMassSpecData)."
+loadMassSpecData(path::AbstractString) =
+    is_tdfs_path(path) ? TdfsMassSpecData(String(path)) :
+    is_scxs_path(path) ? ScxsMassSpecData(String(path)) : BasicMassSpecData(String(path))
+"An MS data path Pioneer can open: `<name>.arrow` files and `<name>.tdfs` / `<name>.scxs` directories."
+is_ms_data_path(path::AbstractString) = (endswith(path, ".arrow") && isfile(path)) || is_tdfs_path(path) || is_scxs_path(path)
+
+"""
+    check_ms_data_vendors(paths)
+
+Refuse a search that mixes timsTOF `.tdfs` runs with `.arrow` files: the two take different code paths (ion
+mobility, quad model, 2D integration) and are not calibrated or scored together.
+"""
+function check_ms_data_vendors(paths::AbstractVector{<:AbstractString})
+    n_tdfs = count(is_tdfs_path, paths)
+    0 < n_tdfs < length(paths) || return nothing
+    error("The ms_data folder mixes $(n_tdfs) timsTOF .tdfs run$(n_tdfs == 1 ? "" : "s") with " *
+          "$(length(paths) - n_tdfs) .arrow file$(length(paths) - n_tdfs == 1 ? "" : "s"). " *
+          "Search data from different instruments separately.")
+end
+
+"""
+    check_library_ion_mobility(paths, library_has_im, library_path)
+
+Refuse to search timsTOF `.tdfs` runs with a library that has no predicted ion mobility (`inv_ion_mobility`).
+"""
+function check_library_ion_mobility(paths::AbstractVector{<:AbstractString}, library_has_im::Bool,
+                                    library_path::AbstractString)
+    (library_has_im || !any(is_tdfs_path, paths)) && return nothing
+    error("The spectral library $(library_path) has no ion-mobility predictions, which searching timsTOF " *
+          ".tdfs data requires. Rebuild it with the timsTOF option on " *
+          "(library_params.im_model = \"alphapept_ccs\" in the BuildSpecLib parameters).")
+end
 getMSData(sc::SearchContext) = sc.mass_spec_data_reference
+
+"""
+    has_ion_mobility(search_context)
+
+True when the search's runs carry ion mobility: timsTOF `.tdfs` data (`check_ms_data_vendors` keeps a search from
+mixing it with `.arrow` files).
+"""
+has_ion_mobility(sc::SearchContext) = any(is_tdfs_path, getMSData(sc).file_paths)
+
+# Precursor-model features that carry signal only on ion-mobility data. Elsewhere they are constant (0 or 1), so
+# searches without ion mobility leave them out of the LightGBM models.
+const ION_MOBILITY_FEATURES = (:im_error, :n_scans_in_window, :weight_frac_in_cycle)
+
+"`features` as a Vector, without `ION_MOBILITY_FEATURES` unless the search has ion mobility."
+model_features(features, ion_mobility::Bool) =
+    ion_mobility ? collect(features) : filter(f -> !(f in ION_MOBILITY_FEATURES), collect(features))
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]
 
 # Add length method for ArrowTableReference
@@ -470,6 +565,7 @@ getHsFused(s::SearchDataStructures) = s.Hs_fused
 getScanCorrectedMz(s::SearchDataStructures) = s.scan_corrected_mz
 getScanObsLow(s::SearchDataStructures) = s.scan_obs_low
 getScanObsHigh(s::SearchDataStructures) = s.scan_obs_high
+getDecodeBuffer(s::SearchDataStructures) = s.decode_buf
 getTuningResults(s::SearchDataStructures) = s.tuning_results
 getTempWeights(s::SimpleLibrarySearch) = s.temp_weights
 getColNorm2(s::SimpleLibrarySearch) = s.colnorm2
@@ -502,6 +598,11 @@ getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
 getRtTolerances(s::SearchContext) = s.rt_tolerances
 getRtTolerance(s::SearchContext, ms_file_idx::Int64) = s.rt_tolerances[ms_file_idx]
+# Per-file ion-mobility lines (see the im_models field); an empty Dict means no IM model.
+getImModel(s::SearchContext, ms_file_idx::Integer) = get(s.im_models, Int64(ms_file_idx), Dict{Int, NTuple{3, Float32}}())
+setImModel!(s::SearchContext, ms_file_idx::Integer, model::Dict{Int, NTuple{3, Float32}}) = (s.im_models[Int64(ms_file_idx)] = model)
+getImCal(s::SearchContext, ms_file_idx::Integer) = get(s.im_cals, Int64(ms_file_idx), nothing)
+setImCal!(s::SearchContext, ms_file_idx::Integer, cal::NTuple{2, Float32}) = (s.im_cals[Int64(ms_file_idx)] = cal)
 getHuberDelta(s::SearchContext) = s.huber_delta[]
 # Use library iRT array directly — O(1) indexing, no Dict overhead
 getPredIrt(s::SearchContext) = getIrt(getPrecursors(getSpecLib(s)))

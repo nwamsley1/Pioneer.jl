@@ -1,16 +1,20 @@
 @testset "precursor protein-position output" begin
     mktempdir() do temp_dir
         chunk_path = joinpath(temp_dir, "precursors.arrow")
-        Arrow.write(chunk_path, DataFrame(
-            file_name = ["run1", "run1"],
-            species = ["human", "human"],
-            inferred_protein_group = ["P1", "P2"],
-            accession_numbers = ["P1;P3", "P2"],
-            peptide_start_positions = ["17;42", "9"],
+        library_path = joinpath(temp_dir, "precursors_table.arrow")
+        Arrow.write(library_path, DataFrame(
             sequence = ["PEPTIDEK", "ANOTHERK"],
-            charge = UInt8[2, 2],
+            accession_numbers = ["P1;P3", "P2"],
             structural_mods = Union{Missing,String}[missing, missing],
             isotopic_mods = Union{Missing,String}[missing, missing],
+            proteome_identifiers = ["human", "human"],
+            start_idx = [UInt32[17, 42], UInt32[9]],
+        ))
+        library = Pioneer.SetPrecursors(Arrow.Table(library_path))
+        Arrow.write(chunk_path, DataFrame(
+            ms_file_idx = UInt16[1, 1],
+            inferred_protein_group = ["P1", "P2"],
+            charge = UInt8[2, 2],
             prec_mz = Float32[500, 600],
             missed_cleavage = UInt8[0, 1],
             num_enzymatic_termini = UInt8[1, 2],
@@ -35,7 +39,7 @@
         Pioneer.writePrecursorCSV_chunked(
             refs,
             temp_dir,
-            ["run1"],
+            Pioneer.PrecursorOutputText(library, ["run1"]),
             false,
             proteins;
             write_csv = true,
@@ -72,5 +76,34 @@
             findall(in(expected_order), Symbol.(propertynames(wide_arrow)))
         ] == expected_order
         @test wide.missed_cleavage == UInt8[0, 1]
+
+        # Sparse rows across 6,000 runs must produce small record batches.
+        run_names = ["run$i" for i in 1:6000]
+        Pioneer.writePrecursorCSV_chunked(refs, temp_dir, Pioneer.PrecursorOutputText(library, run_names), false, proteins;
+            write_csv=false, memory_budget_bytes=65536)
+        batches = collect(Arrow.Stream(joinpath(temp_dir, "precursors_wide.arrow")))
+        @test length(batches) == 2
+        @test all(length(b.precursor_idx) == 1 for b in batches)
+        @test collect(batches[1].run1) == Float32[1000]
+        @test all(ismissing, batches[1].run6000)
+        @test String.(propertynames(batches[1]))[end-5999:end] == run_names
+        @test !isfile(joinpath(temp_dir, "precursors_long.tsv"))
     end
+end
+
+@testset "precursor pivot bounds and complete keys" begin
+    df = DataFrame(precursor_idx=[1, 1, 1, 2, 3, 4],
+        annotation=["a", "b", "a", "c", "d", "e"],
+        file_name=["r1", "r1", "r1", "r2", "r1", "r2"],
+        area=Union{Missing,Float32}[1, 2, 3, missing, 5, 6])
+    keys = [:precursor_idx, :annotation]
+    batches = DataFrame[]
+    Pioneer._foreach_precursor_wide_batch(df, keys, 6000, 65536, 3) do batch
+        push!(batches, unstack(batch, keys, :file_name, :area; combine=sum))
+    end
+    @test length(batches) == 5
+    @test all(nrow(b) == 1 for b in batches)
+    combined = vcat(batches...; cols=:union)
+    expected = unstack(df, keys, :file_name, :area; combine=sum)
+    @test isequal(combined[:, names(expected)], expected)
 end
