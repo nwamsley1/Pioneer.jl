@@ -331,10 +331,8 @@ export function LogDrawer({
             <path d="M12 10v4.5M12 17.5v.5" stroke="#FCD34D" strokeWidth="2" strokeLinecap="round" />
           </svg>
           <span style={{ flex: 1, fontSize: 12.5, color: '#FCD34D', fontWeight: 600 }}>
-            {job!.stepFailures!.length === 1
-              ? '1 file failed'
-              : `${job!.stepFailures!.length} files failed`}{' '}
-            — {job!.stepFailures![job!.stepFailures!.length - 1]} Continuing with the remaining files.
+            {job!.stepFailures!.length} of {job!.stepTotal} steps failed.{' '}
+            {job!.stepFailures![job!.stepFailures!.length - 1]} Continuing with the remaining files.
           </span>
           {!confirmCancel && (
             <button

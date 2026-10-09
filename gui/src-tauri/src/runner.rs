@@ -432,15 +432,11 @@ fn signal_name(sig: i32) -> Option<&'static str> {
     })
 }
 
-/// The final status of a sequence in which some steps failed.
+/// The final status of a sequence in which some steps failed: the count and the
+/// most recent failure (each one is in the log).
 fn failed_steps_summary(failures: &[String], total: usize) -> String {
-    const SHOWN: usize = 5;
-    let mut msg = format!("{} of {total} steps failed. ", failures.len());
-    msg.push_str(&failures.iter().take(SHOWN).cloned().collect::<Vec<_>>().join(" "));
-    if failures.len() > SHOWN {
-        msg.push_str(&format!(" ({} more in the log.)", failures.len() - SHOWN));
-    }
-    msg
+    let last = failures.last().map(String::as_str).unwrap_or("");
+    format!("{} of {total} steps failed. {last}", failures.len())
 }
 
 /// Build and spawn one step of a job.
@@ -785,13 +781,10 @@ mod tests {
     }
 
     #[test]
-    fn failed_steps_summary_lists_the_first_five() {
+    fn failed_steps_summary_gives_count_and_latest() {
         let f: Vec<String> = (1..=7).map(|i| format!("Step {i} failed.")).collect();
         assert_eq!(failed_steps_summary(&f[..1], 117), "1 of 117 steps failed. Step 1 failed.");
-        let s = failed_steps_summary(&f, 117);
-        assert!(s.starts_with("7 of 117 steps failed. Step 1 failed."));
-        assert!(s.contains("Step 5 failed.") && !s.contains("Step 6 failed."));
-        assert!(s.ends_with("(2 more in the log.)"));
+        assert_eq!(failed_steps_summary(&f, 117), "7 of 117 steps failed. Step 7 failed.");
     }
 }
 
