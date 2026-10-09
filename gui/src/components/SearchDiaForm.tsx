@@ -121,12 +121,14 @@ function MsFileList({
   onAdd,
   onAddTdfs,
   onRemove,
+  onClear,
   onToggleBatch,
 }: {
   params: SearchParams
   onAdd: () => void
   onAddTdfs: () => void
   onRemove: (index: number) => void
+  onClear: () => void
   onToggleBatch: () => void
 }) {
   const files = params.msDataFiles
@@ -225,6 +227,17 @@ function MsFileList({
           </svg>
           Add .tdfs / .scxs
         </button>
+        {files.length > 1 && (
+          <button
+            type="button"
+            className="pio-browse"
+            onClick={onClear}
+            title="Remove every file from the list"
+            style={BROWSE_BLOCK}
+          >
+            Clear all
+          </button>
+        )}
         <span style={HINT}>
           {files.length
             ? batch
@@ -348,6 +361,7 @@ interface Props {
   onAddMsTdfs: () => void
   /** Drop one file from the list, by index. */
   onRemoveMsFile: (index: number) => void
+  onClearMsFiles: () => void
   /** Flip between one run per file and one run over the whole list. */
   onToggleMsBatch: () => void
   onOpenLoad: () => void
@@ -365,6 +379,7 @@ export function SearchDiaForm({
   onAddMsFiles,
   onAddMsTdfs,
   onRemoveMsFile,
+  onClearMsFiles,
   onToggleMsBatch,
   onOpenLoad,
   onGoToBuild,
@@ -407,6 +422,7 @@ export function SearchDiaForm({
                 onAdd={onAddMsFiles}
                 onAddTdfs={onAddMsTdfs}
                 onRemove={onRemoveMsFile}
+                onClear={onClearMsFiles}
                 onToggleBatch={onToggleMsBatch}
               />
             ) : (

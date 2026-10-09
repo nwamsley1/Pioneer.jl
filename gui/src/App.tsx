@@ -1147,6 +1147,10 @@ export default function App() {
     setSearch((p) => ({ ...p, msDataFiles: p.msDataFiles.filter((_, i) => i !== index) }))
   }
 
+  const clearMsFiles = () => {
+    setSearch((p) => ({ ...p, msDataFiles: [] }))
+  }
+
   const browseConvertInput = async () => {
     const picked = await backend.pickFolder(
       convert.format === 'mzml'
@@ -2128,6 +2132,7 @@ export default function App() {
                 onAddMsFiles={addMsFiles}
                 onAddMsTdfs={addMsTdfs}
                 onRemoveMsFile={removeMsFile}
+                onClearMsFiles={clearMsFiles}
                 onToggleMsBatch={() => onToggle('msDataBatch')}
                 onOpenLoad={() => setLoadOpen(true)}
                 onGoToBuild={() => setCommand('buildspeclib')}
