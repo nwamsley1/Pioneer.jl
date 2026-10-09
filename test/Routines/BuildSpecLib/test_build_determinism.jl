@@ -24,8 +24,8 @@ function _lib_content_fingerprint(lib::AbstractString)
     for f in ("precursors_table.arrow", "proteins_table.arrow", "detailed_fragments.bin")
         h = hash(read(joinpath(lib, f)), h)
     end
-    for f in ("partitioned_fragment_index.jls", "presearch_partitioned_fragment_index.jls")
-        idx = Pioneer.deserialize_from_jls(joinpath(lib, f))
+    for f in ("partitioned_fragment_index.bin", "presearch_partitioned_fragment_index.bin")
+        idx = Pioneer.load_fragment_index(joinpath(lib, f))
         for p in idx.partitions
             s = p.fragment_bins
             h = hash(s.lows, h); h = hash(s.highs, h)
@@ -123,9 +123,9 @@ end
         for f in ("precursors_table.arrow", "proteins_table.arrow", "detailed_fragments.bin")
             @test read(joinpath(lib16, f)) == read(joinpath(lib32, f))
         end
-        for f in ("partitioned_fragment_index.jls", "presearch_partitioned_fragment_index.jls")
-            i16 = Pioneer.deserialize_from_jls(joinpath(lib16, f))
-            i32 = Pioneer.deserialize_from_jls(joinpath(lib32, f))
+        for f in ("partitioned_fragment_index.bin", "presearch_partitioned_fragment_index.bin")
+            i16 = Pioneer.load_fragment_index(joinpath(lib16, f))
+            i32 = Pioneer.load_fragment_index(joinpath(lib32, f))
             @test i16 isa Pioneer.LocalPartitionedFragmentIndex{Float32}
             @test i32 isa Pioneer.LocalPartitionedFragmentIndex32{Float32}
             @test eltype(i32.partitions[1].fragments) === Pioneer.LocalFragment32
@@ -141,20 +141,20 @@ end
         desc = Pioneer.JSON.parsefile(joinpath(lib16, Pioneer.FRAGMENT_INDEX_DESCRIPTOR))
         @test desc["format_version"] == 1
         @test [e["partition_width_da"] for e in desc["indexes"]] == [5.0, 10.0]
-        @test desc["indexes"][1]["main"] == "partitioned_fragment_index.jls"
-        @test desc["indexes"][2]["main"] == "partitioned_fragment_index_w10.jls"
-        @test desc["indexes"][2]["presearch"] == "presearch_partitioned_fragment_index_w10.jls"
+        @test desc["indexes"][1]["main"] == "partitioned_fragment_index.bin"
+        @test desc["indexes"][2]["main"] == "partitioned_fragment_index_w10.bin"
+        @test desc["indexes"][2]["presearch"] == "presearch_partitioned_fragment_index_w10.bin"
         for e in desc["indexes"], k in ("main", "presearch")
             @test isfile(joinpath(lib16, e[k]))
         end
-        i5 = Pioneer.deserialize_from_jls(joinpath(lib16, "partitioned_fragment_index.jls"))
-        i10 = Pioneer.deserialize_from_jls(joinpath(lib16, "partitioned_fragment_index_w10.jls"))
+        i5 = Pioneer.load_fragment_index(joinpath(lib16, "partitioned_fragment_index.bin"))
+        i10 = Pioneer.load_fragment_index(joinpath(lib16, "partitioned_fragment_index_w10.bin"))
         @test _index_prec_scores(i10) == _index_prec_scores(i5)
         @test all(b -> b[2] - b[1] < 10.0f0, i10.partition_bounds)
         # the hidden prec_partition_width override builds that one width, under the historical names
         desc32 = Pioneer.JSON.parsefile(joinpath(lib32, Pioneer.FRAGMENT_INDEX_DESCRIPTOR))
         @test length(desc32["indexes"]) == 1 && desc32["indexes"][1]["partition_width_da"] == 10.0
-        @test desc32["indexes"][1]["main"] == "partitioned_fragment_index.jls"
+        @test desc32["indexes"][1]["main"] == "partitioned_fragment_index.bin"
 
         # SearchDIA's choice from the data: the median MS2 isolation width of the first file, in size classes
         function _ms_file(path, width)
@@ -173,9 +173,9 @@ end
         wide = _ms_file(joinpath(tmp, "wide.arrow"), 25.0)      # timsTOF diaPASEF-like
         narrow = _ms_file(joinpath(tmp, "narrow.arrow"), 2.9)   # SCIEX / Astral-like
         c = Pioneer.choose_fragment_index(lib16, [wide])
-        @test c.width == 10.0 && c.main == "partitioned_fragment_index_w10.jls" && c.window == 25.0
+        @test c.width == 10.0 && c.main == "partitioned_fragment_index_w10.bin" && c.window == 25.0
         c = Pioneer.choose_fragment_index(lib16, [narrow, wide])  # the first file decides
-        @test c.width == 5.0 && c.main == "partitioned_fragment_index.jls" && c.window == Float64(2.9f0)
+        @test c.width == 5.0 && c.main == "partitioned_fragment_index.bin" && c.window == Float64(2.9f0)
         @test Pioneer.choose_fragment_index(lib16, String[]).width == 5.0       # no data: the first index
         @test Pioneer.choose_fragment_index(lib32, [narrow]).width == 10.0      # a single index is always used
         # the same window rule for every instrument (standard 25 m/z diaPASEF -> 10 Da)
@@ -204,16 +204,20 @@ end
             return true
         end
         old = joinpath(tmp, "old.poin"); cp(lib16, old)
-        for f in (Pioneer.FRAGMENT_INDEX_DESCRIPTOR, "partitioned_fragment_index_w10.jls",
-                  "presearch_partitioned_fragment_index_w10.jls")
+        for f in (Pioneer.FRAGMENT_INDEX_DESCRIPTOR, "partitioned_fragment_index_w10.bin",
+                  "presearch_partitioned_fragment_index_w10.bin")
             rm(joinpath(old, f))
+        end
+        for f in ("partitioned_fragment_index", "presearch_partitioned_fragment_index")   # an older library's .jls pair
+            Pioneer.serialize_to_jls(joinpath(old, f * ".jls"), Pioneer.load_fragment_index(joinpath(old, f * ".bin")))
+            rm(joinpath(old, f * ".bin"))
         end
         @test Pioneer.add_fragment_indexes!(old) == Float32[10.0]
         d = Pioneer.JSON.parsefile(joinpath(old, Pioneer.FRAGMENT_INDEX_DESCRIPTOR))
         @test [e["partition_width_da"] for e in d["indexes"]] == [5.0, 10.0]
         @test d["indexes"][1]["main"] == "partitioned_fragment_index.jls"
-        for f in ("partitioned_fragment_index_w10.jls", "presearch_partitioned_fragment_index_w10.jls")
-            @test _same_index(Pioneer.deserialize_from_jls(joinpath(old, f)), Pioneer.deserialize_from_jls(joinpath(lib16, f)))
+        for f in ("partitioned_fragment_index_w10.bin", "presearch_partitioned_fragment_index_w10.bin")
+            @test _same_index(Pioneer.load_fragment_index(joinpath(old, f)), Pioneer.load_fragment_index(joinpath(lib16, f)))
         end
         @test isempty(Pioneer.add_fragment_indexes!(old))                       # nothing left to add
     finally

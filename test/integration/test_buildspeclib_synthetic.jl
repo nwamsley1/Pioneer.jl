@@ -30,8 +30,8 @@ using Arrow
 
     @test isdir(lib_path)
     for f in ("config.json", "detailed_fragments.bin",
-              "partitioned_fragment_index.jls",
-              "presearch_partitioned_fragment_index.jls",
+              "partitioned_fragment_index.bin",
+              "presearch_partitioned_fragment_index.bin",
               "precursors_table.arrow", "proteins_table.arrow")
         @test isfile(joinpath(lib_path, f))
     end

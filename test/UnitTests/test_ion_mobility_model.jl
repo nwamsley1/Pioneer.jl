@@ -121,9 +121,9 @@ end
     tims = deepcopy(base); tims["library_params"]["im_model"] = "alphapept_ccs"
     @test Pioneer.fragment_index_widths(Pioneer.check_params_bsp(JSON.json(tims))["library_params"]) == (5.0f0, 10.0f0)
     @test Pioneer.fragment_index_widths(p["library_params"]) == (10.0f0,)        # explicit prec_partition_width = 10
-    @test Pioneer.fragment_index_files(5.0f0, true) == ("partitioned_fragment_index.jls", "presearch_partitioned_fragment_index.jls")
-    @test Pioneer.fragment_index_files(10.0f0, false) == ("partitioned_fragment_index_w10.jls", "presearch_partitioned_fragment_index_w10.jls")
-    @test Pioneer.fragment_index_files(2.5f0, false)[1] == "partitioned_fragment_index_w2.5.jls"
+    @test Pioneer.fragment_index_files(5.0f0, true) == ("partitioned_fragment_index.bin", "presearch_partitioned_fragment_index.bin")
+    @test Pioneer.fragment_index_files(10.0f0, false) == ("partitioned_fragment_index_w10.bin", "presearch_partitioned_fragment_index_w10.bin")
+    @test Pioneer.fragment_index_files(2.5f0, false)[1] == "partitioned_fragment_index_w2.5.bin"
     for v in ("auto", "UInt16", "UInt32")
         c = deepcopy(base); c["library_params"]["frag_index_local_id_type"] = v
         @test Pioneer.check_params_bsp(JSON.json(c))["library_params"]["frag_index_local_id_type"] == v

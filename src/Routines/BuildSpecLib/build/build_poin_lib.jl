@@ -24,13 +24,13 @@ fragment_index_widths(library_params) = haskey(library_params, "prec_partition_w
 """
     fragment_index_files(width, first) -> (main, presearch)
 
-File names of one width's index pair. The library's first width keeps the historical names, so a Pioneer that
-predates multiple indexes reads it; the others are suffixed with the width (`partitioned_fragment_index_w10.jls`).
+File names of one width's index pair: raw index files (`write_index_piece`), the library's first width without a
+width suffix and the others suffixed with it (`partitioned_fragment_index_w10.bin`).
 """
 function fragment_index_files(width::Real, first::Bool)
-    first && return ("partitioned_fragment_index.jls", "presearch_partitioned_fragment_index.jls")
+    first && return ("partitioned_fragment_index.bin", "presearch_partitioned_fragment_index.bin")
     tag = isinteger(width) ? string(Int(width)) : string(width)
-    return ("partitioned_fragment_index_w$tag.jls", "presearch_partitioned_fragment_index_w$tag.jls")
+    return ("partitioned_fragment_index_w$tag.bin", "presearch_partitioned_fragment_index_w$tag.bin")
 end
 
 """
@@ -56,7 +56,7 @@ end
 """
 The same from the index fragments already selected (`IndexFragSelection`, e.g. by a streamed fragment build). An
 index whose estimated size exceeds `max_piece_bytes` is written as pieces (`build_index_pieces`) to a directory
-(`partitioned_fragment_index_pieces`, ...) instead of a `.jls`; its entry has `"pieced" => true`.
+(`partitioned_fragment_index_pieces`, ...) instead of one file; its entry has `"pieced" => true`.
 """
 function write_fragment_indexes(spec_lib_path::AbstractString, sel::IndexFragSelection, widths,
                                 id_type_request::AbstractString;
@@ -69,7 +69,7 @@ function write_fragment_indexes(spec_lib_path::AbstractString, sel::IndexFragSel
         id_type = resolve_and_record_local_id_type(sel.prec_mzs, id_type_request, w, spec_lib_path; record = first)
         main_file, presearch_file = fragment_index_files(w, first)
         if pieced
-            main_file, presearch_file = replace(main_file, ".jls" => "_pieces"), replace(presearch_file, ".jls" => "_pieces")
+            main_file, presearch_file = replace(main_file, ".bin" => "_pieces"), replace(presearch_file, ".bin" => "_pieces")
             bins_groups = index_piece_groups(sel, w, max_piece_bytes)
             spill_path = joinpath(spec_lib_path, "index_selection_w$(w).tmp")
             t_spill = @elapsed sp = spill_index_selection(sel, bins_groups..., spill_path)
@@ -87,7 +87,7 @@ function write_fragment_indexes(spec_lib_path::AbstractString, sel::IndexFragSel
                 index = build_partitioned_index_from_selection(sel; partition_width = Float32(w),
                     frag_bin_tol_ppm = frag_bin_tol_ppm, frag_bin_tol_mda = frag_bin_tol_mda, rt_bin_tol = rt_tol,
                     id_type = id_type)
-                serialize_to_jls(joinpath(spec_lib_path, file), index)
+                write_index_piece(joinpath(spec_lib_path, file), index)
             end
         end
         entry = Dict{String, Any}("partition_width_da" => w, "local_id_type" => string(id_type),
@@ -119,7 +119,7 @@ function add_fragment_indexes!(lib_path::AbstractString)
         Dict{String, Any}[e for e in JSON.parsefile(desc_path)["indexes"]]
     else
         w0 = Float32(get(lp, "prec_partition_width_resolved", 5.0))
-        main_file, presearch_file = fragment_index_files(w0, true)
+        main_file, presearch_file = "partitioned_fragment_index.jls", "presearch_partitioned_fragment_index.jls"   # pre-descriptor names
         [Dict{String, Any}("partition_width_da" => w0,
                            "local_id_type" => String(get(lp, "frag_index_local_id_type_resolved", "UInt16")),
                            "main" => main_file, "presearch" => presearch_file)]

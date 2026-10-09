@@ -63,7 +63,10 @@ function index_bytes(pfi::AbstractLocalPartitionedFragmentIndex)
     return b
 end
 
-_write_vec(io::IO, v::Vector) = (write(io, Int64(length(v))); write(io, v))
+# Element types with padding bytes (the local fragments) are written field by field into zeroed memory, so a file's
+# bytes depend only on its contents.
+_write_vec(io::IO, v::Vector{T}) where {T} = (write(io, Int64(length(v)));
+    isbitstype(T) && _has_padding(T) ? _write_packed!(io, UInt8[], v) : write(io, v))
 _read_vec(io::IO, ::Type{T}) where {T} = read!(io, Vector{T}(undef, read(io, Int64)))
 
 """

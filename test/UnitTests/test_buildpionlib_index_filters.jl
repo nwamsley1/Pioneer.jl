@@ -93,7 +93,7 @@ using Pioneer: FragBoundModel, SplineCoefficientModel, buildPionLib, serialize_t
         @test length(detailed_frags) == 5
         @test sort(Float32[Pioneer.getMz(f) for f in detailed_frags]) == Float32[120.0, 140.0, 210.0, 230.0, 500.0]
 
-        partitioned_index = Pioneer.deserialize_from_jls(joinpath(test_dir, "partitioned_fragment_index.jls"))
+        partitioned_index = Pioneer.load_fragment_index(joinpath(test_dir, "partitioned_fragment_index.bin"))
         partition = Pioneer.getPartition(partitioned_index, 1)
         frag_bins = Pioneer.getFragBins(partition)
         indexed_fragments = Pioneer.getFragments(partition)

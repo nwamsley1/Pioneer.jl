@@ -109,8 +109,10 @@ function choose_fragment_index(lib_dir::AbstractString, ms_paths::AbstractVector
             width = Float64(e["partition_width_da"]), window = window)
 end
 
-"A fragment index: a serialized `.jls`, or a directory of index pieces (`load_pieced_index`)."
-load_fragment_index(path::AbstractString) = isdir(path) ? load_pieced_index(path) : deserialize_from_jls(path)
+"A fragment index: a directory of index pieces (`load_pieced_index`), a raw `.bin` index (`read_index_piece`), or the
+serialized `.jls` of older libraries."
+load_fragment_index(path::AbstractString) =
+    isdir(path) ? load_pieced_index(path) : endswith(path, ".bin") ? read_index_piece(path) : deserialize_from_jls(path)
 
 function loadSpectralLibrary(SPEC_LIB_DIR::String,
                              params::PioneerParameters;

@@ -26,8 +26,18 @@ using Pioneer
     @test entry["pieced"] == true && entry["main"] == "partitioned_fragment_index_pieces"
     @test !haskey(JSON.parsefile(joinpath(single, Pioneer.FRAGMENT_INDEX_DESCRIPTOR))["indexes"][1], "pieced")
     @test isempty(filter(f -> endswith(f, ".tmp"), readdir(pieced)))          # spilled selection removed
-    for (file, dir) in (("partitioned_fragment_index.jls", "partitioned_fragment_index_pieces"),
-                        ("presearch_partitioned_fragment_index.jls", "presearch_partitioned_fragment_index_pieces"))
+    same_partition(a, b) = all(fieldnames(typeof(a))) do f
+        x = getfield(a, f); y = getfield(b, f)
+        f === :fragments ? [(g.local_id, g.score) for g in x] == [(g.local_id, g.score) for g in y] :
+        x isa Pioneer.SoAFragBins ? all(g -> getfield(x, g) == getfield(y, g), fieldnames(typeof(x))) : x == y
+    end
+    # the raw index file reads back as the index built in memory
+    built = Pioneer.build_partitioned_index_from_selection(sel; partition_width = 5.0f0, kw..., id_type = UInt32)
+    stored = Pioneer.load_fragment_index(joinpath(single, "partitioned_fragment_index.bin"))
+    @test stored.partition_bounds == built.partition_bounds && stored.n_partitions == built.n_partitions
+    @test all(k -> same_partition(stored.partitions[k], built.partitions[k]), 1:built.n_partitions)
+    for (file, dir) in (("partitioned_fragment_index.bin", "partitioned_fragment_index_pieces"),
+                        ("presearch_partitioned_fragment_index.bin", "presearch_partitioned_fragment_index_pieces"))
         whole = Pioneer.load_fragment_index(joinpath(single, file))
         pfi = Pioneer.load_fragment_index(joinpath(pieced, dir))
         @test pfi isa Pioneer.PiecedFragmentIndex

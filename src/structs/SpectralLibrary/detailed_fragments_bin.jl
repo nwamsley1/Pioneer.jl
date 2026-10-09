@@ -43,7 +43,9 @@ function detailed_frags_type(kind::UInt32, n_coef::UInt32)
 end
 
 _aligned(n::Integer) = cld(n, DETAILED_FRAGS_ALIGN) * DETAILED_FRAGS_ALIGN
-_has_padding(::Type{T}) where {T} = sizeof(T) != sum(i -> sizeof(fieldtype(T, i)), 1:fieldcount(T); init = 0)
+"Whether a struct type has padding bytes (primitive types such as Float32 have no fields and no padding)."
+_has_padding(::Type{T}) where {T} =
+    fieldcount(T) > 0 && sizeof(T) != sum(i -> sizeof(fieldtype(T, i)), 1:fieldcount(T); init = 0)
 
 """
     DetailedFragsWriter{T}(path)
