@@ -16,6 +16,7 @@ import { InfoDot } from './InfoDot'
 import { TITLEBAR_H } from '../lib/styles'
 import { THEMES, type ThemeId } from '../lib/theme'
 import type { CommandId, Job } from '../lib/types'
+import { ltrPath } from '../lib/validate'
 
 /** The sidebar's small square icon buttons: config and collapse. Replaces the
  *  full-width "Collapse" pill, which was the heaviest thing in the sidebar for
@@ -214,7 +215,7 @@ function SettingsPanel({
         }}
       >
         {/* rtl so a long path truncates at the front, keeping the leaf visible */}
-        {dir || 'Home folder'}
+        {dir ? ltrPath(dir) : 'Home folder'}
       </div>
       <div style={{ display: 'flex', gap: 6 }}>
         <button

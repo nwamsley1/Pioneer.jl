@@ -831,3 +831,9 @@ export function validateConvertRun(
   }
   return null
 }
+
+/** A path for an rtl-truncated label (`direction: 'rtl'` so a long path is cut at
+ *  the front, keeping the file name). Without the left-to-right marks the browser
+ *  reorders the path's leading and trailing slashes as right-to-left text:
+ *  "/Users/x/a.raw" showed as "Users/x/a.raw/". */
+export const ltrPath = (p: string): string => `\u200E${p}\u200E`

@@ -1183,6 +1183,10 @@ export default function App() {
     setConvert((p) => ({ ...p, inputFiles: p.inputFiles.filter((_, i) => i !== index) }))
   }
 
+  const clearConvertFiles = () => {
+    setConvert((p) => ({ ...p, inputFiles: [] }))
+  }
+
   const browseConvertOutput = async () => {
     const picked = await backend.pickFolder('Choose the output folder')
     if (picked) onParam('outputDir', picked)
@@ -2095,6 +2099,7 @@ export default function App() {
                 onBrowseInput={browseConvertInput}
                 onAddFiles={addConvertFiles}
                 onRemoveFile={removeConvertFile}
+                onClearFiles={clearConvertFiles}
                 onBrowseOutput={browseConvertOutput}
                 onToggleAdvanced={() => setAdvancedOpen((o) => !o)}
               />

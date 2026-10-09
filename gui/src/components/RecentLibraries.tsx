@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { inspectPath } from '../lib/backend'
 import { pathTail } from '../lib/recent'
+import { ltrPath } from '../lib/validate'
 
 interface Props {
   /** Candidate paths, most recent first. */
@@ -140,7 +141,7 @@ export function RecentLibraries({ paths, onPick }: Props) {
                         textAlign: 'left',
                       }}
                     >
-                      {parent}
+                      {ltrPath(parent)}
                     </div>
                   )}
                 </button>
