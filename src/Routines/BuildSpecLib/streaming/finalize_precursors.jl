@@ -47,7 +47,8 @@ function finalize_precursor_table(in_path::String, out_path::String; entrapment_
         push!(names, :entrapment_target_idx)
         push!(cols, missing_if_zero(entrapment_target_rows(t.entrapment_pair_id, t.entrapment_group_id, t.decoy)))
     end
-    Arrow.write(out_path, NamedTuple{Tuple(names)}(Tuple(cols)))
+    metadata = hasproperty(t, :sequence_packed) ? [PRECURSOR_SCHEMA_KEY => "2"] : nothing
+    Arrow.write(out_path, NamedTuple{Tuple(names)}(Tuple(cols)); metadata = metadata)
     return length(t.pair_id), count(t.decoy)
 end
 

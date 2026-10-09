@@ -49,7 +49,8 @@ function stream_spline_fragments(precursors_path::String, lib_dir::String, model
     end
     prec_mzs = Vector{Float32}(prec.mz)
     prec_irts = Vector{Float32}(prec.irt)
-    cols = (prec.sequence, prec.mods, prec.isotope_mods, prec.precursor_charge)
+    koina_seqs, seqs, mods, iso_mods = fragment_stage_text(prec, lib_dir)
+    cols = (seqs, mods, iso_mods, prec.precursor_charge)
     sel_buf = SimpleFrag{Float32}[]                       # one batch's selection, appended to selection_path
     sel_starts = Vector{Int}(undef, n_prec)
     sel_counts = Vector{UInt8}(undef, n_prec)
@@ -64,7 +65,7 @@ function stream_spline_fragments(precursors_path::String, lib_dir::String, model
     for lo in 1:batch_precs:n_prec
         hi = min(lo + batch_precs - 1, n_prec)
         t = time()
-        input = DataFrame(koina_sequence = prec.koina_sequence[lo:hi], precursor_charge = prec.precursor_charge[lo:hi])
+        input = DataFrame(koina_sequence = koina_seqs[lo:hi], precursor_charge = prec.precursor_charge[lo:hi])
         results = koina_batch_results(model, input, KOINA_URLS[model.name]; batch_size = koina_batch,
                                       concurrency = concurrency)
         t_predict += time() - t; t = time()
@@ -101,6 +102,32 @@ function stream_spline_fragments(precursors_path::String, lib_dir::String, model
     @user_info @sprintf("Streaming fragments: %d precursors, %d fragments (predict %.1f s, filter %.1f s, decode %.1f s, write %.1f s)",
                         n_prec, writer.n_frags, t_predict, t_filter, t_decode, t_write)
     return IndexFragSelection(sel_frags, sel_starts, sel_counts, prec_mzs), writer.n_frags
+end
+
+"""
+    fragment_stage_text(prec, lib_dir) -> (koina_sequence, sequence, mods, isotope_mods)
+
+The per-precursor text the fragment stage needs: the columns of a schema-1 intermediate table, or columns that decode
+them from a compact (schema-2) one (mod names from the library's precursor_mod_names.arrow).
+"""
+function fragment_stage_text(prec::Arrow.Table, lib_dir::AbstractString)
+    hasproperty(prec, :sequence_packed) || return (prec.koina_sequence, prec.sequence, prec.mods, prec.isotope_mods)
+    names = String.(Arrow.Table(joinpath(lib_dir, PRECURSOR_SIDE_FILES.mod_names)).name)
+    packed = prec.sequence_packed; entries = prec.mod_entries
+    return (KoinaSequenceColumn(packed, entries, names), PackedSequenceColumn(packed),
+            ModStringColumn(entries, packed, names), AllMissingStrings(length(packed)))
+end
+
+"Koina input sequences decoded from packed sequences and mod entries (koina_sequence of the streaming builder)."
+struct KoinaSequenceColumn{C, E} <: AbstractVector{String}
+    packed::C
+    entries::E
+    names::Vector{String}
+end
+Base.size(v::KoinaSequenceColumn) = (length(v.packed),)
+function Base.getindex(v::KoinaSequenceColumn, i::Int)
+    mods = Tuple{UInt8, UInt8}[(UInt8(mod_entry_position(e)), UInt8(mod_entry_name_id(e))) for e in v.entries[i]]
+    return koina_sequence(unpack_sequence(v.packed[i]), mods, v.names)
 end
 
 "Number the predictions of each Koina batch (global precursor ids from `first_pid`) and filter them; one table."

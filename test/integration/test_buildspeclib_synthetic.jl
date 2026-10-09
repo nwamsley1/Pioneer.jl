@@ -37,15 +37,16 @@ using Arrow
     end
 
     precursors = Arrow.Table(joinpath(lib_path, "precursors_table.arrow"))
+    @test Pioneer.precursor_schema(precursors) == 2                  # compact table + side tables
     @test hasproperty(precursors, :num_enzymatic_termini)
     @test all(==(UInt8(2)), precursors.num_enzymatic_termini)
-    @test hasproperty(precursors, :start_idx)
-    @test all(starts -> !isempty(starts), precursors.start_idx)
-    @test all(starts -> eltype(starts) == UInt32, precursors.start_idx)
+    lp = Pioneer.SetPrecursors(lib_path)
+    @test all(starts -> !isempty(starts), Pioneer.getStartIdx(lp))
+    @test all(starts -> eltype(starts) == UInt32, Pioneer.getStartIdx(lp))
     @test hasproperty(precursors, :num_variable_modifications)
     @test collect(precursors.num_variable_modifications) == UInt8[
         count("Unimod:35", coalesce(mods, ""))
-        for mods in precursors.structural_mods
+        for mods in Pioneer.getStructuralMods(lp)
     ]
 
     # Cleanup

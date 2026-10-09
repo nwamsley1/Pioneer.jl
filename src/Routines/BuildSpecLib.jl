@@ -222,6 +222,9 @@ function _build_spec_lib(params_path::String)
 
             iso_mod_to_mass = Dict{String, Float32}()
             im_model = String(get(_params.library_params, "im_model", ""))
+            # Altimeter libraries through the streaming builder are written in the compact precursor schema (2) from
+            # the start; the other paths write schema 1, converted once the table is final.
+            compact_precursors = streaming_precursor_table_supported(params) && koina_model_type isa SplineCoefficientModel
             if streaming_precursor_table_supported(params)
                 # Precursor table straight from the FASTA (digest, mods, entrapments, decoys, m/z filter, retention
                 # times, final order) without the in-memory Chronologer tables; same precursors.arrow.
@@ -230,7 +233,7 @@ function _build_spec_lib(params_path::String)
                 raw_fragments_arrow_path = joinpath(lib_dir, "raw_fragments.arrow")
                 precursor_timing = @timed begin
                     build_precursor_table_streaming(params, prec_mz_min, prec_mz_max, precursors_arrow_path,
-                                                    joinpath(lib_dir, "proteins_table.arrow"))
+                                                    joinpath(lib_dir, "proteins_table.arrow"); compact = compact_precursors)
                     safeRm(raw_fragments_arrow_path; force=true)
                     nothing
                 end
@@ -441,6 +444,7 @@ function _build_spec_lib(params_path::String)
                                                                   entrapment_targets = entrapment_r > 0,
                                                                   isotope_mods = !isempty(params["isotope_mod_groups"]))
                 N_TARGETS = N_PRECURSORS - N_DECOYS
+                compact_precursors || convert_precursor_table_v2(lib_dir)
 
                 GC.gc()
                 # precursors.arrow is now fully rewritten as precursors_table.arrow, so delete it before

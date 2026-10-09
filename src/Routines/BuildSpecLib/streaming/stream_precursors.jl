@@ -930,16 +930,25 @@ function chunk_columns(src::TableSource, chunk::AbstractVector{UInt32})
     return cols
 end
 
-"Write `rows` to `out_path` as one record batch per `chunk_rows`; returns (column build time, Arrow.write time)."
-function write_precursor_chunks(out_path::String, src::TableSource, rows::Vector{UInt32}, chunk_rows::Int)
+"""
+Write `rows` to `out_path` as one record batch per `chunk_rows`, schema-1 text columns or (`compact`) the schema-2
+columns; returns (column build time, Arrow.write time).
+"""
+write_precursor_chunks(out_path::String, src::TableSource, rows::Vector{UInt32}, chunk_rows::Int; compact::Bool = false) =
+    compact ? _write_chunks(out_path, src, rows, chunk_rows, chunk_columns_compact, false) :
+              _write_chunks(out_path, src, rows, chunk_rows, chunk_columns, true)
+
+function _write_chunks(out_path::String, src::TableSource, rows::Vector{UInt32}, chunk_rows::Int, build::F,
+                       gc_each_chunk::Bool) where {F}
     t_build = 0.0; t_arrow = 0.0
     writer = open(Arrow.Writer, out_path)
     try
         for chunk in Iterators.partition(rows, chunk_rows)
-            t_c = time(); cols = chunk_columns(src, chunk); t_build += time() - t_c
+            t_c = time(); cols = build(src, chunk); t_build += time() - t_c
             t_c = time(); Arrow.write(writer, cols); t_arrow += time() - t_c
-            cols = nothing
-            GC.gc(false)          # the chunk's strings are young: collect them before the next chunk's pile up
+            # schema-1 text columns: a chunk's strings are young; collect them before the next chunk's pile up
+            # (the 16-thread 300M write does not fit 32 GB otherwise). Schema-2 chunks are a few flat arrays.
+            gc_each_chunk && GC.gc(false)
         end
     finally
         close(writer)
@@ -984,7 +993,7 @@ Retention times come from the active Koina client, once per unit (they depend on
 """
 function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min::Float32, prec_mz_max::Float32,
                                          out_path::String, proteins_out_path::String;
-                                         chunk_rows::Int = 1_000_000, rt_bin_tol::Float32 = 3.0f0)
+                                         chunk_rows::Int = 1_000_000, rt_bin_tol::Float32 = 3.0f0, compact::Bool = false)
     t = time()
     dp = params["fasta_digest_params"]; lp = params["library_params"]
     streaming_precursor_table_supported(params) ||
@@ -1080,8 +1089,9 @@ function build_precursor_table_streaming(params::Dict{String, Any}, prec_mz_min:
     # alive at a time (Arrow.write over a lazy partitioner processes later partitions in @async tasks, letting the
     # producer run ahead and every chunk accumulate).
     src = TableSource(units, collect(charges), row_mz, unit_irt, pair_id, epair_id, nz, nce, cleavage)
-    t_build, t_arrow = write_precursor_chunks(out_path, src, rows, chunk_rows)
+    t_build, t_arrow = write_precursor_chunks(out_path, src, rows, chunk_rows; compact = compact)
     @user_info @sprintf("Streaming build:   build columns %.1f s, Arrow.write %.1f s", t_build, t_arrow)
+    compact && write_precursor_side_tables(dirname(out_path), units, rows, nz)
     t = _stream_phase("write", t)
     return out_path
 end

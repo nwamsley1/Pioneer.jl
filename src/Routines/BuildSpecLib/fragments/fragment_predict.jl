@@ -283,10 +283,16 @@ function build_spline_frag_filter_ctx(
     n_precs = nrow(precursors_df)
     prec_len = Vector{UInt8}(undef, n_precs)
     prec_mz  = Vector{Float32}(undef, n_precs)
-    seqs = precursors_df[!, :sequence]
     mzs  = precursors_df[!, :mz]
+    if hasproperty(precursors_df, :sequence)
+        seqs = precursors_df[!, :sequence]
+        @inbounds for i in 1:n_precs
+            prec_len[i] = UInt8(min(255, length(seqs[i])))
+        end
+    else                                     # compact (schema-2) intermediate: no sequence text, its length column
+        prec_len .= precursors_df[!, :length]
+    end
     @inbounds for i in 1:n_precs
-        prec_len[i] = UInt8(min(255, length(seqs[i])))
         prec_mz[i]  = Float32(mzs[i])
     end
 

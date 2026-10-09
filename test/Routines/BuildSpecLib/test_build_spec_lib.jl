@@ -225,6 +225,17 @@ function calculate_expected_combinations(
     return total_combinations
 end
 
+# A built library's precursor columns, with the text columns decoded through SetPrecursors (a schema-2 table keeps
+# sequences, mods and protein columns in packed form and side tables).
+function _library_precursor_columns(lib_dir::String)
+    t = Arrow.Table(joinpath(lib_dir, "precursors_table.arrow"))
+    lp = Pioneer.SetPrecursors(lib_dir)
+    text = (sequence = collect(Pioneer.getSequence(lp)), structural_mods = collect(Pioneer.getStructuralMods(lp)),
+            accession_numbers = collect(Pioneer.getAccessionNumbers(lp)),
+            proteome_identifiers = collect(Pioneer.getProteomeIdentifiers(lp)), start_idx = collect(Pioneer.getStartIdx(lp)))
+    return merge(NamedTuple(zip(Tables.columnnames(t), Tables.columns(t))), text)
+end
+
 # Verify fragment counts in library.
 #
 # Post-§9 (e605153f), BuildSpecLib's filter knobs are pinned as compile-time
@@ -245,7 +256,7 @@ function verify_fragment_counts(
 )
     # Load precursors to get peptide lengths (kept for the warning text)
     precursors_file = joinpath(lib_dir, "precursors_table.arrow")
-    precursors = Arrow.Table(precursors_file)
+    precursors = _library_precursor_columns(dirname(precursors_file))
 
     # Load fragments from serialized files
     if !isfile(joinpath(lib_dir, "detailed_fragments.bin"))
@@ -482,7 +493,7 @@ end
                     precursors_file = joinpath(lib_dir, "precursors_table.arrow")
                     if isfile(precursors_file)
                         # Read Arrow table and extract sequences
-                        precursors = Arrow.Table(precursors_file)
+                        precursors = _library_precursor_columns(dirname(precursors_file))
                         sequences = unique(precursors[:sequence])
                         println("Found $(length(sequences)) unique peptide sequences")
                         println("First 10 sequences: $(sequences[1:min(10, length(sequences))])")
@@ -554,7 +565,7 @@ end
         # Check precursors table
         precursors_file = joinpath(lib_dir, "precursors_table.arrow")
         if isfile(precursors_file)
-            precursors = Arrow.Table(precursors_file)
+            precursors = _library_precursor_columns(dirname(precursors_file))
             sequences = unique(precursors[:sequence])
             println("Scenario B: Found $(length(sequences)) unique peptide sequences")
             # With decoys enabled, we should have both targets and decoys
@@ -613,7 +624,7 @@ end
         # Check precursors table for multiple FASTA files
         precursors_file = joinpath(lib_dir, "precursors_table.arrow")
         if isfile(precursors_file)
-            precursors = Arrow.Table(precursors_file)
+            precursors = _library_precursor_columns(dirname(precursors_file))
             sequences = unique(precursors[:sequence])
             proteome_ids = unique(precursors[:proteome_identifiers])
             println("Scenario C: Found $(length(sequences)) unique sequences from $(length(proteome_ids)) proteomes")
@@ -675,7 +686,7 @@ end
                 precursors_file = joinpath(lib_dir, "precursors_table.arrow")
                 @info "precursors_file: $precursors_file"
                 if isfile(precursors_file)
-                    precursors = Arrow.Table(precursors_file)
+                    precursors = _library_precursor_columns(dirname(precursors_file))
                     @test hasproperty(
                         precursors,
                         :num_variable_modifications
@@ -855,7 +866,7 @@ end
         # Check comprehensive precursors table
         precursors_file = joinpath(lib_dir, "precursors_table.arrow")
         if isfile(precursors_file)
-            precursors = Arrow.Table(precursors_file)
+            precursors = _library_precursor_columns(dirname(precursors_file))
             sequences = unique(precursors[:sequence])
             proteome_ids = unique(precursors[:proteome_identifiers])
             entrapment_groups = unique(precursors[:entrapment_group_id])
