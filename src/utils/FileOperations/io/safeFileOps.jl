@@ -46,12 +46,17 @@ Delete one file with kernel32 `DeleteFileW`, after clearing a read-only attribut
 removes a file this process still has memory-mapped, which Julia's `rm` refuses with
 EACCES, but it needs no child process (about 1 ms per file instead of about 50 ms).
 """
-function _windows_delete_file(win_path::String)
-    ccall((:SetFileAttributesW, "kernel32"), stdcall, Cint, (Cwstring, UInt32),
-          win_path, _WINDOWS_FILE_ATTRIBUTE_NORMAL)
-    ccall((:DeleteFileW, "kernel32"), stdcall, Cint, (Cwstring,), win_path) != 0 &&
-        return UInt32(0)
-    return UInt32(Libc.GetLastError())
+# Defined on Windows only. Its callers run only there, but a system image compiles
+# every concrete method it holds, and LLVM has no `stdcall` on arm64: building the
+# app on Apple Silicon aborted with "LLVM ERROR: Unsupported calling convention".
+@static if Sys.iswindows()
+    function _windows_delete_file(win_path::String)
+        ccall((:SetFileAttributesW, "kernel32"), stdcall, Cint, (Cwstring, UInt32),
+              win_path, _WINDOWS_FILE_ATTRIBUTE_NORMAL)
+        ccall((:DeleteFileW, "kernel32"), stdcall, Cint, (Cwstring,), win_path) != 0 &&
+            return UInt32(0)
+        return UInt32(Libc.GetLastError())
+    end
 end
 
 """
