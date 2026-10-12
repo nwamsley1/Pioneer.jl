@@ -49,6 +49,56 @@ const MAINSEARCH_UNWRITTEN_COLUMNS = (
     :lgbm_prob, :best_rt, :decoy,
 )
 
+# Columns read after the write only as LightGBM features (PrecursorScoring Pass-1, MBR receiver), so they are
+# written compactly. LightGBM bins each feature into at most 255 levels, so Float16's ~3 significant digits
+# keep everything the models use. None reaches the output: all are in PRECSCORE_DROPPABLE_COLUMNS, except
+# irt_error, which the output narrows to Float16 anyway (OUTPUT_NARROWED_COLUMNS).
+# - MAINSEARCH_FLOAT16_COLUMNS: written as Float16, clamped to its finite range.
+# - MAINSEARCH_LOG2_FLOAT16_COLUMNS: intensities, far beyond Float16's range, written as Float16(log2(1 + x)).
+#   The transform is monotone, so the models split the same rows; nothing reads them as intensities.
+# - MAINSEARCH_UINT16_COLUMNS: scan counts, written as UInt16.
+const MAINSEARCH_FLOAT16_COLUMNS = (
+    :irt_error, :irt_fwhm, :smoothness, :weight_ratio_at_scan, :smoothed_2d_shadow_hellinger,
+    :ms1_weight_apex_to_m0_apex_irt, :top3_ms2_mass_error_mean, :ms1_m0_mass_err_ppm, :ms1_m1_to_m0_ratio,
+    :ms1_m1_to_m0_pred, :ms1_m0_m1_m2_window_fraction, :ms1_m0_m1_m2_window_fraction_pc,
+    :ms1_ms2_explained_delta, :ms1_ms2_explained_delta_pc, :ms1_isotope_dotp_m0_m1_m2,
+    :ms1_m0_peak_frag_intensity_fraction, :frag_apex_dispersion_irt, :frag_corr_strength, :frag_corr_effective_n,
+    :frag_corr_best_m0, :delta_frame_peak_center, :other_window_weight_corr, :other_window_apex_delta_irt,
+    :flanking_ms1_m0_candidate_fraction, :flanking_frag_candidate_fraction, :flanking_ms1_frag_sum_corr,
+    :flanking_frag_corr_mean, :flanking_frag_corr_strength, :flanking_frag_corr_effective_n,
+    :flanking_frag_corr_best_m0, :flanking_signal_support,
+)
+const MAINSEARCH_LOG2_FLOAT16_COLUMNS = (
+    :frag1_smoothed_intensity, :frag2_smoothed_intensity, :frag3_smoothed_intensity, :frag4_smoothed_intensity,
+    :frag5_smoothed_intensity, :frag6_smoothed_intensity, :frag7_smoothed_intensity, :frag8_smoothed_intensity,
+    :ms1_m0_intensity, :ms1_m1_intensity,
+)
+const MAINSEARCH_UINT16_COLUMNS = (:n_scans, :n_scans_other_windows)
+
+"""
+    compact_model_features!(psms)
+
+Store the model-only feature columns compactly before main_search_psms is written (see
+MAINSEARCH_FLOAT16_COLUMNS). Columns that are absent or not of the expected type are left as they are.
+"""
+function compact_model_features!(psms::DataFrame)
+    for col in MAINSEARCH_FLOAT16_COLUMNS
+        hasproperty(psms, col) && psms[!, col] isa Vector{Float32} || continue
+        psms[!, col] = _clamped_float16(psms[!, col])
+    end
+    for col in MAINSEARCH_LOG2_FLOAT16_COLUMNS
+        hasproperty(psms, col) && psms[!, col] isa Vector{Float32} || continue
+        psms[!, col] = _clamped_float16(log2.(1 .+ psms[!, col]))
+    end
+    for col in MAINSEARCH_UINT16_COLUMNS
+        hasproperty(psms, col) && psms[!, col] isa AbstractVector{<:Unsigned} || continue
+        psms[!, col] = UInt16.(min.(psms[!, col], typemax(UInt16)))
+    end
+    return psms
+end
+
+_clamped_float16(v::AbstractVector{<:AbstractFloat}) = Float16.(clamp.(v, -floatmax(Float16), floatmax(Float16)))
+
 struct MainSearch <: SearchMethod end
 
 """
@@ -651,6 +701,7 @@ function process_search_results!(
     _b_write = Base.gc_bytes()
     best_cv_fold = UInt8[getCvFold(precursors, pid) for pid in best_psms.precursor_idx]
     select!(best_psms, Not(filter(c -> hasproperty(best_psms, c), collect(MAINSEARCH_UNWRITTEN_COLUMNS))))
+    compact_model_features!(best_psms)
     for fold in UInt8[0, 1]
         fold_mask = best_cv_fold .== fold
         if any(fold_mask)
