@@ -188,7 +188,8 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     # The partitioned fragment indexes of the chosen width (choose_fragment_index). Only one is needed
     # at a time: the presearch index (no iRT bins) for parameter tuning, the main index afterwards. The
     # presearch index is read now (parameter tuning runs first, and it fixes the index type); the main
-    # index is read on first use. SearchDIA releases each when its stages are done (LazyFragmentIndex).
+    # index is read on first use. Asking for one index releases the other, and SearchDIA releases the
+    # main index after Main Search (LazyFragmentIndex).
     presearch_path = joinpath(SPEC_LIB_DIR, fragment_index.presearch)
     presearch = deserialize_from_jls(presearch_path)
     P = typeof(presearch)

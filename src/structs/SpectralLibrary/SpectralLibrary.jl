@@ -115,8 +115,17 @@ end
 SplineFragmentIndexLibrary(presearch::P, main::P, precursors, proteins, lookup, policy) where {P} =
     SplineFragmentIndexLibrary{P}(LazyFragmentIndex(presearch), LazyFragmentIndex(main), precursors, proteins, lookup, policy)
 
-getPresearchPartitionedIndex(sl::SpectralLibrary) = get_fragment_index!(sl.presearch_partitioned_index)
-getPartitionedIndex(sl::SpectralLibrary) = get_fragment_index!(sl.partitioned_index)
+# At most one index in memory: asking for one releases the other (when it can be re-read), so a
+# file that needs the presearch index during Main Search swaps it in, and the next file swaps the
+# main index back.
+function getPresearchPartitionedIndex(sl::SpectralLibrary)
+    release_fragment_index!(sl.partitioned_index)
+    get_fragment_index!(sl.presearch_partitioned_index)
+end
+function getPartitionedIndex(sl::SpectralLibrary)
+    release_fragment_index!(sl.presearch_partitioned_index)
+    get_fragment_index!(sl.partitioned_index)
+end
 release_presearch_index!(sl::SpectralLibrary) = release_fragment_index!(sl.presearch_partitioned_index)
 release_main_index!(sl::SpectralLibrary) = release_fragment_index!(sl.partitioned_index)
 getPrecursors(sl::SpectralLibrary) = sl.precursors
