@@ -473,6 +473,7 @@ function process_file!(
                 bitvec_rank_table =
                     getBitVecExcessRanks(search_context, ms_file_idx),
                 scan_tic = scan_tic,
+                q_value_threshold = params.q_value_threshold,
             )
             selected_rows = _select_postintegration_mbr_rows(
                 passing_psms,
@@ -506,6 +507,7 @@ function process_file!(
             bitvec_rank_table =
                 getBitVecExcessRanks(search_context, ms_file_idx),
             scan_tic = scan_tic,
+            q_value_threshold = params.q_value_threshold,
         )
         selected_rows = _select_postintegration_mbr_rows(
             passing_psms,

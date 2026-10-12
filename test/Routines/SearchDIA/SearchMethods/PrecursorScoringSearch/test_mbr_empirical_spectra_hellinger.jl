@@ -69,6 +69,54 @@ end
     @test psms[1, Pioneer.MBR_INTEGRATED_FITTED_HELLINGER_COLUMN] > 20.0f0
 end
 
+@testset "temporal evidence only for MBR transfer candidates" begin
+    # Row 1 passes in its own run (baseline); row 2 passes only globally (a transfer candidate).
+    function fixture()
+        psms = DataFrame(
+            precursor_idx = UInt32[1, 2],
+            scan_idx = UInt32[11, 11],
+            new_best_scan = UInt32[11, 11],
+            peak_area = Float32[100, 50],
+            integration_start_scan = UInt32[10, 10],
+            integration_stop_scan = UInt32[12, 12],
+            qval = Float32[0.005, 0.05],
+            global_qval = Float32[0.005, 0.005],
+        )
+        chromatograms = DataFrame(
+            precursor_idx = UInt32[1, 1, 1, 2, 2, 2],
+            scan_idx = UInt32[10, 11, 12, 10, 11, 12],
+            rt = Float32[2, 3, 4, 2, 3, 4],
+            intensity = Float32[2, 4, 2, 1, 3, 1],
+        )
+        for rank in 1:8
+            chromatograms[!, Symbol("shadow_frag$(rank)_int")] =
+                rank <= 2 ? Float32[100, 80, 60, 50, 40, 30] : zeros(Float32, 6)
+            chromatograms[!, Pioneer.FITTED_FRAGMENT_INTENSITY_COLUMNS[rank]] =
+                rank <= 2 ? Float32[90, 80, 70, 50, 45, 30] : zeros(Float32, 6)
+        end
+        return psms, chromatograms
+    end
+    scan_tic = fill(100.0f0, 20)
+
+    all_rows, chromatograms = fixture()
+    Pioneer.add_mbr_integrated_spectra_to_psms!(all_rows, chromatograms, identity; scan_tic)
+    candidates, chromatograms = fixture()
+    Pioneer.add_mbr_integrated_spectra_to_psms!(candidates, chromatograms, identity;
+        scan_tic, q_value_threshold = 0.01f0)
+
+    trace = Pioneer.MBR_INTEGRATED_TEMPORAL_TRACE_COLUMN
+    means = Pioneer.MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS
+    @test !isempty(all_rows[1, trace]) && !isempty(all_rows[2, trace])
+    @test isempty(candidates[1, trace])                          # baseline row: not read by MBR
+    @test all(rank -> candidates[1, means[rank]] == 0.0f0, 1:8)
+    @test candidates[2, trace] == all_rows[2, trace]             # candidate row: unchanged
+    @test all(rank -> candidates[2, means[rank]] == all_rows[2, means[rank]], 1:8)
+    for column in names(all_rows)
+        Symbol(column) in (trace, means...) && continue
+        @test isequal(candidates[!, column], all_rows[!, column])
+    end
+end
+
 @testset "temporal Hellinger is zero for a matching donor spectrum" begin
     trace = Float32[
         2, 10, 0, 0, 0, 0, 0, 0, 0,

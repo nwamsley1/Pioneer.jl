@@ -1033,6 +1033,14 @@ const MBR_SHARED_CORR_RANK_IDX =
     return log2(weight) - lod
 end
 
+# A transfer candidate by its frozen pre-MBR q-values: passes globally, fails in its own run. Integration
+# uses the same rule to decide which rows get the temporal trace and means (_mbr_temporal_rows).
+@inline function _mbr_candidate_qvals(qval, global_qval, threshold::Float32)
+    q = Float32(qval)
+    global_q = Float32(global_qval)
+    return isfinite(global_q) && global_q <= threshold && !(isfinite(q) && q <= threshold)
+end
+
 function _mbr_candidate_donors(
     qvals, global_qvals, pids, file_indices, donor_dict, contexts,
     atlas, threshold,
@@ -1040,10 +1048,7 @@ function _mbr_candidate_donors(
     rows = Int64[]
     donors = _MBRDonorEntry[]
     @inbounds for row in 1:length(qvals)
-        qval = Float32(qvals[row])
-        global_qval = Float32(global_qvals[row])
-        isfinite(global_qval) && global_qval <= threshold || continue
-        isfinite(qval) && qval <= threshold && continue
+        _mbr_candidate_qvals(qvals[row], global_qvals[row], threshold) || continue
         receiver_file = UInt32(file_indices[row])
         context = get!(contexts, receiver_file) do
             _mbr_receiver_donors(donor_dict, receiver_file, atlas)

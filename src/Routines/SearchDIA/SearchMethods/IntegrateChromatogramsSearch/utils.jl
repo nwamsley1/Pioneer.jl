@@ -958,7 +958,9 @@ end
     add_mbr_integrated_spectra_to_psms!(psms, chromatograms, rt_to_irt)
 
 Attach the receiver chromatogram evidence consumed by post-integration MBR.
-The temporal trace is restricted to the exact peak-integration bounds.
+The temporal trace is restricted to the exact peak-integration bounds. With `q_value_threshold`, the
+temporal trace and means are filled only for MBR's transfer candidates (`_mbr_temporal_rows`), the only
+rows that read them; other rows keep an empty trace and zero means.
 """
 function add_mbr_integrated_spectra_to_psms!(
     passing_psms::DataFrame,
@@ -966,6 +968,7 @@ function add_mbr_integrated_spectra_to_psms!(
     rt_to_irt;
     bitvec_rank_table = nothing,
     scan_tic::Union{Nothing, Vector{Float32}} = nothing,
+    q_value_threshold::Union{Nothing, Float32} = nothing,
 )
     n = nrow(passing_psms)
     for column in MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS
@@ -1044,6 +1047,10 @@ function add_mbr_integrated_spectra_to_psms!(
         chromatograms.isotopes_captured :
         nothing
 
+    # With a threshold, the temporal trace and means are computed only for the rows MBR reads them for.
+    temporal_mask = q_value_threshold === nothing ? nothing :
+        _mbr_temporal_rows(passing_psms.qval, passing_psms.global_qval, q_value_threshold)
+
     # FUNCTION BARRIER -- see _add_mbr_integrated_kernel! for why this is not just tidiness.
     _add_mbr_integrated_kernel!(
         passing_psms,
@@ -1067,8 +1074,19 @@ function add_mbr_integrated_spectra_to_psms!(
         passing_psms.integration_stop_scan,
         passing_psms.peak_area,
         use_separate_traces ? passing_psms.isotopes_captured : nothing,
+        temporal_mask,
     )
     return passing_psms
+end
+
+# Rows whose temporal trace and means post-integration MBR reads: its transfer candidates by the frozen
+# pre-MBR q-values (_mbr_candidate_qvals, the rule _mbr_candidate_donors applies).
+function _mbr_temporal_rows(qvals, global_qvals, q_value_threshold::Float32)
+    mask = BitVector(undef, length(qvals))
+    @inbounds for row in eachindex(qvals)
+        mask[row] = _mbr_candidate_qvals(qvals[row], global_qvals[row], q_value_threshold)
+    end
+    return mask
 end
 
 
@@ -1106,6 +1124,7 @@ function _add_mbr_integrated_kernel!(
     psm_stop_scan,
     psm_peak_area,
     psm_isotopes,
+    temporal_mask,
 )
     # Chromatograms are sorted [:precursor_idx, :rt] (SeperateTraces: [:precursor_idx,
     # :isotopes_captured, :rt]) by sort_chromatograms_for_integration! at
@@ -1253,30 +1272,34 @@ function _add_mbr_integrated_kernel!(
             out_frag_sqrt[rank][row] = fragment_sqrt[rank]
         end
 
-        temporal_rows = if !has_group
-            1:0                                   # empty range, no allocation
-        elseif use_separate_traces
-            # isotopes_captured is the MIDDLE sort key, so its groups are contiguous inside the
-            # precursor's range; narrow with a second search rather than a second Dict.
-            isotope_set = Tuple{Int8, Int8}(psm_isotopes[row])
-            _chrom_isotope_subrange(
-                chromatogram_isotopes, Int(group_lo[gidx]), Int(group_hi[gidx]), isotope_set,
-            )
-        else
-            Int(group_lo[gidx]):Int(group_hi[gidx])
-        end
-        temporal_trace, temporal_mean =
-            _chrom_temporal_fragment_data(
-                temporal_rows,
-                shadow_columns,
-                weight_column,
-                scan_column,
-                UInt32(psm_start_scan[row]),
-                UInt32(psm_stop_scan[row]),
-            )
-        out_trace[row] = temporal_trace
-        for rank in 1:8
-            out_temporal_mean[rank][row] = temporal_mean[rank]
+        # Only rows post-integration MBR scores read the trace and means; the rest keep the empty
+        # trace and zero means set up above (temporal_mask; nothing = every row).
+        if temporal_mask === nothing || temporal_mask[row]
+            temporal_rows = if !has_group
+                1:0                                   # empty range, no allocation
+            elseif use_separate_traces
+                # isotopes_captured is the MIDDLE sort key, so its groups are contiguous inside the
+                # precursor's range; narrow with a second search rather than a second Dict.
+                isotope_set = Tuple{Int8, Int8}(psm_isotopes[row])
+                _chrom_isotope_subrange(
+                    chromatogram_isotopes, Int(group_lo[gidx]), Int(group_hi[gidx]), isotope_set,
+                )
+            else
+                Int(group_lo[gidx]):Int(group_hi[gidx])
+            end
+            temporal_trace, temporal_mean =
+                _chrom_temporal_fragment_data(
+                    temporal_rows,
+                    shadow_columns,
+                    weight_column,
+                    scan_column,
+                    UInt32(psm_start_scan[row]),
+                    UInt32(psm_stop_scan[row]),
+                )
+            out_trace[row] = temporal_trace
+            for rank in 1:8
+                out_temporal_mean[rank][row] = temporal_mean[rank]
+            end
         end
 
         if has_group
