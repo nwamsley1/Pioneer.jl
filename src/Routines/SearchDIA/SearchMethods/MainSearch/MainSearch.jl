@@ -175,6 +175,13 @@ both necessary and safe for peak memory.
 Establishes the sorted-by-precursor invariant that downstream passes
 (`_build_precursor_groups`, feature passes, `select_best_per_precursor`)
 can take advantage of to skip their own sortperm.
+
+Rows are ordered by (`precursor_idx`, `scan_idx`), a pair that is unique per row, so the order is
+fully determined by the data. Sorting by precursor alone kept each precursor's rows in deconvolution
+emit order, which depends on how scans were dealt to threads (and so on the thread count); row
+order reaches the results through LightGBM's positional training sample and best-scan tie-breaks.
+This is also the order the scanning-quad (ZT) path already produces, and the order an on-disk merge
+of per-thread runs can reproduce.
 """
 
 function permute_psms_by_precursor_idx!(
@@ -183,10 +190,14 @@ function permute_psms_by_precursor_idx!(
 )
     n = nrow(psms)
     n == 0 && return psms
-    perm = parallel_sortperm_int32!(
-        sortperm_workspace,
-        psms[!, :precursor_idx]::Vector{UInt32},
-    )
+    pid = psms[!, :precursor_idx]::Vector{UInt32}
+    scan = psms[!, :scan_idx]::Vector{UInt32}
+    keys = Vector{UInt64}(undef, n)
+    Threads.@threads for i in 1:n
+        @inbounds keys[i] = (UInt64(pid[i]) << 32) | UInt64(scan[i])
+    end
+    perm = parallel_sortperm_int32!(sortperm_workspace, keys)
+    keys = nothing
     # NOT `Base.permute!`. Its docstring contract changed: it no longer destroys the permutation
     # argument (nor does `permute!!`) -- it allocates a *data*-sized temporary instead, measured at
     # exactly `sizeof(col)` per call. So the old code's defensive `copyto!(p_scratch, perm)` guarded a
