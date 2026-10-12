@@ -18,7 +18,19 @@ The caller must have:
 1. Verified library m/z-sortedness (via `verify_mz_sorted`) — once per run.
 2. Set `params.use_fused_scan = true` (dispatch decision happens upstream).
 """
-function process_scans_fused!(
+function process_scans_fused!(args...)
+    n = fuse_scans_count!(args...)
+    return DataFrame(@view(get_scored_psms(args[5], args[6])[1:n]))
+end
+
+"""
+    fuse_scans_count!(scan_range, spectra, prec_index, ms_file_idx, search_data, params, ...) -> Int
+
+`process_scans_fused!` without the table: scores the scans into the thread's scored-PSM buffer
+(`get_scored_psms(search_data, params)`) and returns how many rows it filled, so the caller can
+gather every thread's rows into one table (`gather_scored_psms`).
+"""
+function fuse_scans_count!(
     scan_range::Vector{Int64},
     spectra::MassSpecData,
     prec_index::PI,
@@ -133,5 +145,44 @@ function process_scans_fused!(
         end
     end
 
-    return DataFrame(@view(get_scored_psms(search_data, params)[1:last_val]))
+    return last_val
+end
+
+# Scatter rows 1:n of `buf` into rows off+1:off+n of the columns `cols` (one per field of the row
+# type, in field order). One pass over the rows; every field of a row is written while it is in cache.
+@generated function _scatter_rows!(cols::C, buf::AbstractVector{T}, off::Int, n::Int) where {C<:Tuple, T}
+    body = [:(cols[$k][off + i] = getfield(r, $k)) for k in 1:fieldcount(T)]
+    quote
+        @inbounds for i in 1:n
+            r = buf[i]
+            $(body...)
+        end
+        return nothing
+    end
+end
+
+"""
+    gather_scored_psms(bufs, counts) -> DataFrame
+
+One table of every thread's scored rows, `bufs[j][1:counts[j]]` for j in order: the same columns
+(one per field of the row type, named and typed as the fields) and row order as
+`vcat(DataFrame.(views)...)`, without the per-thread tables or the concatenated copy.
+
+Race-free by construction: it runs after every thread has finished scoring, the columns are
+allocated at full length before any task writes, and task j writes only rows
+`offsets[j]+1 : offsets[j]+counts[j]`, which are disjoint and cover the table. The row type must
+be plain data (isbits) so every column is a Vector of plain values: no BitVector, whose rows share
+machine words, and no boxed elements.
+"""
+function gather_scored_psms(bufs::Vector{<:AbstractVector{T}}, counts::Vector{Int}) where {T}
+    isbitstype(T) || throw(ArgumentError("gather_scored_psms needs a plain-data row type, got $T"))
+    length(bufs) == length(counts) || throw(DimensionMismatch("$(length(bufs)) buffers, $(length(counts)) counts"))
+    all(j -> 0 <= counts[j] <= length(bufs[j]), eachindex(counts)) ||
+        throw(ArgumentError("a count exceeds its buffer"))
+    offsets = cumsum([0; counts[1:end-1]])
+    n = sum(counts; init = 0)
+    cols = ntuple(k -> Vector{fieldtype(T, k)}(undef, n), fieldcount(T))
+    tasks = [Threads.@spawn _scatter_rows!(cols, bufs[j], offsets[j], counts[j]) for j in eachindex(bufs)]
+    foreach(wait, tasks)
+    return DataFrame(collect(AbstractVector, cols), collect(fieldnames(T)); copycols = false)
 end

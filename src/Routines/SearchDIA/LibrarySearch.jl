@@ -232,8 +232,11 @@ function library_search(
     t_deconv_start = time()
     _deconv_body = (tt) -> map(nce_entries) do (nce_model, nce_tag)
         intensity_model = prepare_fragment_intensity_model(ion_list, nce_model)
+        # Each task scores its scans into its thread's scored-PSM buffer and returns the row count;
+        # the rows are then gathered into one table (gather_scored_psms) in task order, which is
+        # the order the per-task tables used to be concatenated in.
         tasks = map(tt) do thread_task
-            Threads.@spawn process_scans_fused!(
+            Threads.@spawn fuse_scans_count!(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
@@ -241,7 +244,7 @@ function library_search(
         end
         # Unwrap TaskFailedException so the real error surfaces instead of
         # being buried inside a Task wrapper.
-        fetched = map(tasks) do t
+        counts = map(tasks) do t
             try
                 fetch(t)
             catch e
@@ -256,12 +259,12 @@ function library_search(
             @user_print string("[LIVE] per-thread scored-PSM buffers: ", n_buf, " slots x ",
                                sizeof(eltype(getMainSearchScoredPsms(first(search_data)))), " B = ",
                                round(n_buf * sizeof(eltype(getMainSearchScoredPsms(first(search_data)))) / 1e9, digits=2),
-                               " GB; per-thread tables: ", sum(nrow, fetched; init = 0), " rows, ",
-                               round(sum(Base.summarysize, fetched; init = 0) / 1e9, digits=3), " GB")
+                               " GB; rows scored: ", sum(counts; init = 0))
         end
-        _diag_live("deconv: per-thread tables fetched, before vcat")
-        result = vcat(fetched...)
-        _diag_live("deconv: after vcat (per-thread tables still referenced)")
+        _diag_live("deconv: scored, before gather")
+        result = gather_scored_psms([get_scored_psms(search_data[first(t)], params) for t in tt],
+                                    Vector{Int}(counts))
+        _diag_live("deconv: after gather")
         if nce_tag !== nothing && !isempty(result)
             result[!, :nce] .= nce_tag
         end
