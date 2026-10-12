@@ -38,6 +38,7 @@ struct ProteinScoringSearchParameters <: SearchParameters
     q_value_threshold::Float32
     min_pep_neg_threshold_itr::Float32
     write_qc_plots::Bool
+    delete_temp::Bool   # output.delete_temp: also remove temp files as soon as nothing reads them
 
     function ProteinScoringSearchParameters(params::PioneerParameters)
         ml_params = params.optimization.machine_learning
@@ -49,7 +50,8 @@ struct ProteinScoringSearchParameters <: SearchParameters
             Int64(protein_scoring_params.min_peptides),
             _resolve_q_value_threshold(global_params),
             PROTEIN_SCORING_MIN_PEP_NEG_THRESHOLD_ITR,
-            Bool(protein_scoring_params.write_qc_plots)
+            Bool(protein_scoring_params.write_qc_plots),
+            Bool(params.output.delete_temp),
         )
     end
 end
@@ -130,6 +132,16 @@ function summarize_results!(
     )
     empty!(protein_ambiguity_candidates)
     empty!(protein_peptide_opportunities)
+    # The protein-group tables are read only within run_protein_scoring!: their scores now live in the PSM files.
+    if params.delete_temp
+        passing_proteins_folder = joinpath(getDataOutDir(search_context), "temp_data", "passing_proteins")
+        try
+            isdir(passing_proteins_folder) && rm(passing_proteins_folder; recursive = true, force = true)
+        catch e
+            # On Windows a table may still be briefly locked by Arrow mmap state; delete_temp removes it at the end.
+            @debug_l1 "passing_proteins cleanup deferred: $e"
+        end
+    end
 
     return nothing
 end

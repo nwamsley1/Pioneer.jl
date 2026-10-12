@@ -32,6 +32,7 @@ import Pioneer
         Pioneer.writeArrow(staged_path, expected[1:2, :])
         Pioneer.clear_staged_selection!(staged_path)
         @test !isfile(staged_path * Pioneer.MBR_SELECTION_SUFFIX)
+        @test isfile(source_path)   # the source is kept unless asked for
         @test isequal(Pioneer.load_staged_psms(staged_path), expected[1:2, :])
         @test Pioneer.load_staged_psms(staged_path, [:rt]).rt == expected.rt[1:2]
 
@@ -40,5 +41,14 @@ import Pioneer
         Pioneer.write_staged_selection(empty_path, source, Int[])
         empty = Pioneer.load_staged_psms(empty_path)
         @test nrow(empty) == 0 && names(empty) == names(expected)
+
+        # remove_source also deletes the source table and sidecars the selection pointed into.
+        sidecar_paths = [s.path for s in source.sidecars]
+        @test !isempty(sidecar_paths) && all(isfile, sidecar_paths)
+        Pioneer.writeArrow(empty_path, empty)
+        Pioneer.clear_staged_selection!(empty_path; remove_source = true)
+        @test !isfile(empty_path * Pioneer.MBR_SELECTION_SUFFIX)
+        @test !isfile(source_path) && !any(isfile, sidecar_paths)
+        @test isfile(empty_path)
     end
 end

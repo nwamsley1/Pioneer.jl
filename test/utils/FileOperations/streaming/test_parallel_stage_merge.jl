@@ -58,3 +58,19 @@ end
         end
     end
 end
+
+@testset "hierarchical merge removes its staging directory" begin
+    rng = MersenneTwister(20261012)
+    mktempdir() do dir
+        refs = _stage_inputs(dir, rng)
+        staging_root = mkpath(joinpath(dir, "tmp"))
+        # Staging uses mktempdir(), so point the temp directory at an empty folder and check it stays empty.
+        withenv("TMPDIR" => staging_root, "TMP" => staging_root, "TEMP" => staging_root) do
+            stream_sorted_merge(refs, joinpath(dir, "out.arrow"), STAGE_KEYS...;
+                                reverse = STAGE_REV, batch_size = 37, max_fanin = 2)
+            stream_sorted_merge_chunked(refs, joinpath(dir, "chunks"), :group, STAGE_KEYS...;
+                                        reverse = STAGE_REV, batch_size = 37, max_chunk_bytes = 2_000, max_fanin = 2)
+        end
+        @test isempty(readdir(staging_root))
+    end
+end

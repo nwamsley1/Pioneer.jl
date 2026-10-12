@@ -280,6 +280,18 @@ function summarize_results!(
         batch_size=1_000_000, reverse=[false, true, true, true],
         max_chunk_bytes=max_chunk_bytes
     )
+    # The chunks hold every passing PSM row; nothing reads the per-run passing_psms tables after this merge.
+    if params.delete_temp
+        for ref in psm_refs
+            try
+                clear_sidecars!(ref; delete_files = true)
+                safeRm(file_path(ref); force = true)
+            catch e
+                # On Windows a table may still be briefly locked by Arrow mmap state; delete_temp removes it at the end.
+                @debug_l1 "passing_psms cleanup deferred: $e"
+            end
+        end
+    end
 
     # Validate first chunk has required columns for MaxLFQ
     validate_maxlfq_input(first(chunk_refs))

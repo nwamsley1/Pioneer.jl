@@ -120,9 +120,25 @@ function _selected_owned(tbl, c::Symbol, rows::Vector{Int}, path::String)
     return values
 end
 
-"""Remove the staged selection at `path` once the real table has been written there."""
-clear_staged_selection!(path::String) =
-    (isfile(path * MBR_SELECTION_SUFFIX) && safeRm(path * MBR_SELECTION_SUFFIX; force = true); nothing)
+"""
+Remove the staged selection at `path` once the real table has been written there. With `remove_source`, also
+remove the source table and sidecars it selects from: each source backs only this selection, and nothing else
+reads it by then.
+"""
+function clear_staged_selection!(path::String; remove_source::Bool = false)
+    selection_path = path * MBR_SELECTION_SUFFIX
+    isfile(selection_path) || return nothing
+    if remove_source
+        sources = with_arrow_table(selection_path) do selection
+            metadata = Arrow.getmetadata(selection)
+            sidecar_list = String(metadata["sidecars"])
+            vcat(String(metadata["source"]), isempty(sidecar_list) ? String[] : String.(split(sidecar_list, '\n')))
+        end
+        foreach(source -> safeRm(source; force = true), sources)
+    end
+    safeRm(selection_path; force = true)
+    return nothing
+end
 
 # Function barrier: the column types are only known once the table is read.
 function _select_mbr_integration_rows(

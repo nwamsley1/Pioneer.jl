@@ -145,6 +145,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     prec_estimation::P
     match_between_runs::Bool
     q_value_threshold::Float32
+    delete_temp::Bool   # output.delete_temp: also remove temp files as soon as nothing reads them
 
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -189,6 +190,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             prec_estimation,
             match_between_runs,
             _resolve_q_value_threshold(global_params),
+            Bool(params.output.delete_temp),
         )
     end
 end
@@ -535,6 +537,8 @@ function process_search_results!(
 
     passing_psms = results.psms[]
     output_path = getPassingPsms(getMSData(search_context))[ms_file_idx]
+    # process_file! was the last reader of this run's RT index.
+    params.delete_temp && safeRm(getRtIndex(getMSData(search_context), ms_file_idx); force = true)
 
     # Skip processing if no PSMs (e.g. file had no rt_index or passing PSMs)
     if nrow(passing_psms) == 0 || ncol(passing_psms) == 0
@@ -543,7 +547,7 @@ function process_search_results!(
            !isempty(output_path) &&
            isfile(output_path * PASS1_SIDECAR_SUFFIX)
             writeArrow(output_path, passing_psms)
-            clear_staged_selection!(output_path)
+            clear_staged_selection!(output_path; remove_source = params.delete_temp)
         end
         return nothing
     end
@@ -552,7 +556,7 @@ function process_search_results!(
     if params.match_between_runs &&
        isfile(output_path * PASS1_SIDECAR_SUFFIX)
         writeArrow(output_path, passing_psms)
-        clear_staged_selection!(output_path)
+        clear_staged_selection!(output_path; remove_source = params.delete_temp)
         return nothing
     end
     # Process final PSMs

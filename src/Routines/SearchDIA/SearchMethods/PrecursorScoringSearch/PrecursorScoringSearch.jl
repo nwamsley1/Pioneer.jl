@@ -55,6 +55,7 @@ struct PrecursorScoringSearchParameters <: SearchParameters
     # computation and transfer rescoring. Driven by global.match_between_runs.
     match_between_runs::Bool
     calibrate_huber::Bool
+    delete_temp::Bool   # output.delete_temp: also remove temp files as soon as nothing reads them
 
     function PrecursorScoringSearchParameters(params::PioneerParameters)
         global_params = params.global_settings
@@ -66,6 +67,7 @@ struct PrecursorScoringSearchParameters <: SearchParameters
             _resolve_q_value_threshold(global_params),
             mbr,
             get(params.optimization.chromatogram_integration, :deconvolution_solver, "huber") == "huber",
+            Bool(params.output.delete_temp),
         )
     end
 end
@@ -559,11 +561,16 @@ function summarize_results!(
                   "$(round(staging_time, digits=2)) seconds"
     end
 
-    # After Step 5-10, the merged main_search_psms files are no longer read by
-    # any downstream code (IntegrateChroms/MaxLFQ read passing_psms only). The
-    # mid-pipeline cleanup that frees ~120 MB/file is temporarily disabled to
-    # keep these files available for diagnostic inspection. Re-enable once the
-    # main_search_psms column set has been pruned to a minimal/diagnostic schema.
+    # Without MBR, nothing reads the merged main_search_psms files (and their sidecars) past this
+    # point: downstream reads passing_psms only. With MBR, the staged selections read them until
+    # chromatogram integration, which removes each run's file then. delete_temp = false keeps them
+    # for diagnostic inspection.
+    if params.delete_temp && !params.match_between_runs
+        for ref in annotated_refs
+            clear_sidecars!(ref; delete_files = true)
+            safeRm(file_path(ref); force = true)
+        end
+    end
 
     # MBR-enabled searches recalculate q-values after chromatogram integration
     # and transfer acceptance. The non-MBR path retains the original step.
