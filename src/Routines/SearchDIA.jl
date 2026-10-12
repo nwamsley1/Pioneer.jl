@@ -264,6 +264,16 @@ function SearchDIA(params_path::String)
             rss_after = peak_rss()
             timings[name] = search_timing
             rss_deltas[name] = (rss_after - rss_before) / (1024^3)
+            # Hold only the fragment index the remaining stages use: the presearch index serves
+            # parameter tuning, the main index BitVec calibration and Main Search. A released index
+            # is read from the library again if a later stage asks for it, so results are unchanged.
+            if search isa ParameterTuningSearch
+                release_presearch_index!(getSpecLib(SEARCH_CONTEXT)) &&
+                    @debug_l1 "Released the presearch fragment index after $name"
+            elseif search isa MainSearch
+                release_main_index!(getSpecLib(SEARCH_CONTEXT)) &&
+                    @debug_l1 "Released the main fragment index after $name"
+            end
         end
 
         # === Generate performance report ===

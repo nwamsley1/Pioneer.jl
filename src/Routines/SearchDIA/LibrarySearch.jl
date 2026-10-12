@@ -107,8 +107,8 @@ function library_search(
         get_fragment_index(spec_lib, params)
     end
     if haskey(ENV, "PIONEER_DIAG_LIVE")
-        which = partitioned_index === getPresearchPartitionedIndex(spec_lib) ? "presearch" :
-                partitioned_index === getPartitionedIndex(spec_lib) ? "main" : "other"
+        which = partitioned_index === peek_fragment_index(spec_lib.presearch_partitioned_index) ? "presearch" :
+                partitioned_index === peek_fragment_index(spec_lib.partitioned_index) ? "main" : "other"
         @user_print string("[INDEX] ", nameof(typeof(params)), " file=", ms_file_idx,
                            " irt_tol=", irt_tol, " index=", which)
     end
