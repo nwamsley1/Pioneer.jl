@@ -6,8 +6,7 @@
     },
     "output": {
         "write_csv": true,
-        "write_decoys": false,
-        "delete_temp": true
+        "write_decoys": false
     },
     "global": {
         "q_value_threshold": 0.01

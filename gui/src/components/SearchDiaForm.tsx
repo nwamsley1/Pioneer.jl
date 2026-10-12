@@ -580,13 +580,6 @@ export function SearchDiaForm({
               onToggle={onToggle}
             />
             <ToggleRow
-              title="Delete temp files"
-              hint="Clean up intermediates"
-              on={params.deleteTemp}
-              fieldKey="deleteTemp"
-              onToggle={onToggle}
-            />
-            <ToggleRow
               title="Debug logging"
               hint="Verbose console output"
               on={params.debugLogging}

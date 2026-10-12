@@ -10,8 +10,7 @@
     },
     "output": {
         "write_csv": true,
-        "write_decoys": false,
-        "delete_temp": true
+        "write_decoys": false
     },
     "paths": {
         "library": "./test/integration/ecoli_lib.poin",

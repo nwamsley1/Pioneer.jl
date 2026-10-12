@@ -318,6 +318,10 @@ function initSimpleSearchContext(
     )
 end
 
+# Remove temp_data intermediates as soon as nothing reads them, and temp_data itself at the end of the search.
+# Not a user parameter: set to false in a development checkout to keep every intermediate for inspection.
+const DELETE_TEMP = true
+
 """
    setDataOutDir!(s::SearchContext, dir::String) -> SearchContext
 

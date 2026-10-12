@@ -28,8 +28,7 @@
     "output": {
         "plots_per_page": 12,
         "write_decoys": false,
-        "write_csv": false,
-        "delete_temp": true
+        "write_csv": false
     },
     "chromatogram": {
         "err_bounds": [

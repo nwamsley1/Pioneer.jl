@@ -27,9 +27,8 @@
         "debug_console_level": 0
     },
 
-    "_comment_output": "delete_temp=false keeps temp_data/ for post-hoc inspection (precursors_long.arrow, main_search_psms/, etc.). write_csv adds CSV alongside Arrow output.",
+    "_comment_output": "write_csv adds CSV alongside Arrow output.",
     "output": {
-        "delete_temp": false,
         "write_csv": false,
         "write_decoys": true
     },

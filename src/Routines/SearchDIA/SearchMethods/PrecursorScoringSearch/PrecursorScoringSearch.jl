@@ -55,7 +55,6 @@ struct PrecursorScoringSearchParameters <: SearchParameters
     # computation and transfer rescoring. Driven by global.match_between_runs.
     match_between_runs::Bool
     calibrate_huber::Bool
-    delete_temp::Bool   # output.delete_temp: also remove temp files as soon as nothing reads them
 
     function PrecursorScoringSearchParameters(params::PioneerParameters)
         global_params = params.global_settings
@@ -67,7 +66,6 @@ struct PrecursorScoringSearchParameters <: SearchParameters
             _resolve_q_value_threshold(global_params),
             mbr,
             get(params.optimization.chromatogram_integration, :deconvolution_solver, "huber") == "huber",
-            Bool(params.output.delete_temp),
         )
     end
 end
@@ -563,9 +561,9 @@ function summarize_results!(
 
     # Without MBR, nothing reads the merged main_search_psms files (and their sidecars) past this
     # point: downstream reads passing_psms only. With MBR, the staged selections read them until
-    # chromatogram integration, which removes each run's file then. delete_temp = false keeps them
+    # chromatogram integration, which removes each run's file then. DELETE_TEMP = false keeps them
     # for diagnostic inspection.
-    if params.delete_temp && !params.match_between_runs
+    if DELETE_TEMP && !params.match_between_runs
         for ref in annotated_refs
             clear_sidecars!(ref; delete_files = true)
             safeRm(file_path(ref); force = true)

@@ -72,7 +72,6 @@ export interface SearchParams {
   results: string
   writeCsv: boolean
   writeDecoys: boolean
-  deleteTemp: boolean
   qValue: string
   nIsotopes: string
   nce: string
@@ -95,7 +94,6 @@ export const SEARCH_DEFAULTS: SearchParams = {
   results: '',
   writeCsv: true,
   writeDecoys: false,
-  deleteTemp: true,
   qValue: '0.01',
   nIsotopes: '2',
   nce: '26',

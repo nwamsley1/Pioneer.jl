@@ -68,7 +68,6 @@ struct ProteinQuantificationSearchParameters <: SearchParameters
 
     # Output parameters
     write_csv::Bool
-    delete_temp::Bool
     params::Any  # Store full parameters for reference
 
     function ProteinQuantificationSearchParameters(params::PioneerParameters)
@@ -85,7 +84,6 @@ struct ProteinQuantificationSearchParameters <: SearchParameters
             Int64(protein_scoring_params.min_peptides),
             Float64(get(maxLFQ_params, :max_chunk_size_mb, 1024)),
             Bool(output_params.write_csv),
-            Bool(output_params.delete_temp),
             params  # Store full parameters
         )
     end
@@ -281,13 +279,13 @@ function summarize_results!(
         max_chunk_bytes=max_chunk_bytes
     )
     # The chunks hold every passing PSM row; nothing reads the per-run passing_psms tables after this merge.
-    if params.delete_temp
+    if DELETE_TEMP
         for ref in psm_refs
             try
                 clear_sidecars!(ref; delete_files = true)
                 safeRm(file_path(ref); force = true)
             catch e
-                # On Windows a table may still be briefly locked by Arrow mmap state; delete_temp removes it at the end.
+                # On Windows a table may still be briefly locked by Arrow mmap state; temp_data is removed at the end.
                 @debug_l1 "passing_psms cleanup deferred: $e"
             end
         end
@@ -400,7 +398,7 @@ function summarize_results!(
     end
     chunk_paths = nothing
 
-    if params.delete_temp
+    if DELETE_TEMP
         @user_info "Removing temporary data..."
         temp_path = joinpath(getDataOutDir(search_context), "temp_data")
         GC.gc()

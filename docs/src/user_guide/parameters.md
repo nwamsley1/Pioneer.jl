@@ -73,7 +73,6 @@ The selected method and its settings are saved in `protein_quantification.json`.
 |---|---|---|---|
 | `output.write_csv` | Bool | `true` | Write CSV copies of the precursor and protein output tables alongside the Arrow files. |
 | `output.write_decoys` | Bool | `false` | Include decoy precursors in the output tables. |
-| `output.delete_temp` | Bool | `true` | Delete the `temp_data/` scratch directory at the end of the run. |
 
 ### Logging
 

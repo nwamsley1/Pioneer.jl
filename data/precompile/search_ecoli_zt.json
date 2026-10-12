@@ -10,8 +10,7 @@
     },
     "output": {
         "write_csv": true,
-        "write_decoys": false,
-        "delete_temp": true
+        "write_decoys": false
     },
     "paths": {
         "library": "./data/precompile/ecoli_small_altimeter.poin",

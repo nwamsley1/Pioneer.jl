@@ -35,7 +35,6 @@ export const SEARCH_OWNED_PATHS = [
   'paths.results',
   'output.write_csv',
   'output.write_decoys',
-  'output.delete_temp',
   'global.q_value_threshold',
   'global.match_between_runs',
   'search.n_isotopes',
@@ -56,7 +55,6 @@ export function buildSearchJsonBase(s: SearchParams): Json {
     output: {
       write_csv: s.writeCsv,
       write_decoys: s.writeDecoys,
-      delete_temp: s.deleteTemp,
     },
     global: {
       q_value_threshold: num(s.qValue, 0.01),
@@ -420,7 +418,6 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
   const o = isObj(obj.output) ? obj.output : {}
   if ('write_csv' in o) set.writeCsv = !!o.write_csv
   if ('write_decoys' in o) set.writeDecoys = !!o.write_decoys
-  if ('delete_temp' in o) set.deleteTemp = !!o.delete_temp
 
   if (isObj(obj.global) && obj.global.q_value_threshold != null) {
     set.qValue = String(obj.global.q_value_threshold)
