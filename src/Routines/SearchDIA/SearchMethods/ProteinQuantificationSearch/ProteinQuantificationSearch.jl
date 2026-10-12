@@ -309,18 +309,6 @@ function summarize_results!(
     )
 
     @user_info "Performing $(params.quantification_method) protein quantification..."
-    quantification_metadata = Dict{String, Any}(
-        "method" => String(params.quantification_method),
-        "run_to_run_normalization" => params.run_to_run_normalization ? "pioneer_median_spline" : "none",
-    )
-    if params.quantification_method == :sparsemaxlfq
-        merge!(quantification_metadata, Dict(
-            "partners" => SPARSE_MAXLFQ_PARTNERS,
-            "seed" => SPARSE_MAXLFQ_SEED,
-        ))
-    end
-    write(joinpath(getDataOutDir(search_context), "protein_quantification.json"),
-        JSON.json(quantification_metadata, 4))
     # Quantify protein-aligned input chunks incrementally.
     precursor_quant_col = params.run_to_run_normalization ? :peak_area_normalized : :peak_area
     LFQ_chunked(
