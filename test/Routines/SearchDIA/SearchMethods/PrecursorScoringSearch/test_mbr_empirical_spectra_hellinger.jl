@@ -66,7 +66,6 @@ end
     @test psms[1, Pioneer.MBR_INTEGRATED_TEMPORAL_MEAN_SQRT_COLUMNS[2]] ≈
         0.0f0
     @test psms[1, Pioneer.MBR_INTEGRATED_APEX_IRT_COLUMN] == 3.0f0
-    @test psms[1, Pioneer.MBR_INTEGRATED_FITTED_HELLINGER_COLUMN] > 20.0f0
 end
 
 @testset "temporal evidence only for MBR transfer candidates" begin

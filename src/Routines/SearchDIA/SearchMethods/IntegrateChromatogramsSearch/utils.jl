@@ -597,66 +597,6 @@ const MBR_FRAGMENT_RANK_WEIGHTS_8 = _fragment_rank_weights(8)
     return isfinite(value) ? max(value, 0.0f0) : 0.0f0
 end
 
-@inline function _chrom_positive_intensity(
-    columns,
-    row::Integer,
-    rank::Integer,
-)
-    value = Float32(columns[rank][row])
-    return isfinite(value) ? max(value, 0.0f0) : 0.0f0
-end
-
-@inline function _chrom_spectrum_sqrt_tuple_and_sum(columns, row::Integer)
-    values = ntuple(
-        rank -> _chrom_positive_intensity(columns, row, rank),
-        8,
-    )
-    total = sum(values)
-    total > 0.0f0 ||
-        return MBR_SMOOTHED_SPECTRUM_EMPTY_SQRT, 0.0f0
-    inverse_total = inv(total)
-    return ntuple(
-        rank -> sqrt(values[rank] * inverse_total),
-        8,
-    ), total
-end
-
-@inline function _chrom_hellinger_score_from_sqrt(
-    observed::NTuple{8, Float32},
-    fitted::NTuple{8, Float32},
-)
-    (_mbr_sqrt_tuple_is_valid(observed) &&
-     _mbr_sqrt_tuple_is_valid(fitted)) || return 0.0f0
-    bhattacharyya = 0.0f0
-    @inbounds for rank in 1:8
-        bhattacharyya += observed[rank] * fitted[rank]
-    end
-    hellinger_squared = max(0.0f0, 1.0f0 - bhattacharyya)
-    return Float32(-log2(max(hellinger_squared, 1.0f-10)))
-end
-
-@inline function _chrom_manhattan_score(
-    observed_columns,
-    fitted_columns,
-    row::Integer,
-)
-    observed = ntuple(
-        rank -> _chrom_positive_intensity(observed_columns, row, rank),
-        8,
-    )
-    fitted = ntuple(
-        rank -> _chrom_positive_intensity(fitted_columns, row, rank),
-        8,
-    )
-    observed_sum = sum(observed)
-    observed_sum > 0.0f0 || return 0.0f0
-    distance = 0.0f0
-    @inbounds for rank in 1:8
-        distance += abs(fitted[rank] - observed[rank])
-    end
-    return Float32(-log2(distance / observed_sum + 1.0f-10))
-end
-
 """
     _ChromCorrWorkspace
 
@@ -985,30 +925,12 @@ function add_mbr_integrated_spectra_to_psms!(
         !,
         MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN,
     ] = fill(NaN32, n)
-    passing_psms[
-        !,
-        MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN,
-    ] = fill(NaN32, n)
-    passing_psms[!, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN] =
-        fill(NaN32, n)
-    passing_psms[
-        !,
-        MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN,
-    ] = fill(NaN32, n)
-    passing_psms[!, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN] =
-        zeros(UInt8, n)
     passing_psms[!, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN] =
         zeros(UInt8, n)
     passing_psms[
         !,
         MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN,
     ] = zeros(UInt16, n)
-    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN] =
-        zeros(Float32, n)
-    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN] =
-        zeros(Float32, n)
-    passing_psms[!, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN] =
-        zeros(Float32, n)
     (n == 0 || nrow(chromatograms) == 0) && return passing_psms
 
     hasproperty(chromatograms, :shadow_frag1_int) ||
@@ -1024,16 +946,6 @@ function add_mbr_integrated_spectra_to_psms!(
         rank -> chromatograms[!, Symbol("shadow_frag$(rank)_int")],
         8,
     )
-    fitted_columns = all(
-        column -> hasproperty(chromatograms, column),
-        FITTED_FRAGMENT_INTENSITY_COLUMNS,
-    ) ? ntuple(
-        rank -> chromatograms[
-            !,
-            FITTED_FRAGMENT_INTENSITY_COLUMNS[rank],
-        ],
-        8,
-    ) : nothing
     rt_column = chromatograms.rt
     precursor_column = chromatograms.precursor_idx
     scan_column = chromatograms.scan_idx
@@ -1061,7 +973,6 @@ function add_mbr_integrated_spectra_to_psms!(
         scan_column,
         weight_column,
         shadow_columns,
-        fitted_columns,
         chromatogram_isotopes,
         use_separate_traces,
         rt_to_irt,
@@ -1111,7 +1022,6 @@ function _add_mbr_integrated_kernel!(
     scan_column,
     weight_column,
     shadow_columns,
-    fitted_columns,
     chromatogram_isotopes,
     use_separate_traces::Bool,
     rt_to_irt,
@@ -1230,23 +1140,10 @@ function _add_mbr_integrated_kernel!(
     out_weight = getproperty(passing_psms, MBR_INTEGRATED_WEIGHT_COLUMN)::Vector{Float32}
     out_log2_explained =
         getproperty(passing_psms, MBR_INTEGRATED_LOG2_INTENSITY_EXPLAINED_COLUMN)::Vector{Float32}
-    out_fitted_manhattan =
-        getproperty(passing_psms, MBR_INTEGRATED_FITTED_MANHATTAN_DISTANCE_COLUMN)::Vector{Float32}
-    out_fitted_hellinger =
-        getproperty(passing_psms, MBR_INTEGRATED_FITTED_HELLINGER_COLUMN)::Vector{Float32}
-    out_smoothed_2d =
-        getproperty(passing_psms, MBR_INTEGRATED_SMOOTHED_2D_SHADOW_HELLINGER_COLUMN)::Vector{Float32}
-    out_n_corr = getproperty(passing_psms, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_COLUMN)::Vector{UInt8}
     out_corr_bitvec = getproperty(passing_psms, MBR_INTEGRATED_FRAG_CORR_BITVEC_COLUMN)::Vector{UInt8}
     out_bitvec_rank = getproperty(
         passing_psms, MBR_INTEGRATED_N_CORRELATED_FRAGMENTS_BITVEC_RANK_COLUMN,
     )::Vector{UInt16}
-    out_corr_strength =
-        getproperty(passing_psms, MBR_INTEGRATED_FRAG_CORR_STRENGTH_COLUMN)::Vector{Float32}
-    out_corr_effective_n =
-        getproperty(passing_psms, MBR_INTEGRATED_FRAG_CORR_EFFECTIVE_N_COLUMN)::Vector{Float32}
-    out_corr_best_weight =
-        getproperty(passing_psms, MBR_INTEGRATED_FRAG_CORR_BEST_WEIGHT_COLUMN)::Vector{Float32}
 
 
     @inbounds for row in 1:n
@@ -1304,12 +1201,8 @@ function _add_mbr_integrated_kernel!(
 
         if has_group
             correlation = correlation_by_group[gidx]
-            out_n_corr[row] = correlation.n_correlated
             out_corr_bitvec[row] = correlation.corr_mask
             out_bitvec_rank[row] = correlation.bitvec_rank
-            out_corr_strength[row] = correlation.strength
-            out_corr_effective_n[row] = correlation.effective_n
-            out_corr_best_weight[row] = correlation.best_weight
         end
 
         apex_row = neighbor_rows[1]
@@ -1322,27 +1215,6 @@ function _add_mbr_integrated_kernel!(
             max(shadow_sum, 1.0f-20) /
             max(@inbounds(scan_tic[selected_scan]), 1.0f-20),
         )
-        if fitted_columns !== nothing
-            fitted_sqrt, _ =
-                _chrom_spectrum_sqrt_tuple_and_sum(
-                    fitted_columns,
-                    apex_row,
-                )
-            apex_shadow_sqrt, _ =
-                _chrom_spectrum_sqrt_tuple_and_sum(
-                    shadow_columns,
-                    apex_row,
-                )
-            out_fitted_manhattan[row] = _chrom_manhattan_score(
-                shadow_columns,
-                fitted_columns,
-                apex_row,
-            )
-            out_fitted_hellinger[row] =
-                _chrom_hellinger_score_from_sqrt(apex_shadow_sqrt, fitted_sqrt)
-            out_smoothed_2d[row] =
-                _chrom_hellinger_score_from_sqrt(fragment_sqrt, fitted_sqrt)
-        end
     end
     return passing_psms
 end

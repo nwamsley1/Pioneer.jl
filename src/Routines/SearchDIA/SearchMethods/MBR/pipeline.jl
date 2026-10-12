@@ -485,6 +485,14 @@ including throwing on `missing`.
     return dest
 end
 
+# Recovery columns read only by the score remap. Once the remap has run they are dead (their only other
+# fate was PRECSCORE_DROPPABLE_COLUMNS at the final rewrite); its output, the remapped prec_prob and
+# MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN, is kept.
+const MBR_REMAP_ONLY_COLUMNS = (
+    :mbr_target_decoy_prob, :ftr_qval_true, :ftr_pep_true, :mbr_total_error_qval_true,
+    :mbr_total_error_rate_true, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN,
+)
+
 function _merge_mbr_recoveries!(
     file_paths::Vector{String},
     q_value_threshold::Float32;
@@ -555,7 +563,11 @@ function _merge_mbr_recoveries!(
             end
             main[!, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN] =
                 counterfactual_prec_prob
+            select!(main, Not(collect(MBR_REMAP_ONLY_COLUMNS)))
         end
+        # Nothing reads the integrated evidence after the feature pass, so this rewrite drops it rather
+        # than carrying it (temporal traces included) to the final rewrite.
+        _drop_internal_mbr_columns!(main)
         writeArrow(path, main)
     end
     return file_paths
