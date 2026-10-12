@@ -7,7 +7,6 @@
             scan_idx=UInt32.(100 .+ ids),
             target=iseven.(ids),
             cv_fold=fill(UInt8(endswith(name, "fold1")), n),
-            trace_prob=fill(-1f0, n),
             mbr_recovered=trues(n),
         )
         predictions = DataFrame(
@@ -27,12 +26,10 @@
         Arrow.write(pass1_path, predictions)
 
         expected = copy(main)
-        expected[!, :decoy] = .!main.target
         expected[!, :trace_prob_prepass] = Float32.(predictions.trace_prob_prepass)
         if infold !== :absent
             expected[!, :trace_prob_infold] = Float32.(predictions.trace_prob_infold)
         end
-        expected[!, :trace_prob] = copy(expected.trace_prob_prepass)
         expected[!, :mbr_recovered] = falses(n)
         expected[!, :auxiliary] = auxiliary
         return (; path, pass1_path, expected, inputs=[path, auxiliary_path, pass1_path])

@@ -246,30 +246,20 @@ Pioneer.getIrt(p::MainSearchMockPrecursors) = p.irt
         )
     end
 
-    @testset "phase two iRT difference uses refined prediction column" begin
-        irt_diff_col = Vector{Float32}(undef, 2)
+    @testset "phase two library columns" begin
         prec_mz_col = Vector{Float32}(undef, 2)
-        pair_id_col = Vector{UInt32}(undef, 2)
         entrap_col = Vector{UInt8}(undef, 2)
 
         _compute_phase2_columns!(
-            UInt32[1, 2],
-            Float32[12.0, 12.0],
-            Float32[11.0, 15.0],
-            Float32[100.0, 100.0],
+            UInt32[2, 1],
             Float32[401.0, 402.0],
-            UInt32[101, 102],
             UInt8[0, 1],
-            irt_diff_col,
             prec_mz_col,
-            pair_id_col,
             entrap_col,
         )
 
-        @test irt_diff_col == Float32[1.0, 3.0]
-        @test prec_mz_col == Float32[401.0, 402.0]
-        @test pair_id_col == UInt32[101, 102]
-        @test entrap_col == UInt8[0, 1]
+        @test prec_mz_col == Float32[402.0, 401.0]
+        @test entrap_col == UInt8[1, 0]
     end
 
 end
