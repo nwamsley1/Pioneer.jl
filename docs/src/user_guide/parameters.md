@@ -65,7 +65,6 @@ Protein quantification defaults to sparse MaxLFQ with 16 partner proposals per
 run and a fixed seed, plus connections that preserve the full overlap graph’s
 connected components. It uses shared-precursor ratios on those selected run pairs;
 results can differ from full MaxLFQ. For comparisons, select `"maxlfq"`.
-The selected method and its settings are saved in `protein_quantification.json`.
 
 ### Output
 
