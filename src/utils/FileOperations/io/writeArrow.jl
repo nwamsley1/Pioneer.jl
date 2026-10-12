@@ -48,9 +48,6 @@ function _audit_log_write(fpath::AbstractString, df::AbstractDataFrame)
     return
 end
 
-# EXPERIMENT (feat/temp-disk-usage): compression codec for temp Arrow files, from PIONEER_TEMP_COMPRESS (lz4 | zstd).
-temp_arrow_compression() = (c = get(ENV, "PIONEER_TEMP_COMPRESS", ""); isempty(c) ? nothing : Symbol(c))
-
 function writeArrow(fpath::String, df::AbstractDataFrame; temp_dir::AbstractString=tempdir())
     _audit_log_write(fpath, df)
     fpath = normpath(fpath)
@@ -58,7 +55,7 @@ function writeArrow(fpath::String, df::AbstractDataFrame; temp_dir::AbstractStri
         # Create a unique temporary file
         tpath = tempname(temp_dir) * ".arrow"
         # Write to the temporary file
-        Arrow.write(tpath, df; compress = temp_arrow_compression())
+        Arrow.write(tpath, df)
         # Route replacement through the same normalized, retrying deletion
         # path as every other Arrow cleanup operation.
         safeRm(fpath; force=true)
@@ -79,7 +76,7 @@ function writeArrow(fpath::String, df::AbstractDataFrame; temp_dir::AbstractStri
         # For Linux/MacOS, use temp file approach for safety
         # This avoids Bus errors when writing to a file that may still be memory-mapped
         tpath = tempname(temp_dir) * ".arrow"
-        Arrow.write(tpath, df; compress = temp_arrow_compression())
+        Arrow.write(tpath, df)
         mv(tpath, fpath, force=true)
     end
     return nothing

@@ -250,7 +250,7 @@ end
 function _open_merge_output(path::String)
     temp_path, io = mktemp(dirname(abspath(path)); cleanup=false)
     try
-        writer = open(Arrow.Writer, io; file=false, ntasks=0, closeio=false, compress=temp_arrow_compression())
+        writer = open(Arrow.Writer, io; file=false, ntasks=0, closeio=false)
         # Arrow 2.x leaves its consumer task unbound. An IO failure must close
         # the channel and wake blocked producers, rather than hang the merge.
         Base.bind(writer.msgs, writer.task)
