@@ -223,6 +223,9 @@ function library_search(
             " scratch=", scratch === nothing ? "none" : string(round(Base.summarysize(scratch) / 1e9, digits=3), " GB"))
         _diag_live("frag-index search done (scratch, candidates live)")
     end
+    # The candidates are in `precursors_passed` now; the per-thread emit buffers they were gathered
+    # from are dead until the next search sizes them again (MainSearch: 5.6 GB on a 3.5M-scan file).
+    params isa MainSearchParameters && release_emit_buffers!(getFragIndexScratch(search_context))
 
     # --- 3. Threaded scan processing, once per NCE model ---
     # All search methods use the fused per-precursor scan loop. The classic
