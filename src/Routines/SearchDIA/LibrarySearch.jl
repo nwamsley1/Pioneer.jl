@@ -106,6 +106,12 @@ function library_search(
     else
         get_fragment_index(spec_lib, params)
     end
+    if haskey(ENV, "PIONEER_DIAG_LIVE")
+        which = partitioned_index === getPresearchPartitionedIndex(spec_lib) ? "presearch" :
+                partitioned_index === getPartitionedIndex(spec_lib) ? "main" : "other"
+        @user_print string("[INDEX] ", nameof(typeof(params)), " file=", ms_file_idx,
+                           " irt_tol=", irt_tol, " index=", which)
+    end
     qtm = getQuadTransmissionModel(search_context, ms_file_idx)
     # Scanning-quad (ZT) files: a narrow candidacy box and a meta-scan-wide deconvolution box
     # (ZT/candidacy.jl). Both are `qtm` on every other file.
@@ -209,6 +215,14 @@ function library_search(
 
     # --- 2c. Build precursor index ---
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
+    if haskey(ENV, "PIONEER_DIAG_LIVE") && params isa MainSearchParameters
+        scratch = getFragIndexScratch(search_context)
+        @user_print string("[SIZES] frag-index: candidates=", length(precursors_passed),
+            " precursors_passed=", round(Base.summarysize(precursors_passed) / 1e9, digits=3), " GB",
+            " scan_to_prec_idx=", round(Base.summarysize(scan_to_prec_idx) / 1e9, digits=3), " GB",
+            " scratch=", scratch === nothing ? "none" : string(round(Base.summarysize(scratch) / 1e9, digits=3), " GB"))
+        _diag_live("frag-index search done (scratch, candidates live)")
+    end
 
     # --- 3. Threaded scan processing, once per NCE model ---
     # All search methods use the fused per-precursor scan loop. The classic
@@ -237,7 +251,17 @@ function library_search(
                 rethrow(e)
             end
         end
+        if haskey(ENV, "PIONEER_DIAG_LIVE")
+            n_buf = sum(length(getMainSearchScoredPsms(sd)) for sd in search_data; init = 0)
+            @user_print string("[LIVE] per-thread scored-PSM buffers: ", n_buf, " slots x ",
+                               sizeof(eltype(getMainSearchScoredPsms(first(search_data)))), " B = ",
+                               round(n_buf * sizeof(eltype(getMainSearchScoredPsms(first(search_data)))) / 1e9, digits=2),
+                               " GB; per-thread tables: ", sum(nrow, fetched; init = 0), " rows, ",
+                               round(sum(Base.summarysize, fetched; init = 0) / 1e9, digits=3), " GB")
+        end
+        _diag_live("deconv: per-thread tables fetched, before vcat")
         result = vcat(fetched...)
+        _diag_live("deconv: after vcat (per-thread tables still referenced)")
         if nce_tag !== nothing && !isempty(result)
             result[!, :nce] .= nce_tag
         end
@@ -267,6 +291,21 @@ function library_search(
     end
 
     return result
+end
+
+"""
+    _diag_live(label)
+
+Diagnostic: when `PIONEER_DIAG_LIVE` is set, run a full GC and report the bytes still live
+(what the GC cannot free) next to the process's resident and peak memory. Off by default;
+it only costs time, never changes results.
+"""
+function _diag_live(label::AbstractString)
+    haskey(ENV, "PIONEER_DIAG_LIVE") || return nothing
+    GC.gc(true)
+    @user_print string("[LIVE] ", label, ": live=", round(Base.gc_live_bytes() / 1e9, digits=2),
+                       " GB  rss=", round(Sys.maxrss() / 1e9, digits=2), " GB(peak)")
+    return nothing
 end
 
 """

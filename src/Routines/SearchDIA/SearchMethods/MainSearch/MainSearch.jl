@@ -242,6 +242,7 @@ macro alloc_bucket(label, ex)
             @user_print string("[ALLOC] ", $(esc(label)), ": ",
                                round((Base.gc_bytes() - _b0) / 1e9, digits=3), " GB")
         end
+        _diag_live(string("after ", $(esc(label))))
         _r
     end
 end
@@ -285,6 +286,7 @@ function process_file!(
 
     t_file_start = time()
     file_name = getParsedFileName(search_context, ms_file_idx)
+    _diag_live("MainSearch file $ms_file_idx start")
 
     psms = @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
     # Scanning-quad (ZT): library_search already ran the two per-scan passes below on each chunk's
@@ -331,6 +333,15 @@ function process_file!(
     )
 
     results.psms[] = psms
+
+    if haskey(ENV, "PIONEER_DIAG_LIVE") && nrow(psms) > 0
+        # Is (precursor_idx, scan_idx) unique per row? (Decides whether a sort key can rebuild row order.)
+        keys = sort!(UInt64.(psms[!, :precursor_idx]) .<< 32 .| UInt64.(psms[!, :scan_idx]))
+        n_dup = count(i -> keys[i] == keys[i - 1], 2:length(keys))
+        keys = nothing
+        @user_print string("[ORDER] file=", ms_file_idx, " rows=", nrow(psms),
+                           " duplicate (precursor_idx, scan_idx) rows=", n_dup)
+    end
 
     _log_psm_table_footprint(psms, "post-deconv (before best-per-precursor)", ms_file_idx)
 
@@ -456,6 +467,7 @@ function _mainsearch_best_in_memory!(
                    "high-confidence target precursors; need $(irt_refinement.min_precursors))"
     end
     best_psms[!, :lgbm_prob] = copy(best_psms[!, :lgbm_score])
+    _diag_live("after reapply + best-per-precursor ($(nrow(best_psms)) best PSMs)")
 
     return (
         best_psms = best_psms,
