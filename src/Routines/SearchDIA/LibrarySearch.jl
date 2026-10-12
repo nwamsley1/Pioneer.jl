@@ -274,8 +274,12 @@ function library_search(
     # (ZT/chunked_main_search.jl); `nothing` everywhere else.
     zt_psms = zt_chunked_deconvolution(zt_geom, params, _deconv_body, spectra, search_context,
                                        ms_file_idx, scan_to_prec_idx)
-    zt_psms === nothing || return zt_psms
+    if zt_psms !== nothing
+        release_scored_psm_buffers!(search_data, params)
+        return zt_psms
+    end
     all_results = _deconv_body(thread_tasks)
+    release_scored_psm_buffers!(search_data, params)
     t_deconv = time() - t_deconv_start
 
     t_post_start = time()
@@ -294,6 +298,31 @@ function library_search(
     end
 
     return result
+end
+
+"""
+Rows a thread's MainSearch scored-PSM buffer is returned to after each file: its initial size
+(`initSimpleSearchContext`). The buffer grows to hold every row a thread scores in one file.
+"""
+const MAIN_SCORED_PSMS_RETAINED = 5000
+
+"""
+    release_scored_psm_buffers!(search_data, params)
+
+After a MainSearch file's rows are gathered into its PSM table, return each thread's scored-PSM
+buffer to its initial size. The buffer only ever grew (to every row the thread scored in the file,
+e.g. ~4M rows / 0.6 GB per thread on a 65M-PSM file), and nothing reads it after the gather; the
+next file regrows it as the first one did. Tuning stages keep theirs (they are small and reused).
+"""
+release_scored_psm_buffers!(search_data, ::FragmentIndexSearchParameters) = nothing
+function release_scored_psm_buffers!(search_data::AbstractVector, params::MainSearchParameters)
+    for sd in search_data
+        buf = get_scored_psms(sd, params)
+        length(buf) > MAIN_SCORED_PSMS_RETAINED || continue
+        resize!(buf, MAIN_SCORED_PSMS_RETAINED)
+        sizehint!(buf, MAIN_SCORED_PSMS_RETAINED)
+    end
+    return nothing
 end
 
 """
