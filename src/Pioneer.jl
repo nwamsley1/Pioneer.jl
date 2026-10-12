@@ -909,11 +909,15 @@ const IM_MODEL_NAMES = Set(keys(IM_MODEL_CONFIGS))
 const DEFAULT_RT_MODEL = "chronologer"
 const RT_MODEL_CONFIGS = Dict{String, @NamedTuple{
     output::Symbol,
+    peptide_length::ModelPeptideLength,
     supported_mods::ModSupport,
     free_cys::Bool,
 }}(
     "chronologer" => (
         output = :rt,
+        # Probed against Koina's Chronologer_RT: a 41-mer is accepted, past every
+        # fragment model's ceiling, so no limit is declared.
+        peptide_length = nothing,
         # The 17 modifications of the Chronologer README (searlelab/chronologer),
         # in UNIMOD terms: Carbamidomethyl, Oxidation, Phospho, Acetyl (K and
         # N-term), Succinyl, GlyGly, mono/di/tri-methyl, TMT0/TMT10 (K and
@@ -929,6 +933,11 @@ const RT_MODEL_CONFIGS = Dict{String, @NamedTuple{
     ),
     "prosit_2024_irt_ptm" => (
         output = :irt,
+        # Probed against Koina's Prosit_2024_irt_PTMs_gl: a 30-mer is accepted and
+        # a 31-mer is rejected (`ValueError: could not broadcast input array`);
+        # a 1-mer is accepted. Paired with Altimeter (up to 40), a digest above 30
+        # would otherwise fail its Koina batches the way issue #267 describes.
+        peptide_length = (min = 1, max = 30),
         supported_mods = PROSIT_PTM_MODS,
         # Sibling of the Prosit PTM fragment models; taken to share their
         # free-cysteine coverage.
