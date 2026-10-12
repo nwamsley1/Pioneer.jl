@@ -35,6 +35,20 @@ const MAIN_PEP_FILTER_THR = 0.99f0
 # confidence target precursors skip the refinement pass.
 const MAIN_IRT_REFINEMENT_MIN_PRECURSORS = 250
 
+# Columns MainSearch builds for its own per-file model and in-memory steps but does not write to
+# main_search_psms: nothing reads them after the write, or they repeat another column.
+# - frag1..8_int, ms1_corr_m0_m1, ms1_corr_weight_m0, ms1_apex_offset_irt, error, max_matched_residual,
+#   max_unmatched_residual: read only by the per-file model and the feature passes before the write.
+# - lgbm_prob: a copy of lgbm_score; readers of the written table use lgbm_score.
+# - best_rt: equal to rt by construction (select_best_per_precursor); readers use rt.
+# - decoy: !target.
+const MAINSEARCH_UNWRITTEN_COLUMNS = (
+    :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int, :frag7_int, :frag8_int,
+    :ms1_corr_m0_m1, :ms1_corr_weight_m0, :ms1_apex_offset_irt,
+    :error, :max_matched_residual, :max_unmatched_residual,
+    :lgbm_prob, :best_rt, :decoy,
+)
+
 struct MainSearch <: SearchMethod end
 
 """
@@ -636,6 +650,7 @@ function process_search_results!(
     main_search_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "main_search_psms")
     _b_write = Base.gc_bytes()
     best_cv_fold = UInt8[getCvFold(precursors, pid) for pid in best_psms.precursor_idx]
+    select!(best_psms, Not(filter(c -> hasproperty(best_psms, c), collect(MAINSEARCH_UNWRITTEN_COLUMNS))))
     for fold in UInt8[0, 1]
         fold_mask = best_cv_fold .== fold
         if any(fold_mask)
@@ -689,18 +704,12 @@ so the compiler specializes on concrete types, eliminating dynamic dispatch.
 """
 function _compute_phase2_columns!(
         prec_idx_col::AbstractVector{UInt32},
-        irt_obs_col::AbstractVector{Float32},
-        irt_pred_col::AbstractVector{Float32},
-        prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
-        irt_diff_col::Vector{Float32},
+        prec_mz_arr, entrap_group_ids,
         prec_mz_col::Vector{Float32},
-        pair_id_col::Vector{UInt32},
         entrap_col::Vector{UInt8})
     @inbounds for i in eachindex(prec_idx_col)
         pid = prec_idx_col[i]
-        irt_diff_col[i] = abs(irt_obs_col[i] - irt_pred_col[i])
         prec_mz_col[i] = prec_mz_arr[pid]
-        pair_id_col[i] = extract_pair_idx(prec_pair_idxs, pid)
         entrap_col[i] = entrap_group_ids[pid]
     end
     return nothing
@@ -719,7 +728,6 @@ function summarize_results!(
     n_files = length(ms_data)
     main_search_psms_dir = joinpath(getDataOutDir(search_context), "temp_data", "main_search_psms")
     precursors = getPrecursors(getSpecLib(search_context))
-    lib_irt = getIrt(precursors)
 
     # Ion-mobility calibration QC (packet data only): the selected files' pages as one PDF.
     finish_calibration_report!(search_context, :ion_mobility,
@@ -745,9 +753,7 @@ function summarize_results!(
     _b_t2 = Base.gc_bytes()
 
     # Library lookups (shared across files)
-    prec_irt = lib_irt
     prec_mz_arr = getMz(precursors)
-    prec_pair_idxs = getPairIdx(precursors)
     entrap_group_ids = getEntrapmentGroupId(precursors)
 
     n_processed_files = 0
@@ -790,22 +796,15 @@ function summarize_results!(
 
             # Add Phase 2 library-lookup columns (deferred from process_search_results!)
             N = nrow(tbl)
-            irt_diff_col = Vector{Float32}(undef, N)
             prec_mz_col = Vector{Float32}(undef, N)
-            pair_id_col = Vector{UInt32}(undef, N)
             entrap_col = Vector{UInt8}(undef, N)
             _compute_phase2_columns!(
-                tbl[!, :precursor_idx], tbl[!, :irt_obs], tbl[!, :irt_pred],
-                prec_irt, prec_mz_arr, prec_pair_idxs, entrap_group_ids,
-                irt_diff_col, prec_mz_col, pair_id_col, entrap_col
+                tbl[!, :precursor_idx], prec_mz_arr, entrap_group_ids, prec_mz_col, entrap_col
             )
-            tbl[!, :irt_diff] = irt_diff_col
             tbl[!, :prec_mz] = prec_mz_col
-            tbl[!, :pair_id] = pair_id_col
             tbl[!, :entrapment_group_id] = entrap_col
 
             sort!(tbl, :rt)
-            initialize_prob_group_features!(tbl)
             dropVectorColumns!(tbl)
 
             # Overwrite the same fold file in place. writeArrow handles the

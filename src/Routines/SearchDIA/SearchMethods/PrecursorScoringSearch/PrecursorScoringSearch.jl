@@ -161,14 +161,11 @@ Deliberately RETAINED despite having no downstream reader, because they are plau
 reads the output: best_rt, irt_fwhm, rt_fwhm, smoothness.
 
 Four more were added after inspecting the actual output values:
-- `q_value` is initialised to zeros by `initialize_prob_group_features!` and never populated on this
-  table -- it read 0 in all 235,194 rows while `qval` carried the real values. Worse than a duplicate:
-  a reader would take q_value == 0 to mean every PSM is perfect.
-- `decoy` is exactly `!target` (0 mismatches in 235,194 rows).
-- `lgbm_prob` is bit-identical to `lgbm_score` (0 differing rows, same min/max). It stays in the
-  pipeline -- MainSearch reads it for prescore aggregation and recalibrate_rt -- but not in the output.
-- `trace_prob_prepass` is bit-identical to `trace_prob`. MBR consumes it, so it must survive to this
-  point; dropping here is after its last use.
+- `q_value` was a zero placeholder while `qval` carried the real values; it is no longer written.
+- `decoy` is exactly `!target`; MainSearch no longer writes it (MAINSEARCH_UNWRITTEN_COLUMNS).
+- `lgbm_prob` is a copy of `lgbm_score`; MainSearch uses it in memory but no longer writes it.
+- `trace_prob` was the same vector as `trace_prob_prepass` and is no longer written; MBR and the
+  precursor aggregation read `trace_prob_prepass`, so it survives to this point.
 """
 const PRECSCORE_DROPPABLE_COLUMNS = Symbol[
     :q_value, :decoy, :lgbm_prob, :trace_prob_prepass,

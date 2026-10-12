@@ -557,6 +557,12 @@ function process_search_results!(
         clear_staged_selection!(output_path; remove_source = DELETE_TEMP)
         return nothing
     end
+    # Without MBR this is the table's last rewrite before the output, so drop and narrow here what the
+    # MBR path drops and narrows in its final rewrite (summarize_results!).
+    let drop = Symbol[c for c in PRECSCORE_DROPPABLE_COLUMNS if hasproperty(passing_psms, c)]
+        isempty(drop) || select!(passing_psms, Not(drop))
+    end
+    narrow_output_columns!(passing_psms)
     # Process final PSMs
     process_final_psms!(
         passing_psms,

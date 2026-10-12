@@ -142,9 +142,9 @@ function aggregate_prescore_globally!(search_context::SearchContext;
         t_loop += with_arrow_table(score_path) do scores
             t_reads += time() - t_r
             @elapsed _aggregate_file_scores!(
-                scores[:precursor_idx], scores[:lgbm_prob],
+                scores[:precursor_idx], scores[:lgbm_score],
                 scores[:n_above_hm], scores[:weight],
-                scores[:rt_fwhm], scores[:best_rt],
+                scores[:rt_fwhm], scores[:rt],
                 prec_probs_by_run, prec_best_prob,
                 prec_best_n_above_hm, prec_best_weight,
                 prec_best_rt_fwhm, prec_best_rt

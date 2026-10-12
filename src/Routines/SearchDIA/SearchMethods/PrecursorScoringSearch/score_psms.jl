@@ -99,13 +99,11 @@ function _merge_scored_folds!(open_table, fold_paths::Vector{String}, merged_pat
             error("Pass-1 row-count mismatch at $path")
         (main.precursor_idx == pass1.precursor_idx && main.scan_idx == pass1.scan_idx) ||
             error("Pass-1 sidecar misaligned at $path")
-        main[!, :decoy]              = main[!, :target] .== false
         main[!, :trace_prob_prepass] = collect(Float32.(pass1.trace_prob_prepass))
         if hasproperty(pass1, :trace_prob_infold)
             main[!, :trace_prob_infold] =
                 collect(Float32.(pass1.trace_prob_infold))
         end
-        main[!, :trace_prob]         = main[!, :trace_prob_prepass]
         main[!, :mbr_recovered]      = falses(n)
         attach_seconds += time() - attach_started
         for sidecar in ref.sidecars

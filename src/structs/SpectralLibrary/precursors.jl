@@ -296,28 +296,3 @@ getSulfurCount(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = l
 getIsotopicMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]
 getBasePepId(lp::LibraryPrecursors)::Arrow.Primitive{UInt32, Vector{UInt32}} = lp.data[:base_pep_id]
 
-# ============================================================================
-# Pair index helpers (target/decoy pairing)
-# ============================================================================
-
-getPairIdx(lp::LibraryPrecursors) = lp.data[:pair_id]
-
-function extract_pair_idx(pair_idx_column::Arrow.Primitive{Union{Missing, UInt32}, Array{UInt32,1}}, idx)
-    value = pair_idx_column[idx]
-    return ismissing(value) ? zero(UInt32) : convert(UInt32, value)
-end
-
-function extract_pair_idx(pair_idx_column::Arrow.Primitive{UInt32, Vector{UInt32}}, idx)
-    return pair_idx_column[idx]
-end
-
-function extract_pair_idx(pair_idx_column, idx)
-    value = pair_idx_column[idx]
-    if isa(value, UInt32)
-        return value
-    elseif ismissing(value)
-        return zero(UInt32)
-    else
-        return convert(UInt32, value)
-    end
-end

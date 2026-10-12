@@ -36,7 +36,7 @@ function _aggregate_trace_to_precursor_probs!(df::DataFrame)
         clamp(trace_prob, eps(Float32), 1.0f0 - eps(Float32))
     end
     transform!(groupby(df, [:precursor_idx, :ms_file_idx]),
-               :trace_prob => prob_agg => :prec_prob)
+               :trace_prob_prepass => prob_agg => :prec_prob)
     return df
 end
 
