@@ -77,7 +77,17 @@ Load an Arrow mass spec file and return the appropriate concrete type.
 Auto-detects Basic vs Batch based on the msOrder column layout.
 """
 function BasicMassSpecData(file_path::String)
-    table = Arrow.Table(file_path)
+    # EXPERIMENT (branch experiment/spectra-in-memory): PIONEER_SPECTRA_INMEMORY=1 reads the whole file into RAM
+    # in one sequential pass instead of memory-mapping it, so later out-of-order scan reads (fragment-index search,
+    # BitVec sampling) come from memory rather than disk seeks. Arrow's views sit on the same bytes either way.
+    table = if get(ENV, "PIONEER_SPECTRA_INMEMORY", "") == "1"
+        t0 = time(); bytes = read(file_path); dt = time() - t0
+        gib = length(bytes) / 2^30
+        @user_info "In-memory read of $(basename(file_path)): $(round(gib, digits = 2)) GiB in $(round(dt, digits = 1)) s ($(round(gib * 1024 / max(dt, 1e-3), digits = 0)) MiB/s)"
+        Arrow.Table(bytes)
+    else
+        Arrow.Table(file_path)
+    end
     n = length(table[:mz_array])
 
     if n == 0
