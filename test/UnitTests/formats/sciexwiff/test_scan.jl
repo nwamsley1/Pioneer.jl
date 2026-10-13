@@ -122,17 +122,21 @@ end
 end
 
 @testset "blocks without metadata (TripleTOF)" begin
-    steps = [1, 2, 3, 10, 200]; ints = [5, 123, 9_000, 7, 300]
+    steps = [1, 2, 3, 10, 200]; ints = [5, 123, 7, 300, 9_000]
     file, ms, ff, sz = synthetic_block(steps, ints)
     sb = ScanBuffer(); sb.cal_a, sb.cal_b = 7.0e-4, 0.5          # calibration set by the caller (TOFCalibrationData)
     S.decode_block!(sb, file, ff, ff, sz, 4)                     # meta_start == ff: no metadata
     @test sb.bin[1:sb.n] == UInt32.(1_000_000 .+ 4 .* steps)
     @test sb.cal_a == 7.0e-4 && sb.cal_b == 0.5
 
-    # the bin step is the one whose most intense decoded peak sits on the Idx base-peak bin
-    bp = Float64(1_000_000 + 4 * steps[argmax(ints)])
-    ix = S.ScanIndex([ff], Int32[sz], [ff], [0.0], [0.0], [9_000.0], [bp])
+    # the bin step is the one whose most intense decoded peak sits on the Idx base-peak bin (step 8 puts it 864
+    # bins away), in at least 5 records
+    bp = Float64(1_000_000 + 4 * sum(steps[1:argmax(ints)]))
+    rep(n, v) = fill(v, n)
+    ix = S.ScanIndex(rep(6, ff), rep(6, Int32(sz)), rep(6, ff), zeros(6), zeros(6), rep(6, 9_000.0), rep(6, bp))
     @test S.detect_bin_step(file, ix) == 4
+    ix1 = S.ScanIndex([ff], Int32[sz], [ff], [0.0], [0.0], [9_000.0], [bp])
+    @test_throws S.ScanFormatError S.detect_bin_step(file, ix1)          # one record is too little evidence
     # blocks with metadata (ZenoTOF) always use 8
     ix8 = S.ScanIndex([ff], Int32[sz], [ms], [0.0], [0.0], [9_000.0], [bp])
     @test S.detect_bin_step(file, ix8) == 8

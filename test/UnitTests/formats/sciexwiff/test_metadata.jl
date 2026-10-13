@@ -41,6 +41,7 @@ if !isempty(DATA_DIR)
             m = S.acquisition_metadata(run)
             @test m["acquisition_type"] == "swath"
             @test !haskey(m, "q1_bin_step_mz")
+            @test startswith(run.instrument_model, "ZenoTOF")                 # the manifest's runs are all ZenoTOF
             # declaring ZT is refused when the window table cannot be ZT
             S.zt_candidate_windows(run.windows) ||
                 @test_throws ArgumentError S.acquisition_metadata(run; zt_scan = true)

@@ -13,7 +13,12 @@ struct WiffRun
     scan::Vector{UInt8}          # memory-mapped `.wiff.scan`
     calibration::Vector{NTuple{2,Float64}}   # per-record (a, b) from TOFCalibrationData; used when a block has none
     bin_step::Int                            # bins per delta unit (8 ZenoTOF; 4 TripleTOF, detected)
+    instrument_model::String                 # from the run log ("TripleTOF 5600"/"TripleTOF 6600"), or ""
 end
+
+# TripleTOF 5600/5600+ TOFCalibrationData reads every m/z low by a constant factor 0.99068 (y1 K/R ions on three
+# instruments: PXD028735, PXD001587, PXD010912); m/z ∝ a², so scale a by 1/sqrt(0.99068). The 6600 needs none.
+const TTOF5600_A_SCALE = 1 / sqrt(0.99068)
 
 """
     find_scan_file(wiff_path) -> path
@@ -49,6 +54,14 @@ function WiffRun(wiff::AbstractString; sample::Integer = 1, scan_path::AbstractS
     full, partial = divrem(length(index), length(windows) + 1)
     full > 0 || throw(ArgumentError("$(length(index)) Idx records is less than one $(length(windows) + 1)-experiment cycle"))
     calibration = read_tof_calibration(cf, sample)
+    model = read_instrument_model(cf, sample)
+    if !isempty(calibration)
+        is5600 = model == "TripleTOF 5600"
+        # 5600 tables keep b near 0, 6600 tables near -14: a cross-check on the logged model
+        is5600 == (_median(last.(calibration)) > -5) || @warn "$(basename(wiff)): run log names \"$model\" but its " *
+            "TOFCalibrationData b values look like the other TripleTOF generation; check the m/z calibration"
+        is5600 && (calibration = [(a * TTOF5600_A_SCALE, b) for (a, b) in calibration])
+    end
     if partial > 0
         @warn "$(basename(wiff)): dropping $partial records of an incomplete final cycle ($(length(windows) + 1) experiments per cycle)"
         keep = 1:(full * (length(windows) + 1))
@@ -59,7 +72,7 @@ function WiffRun(wiff::AbstractString; sample::Integer = 1, scan_path::AbstractS
     ranges = read_scan_ranges(cf, length(windows) + 1)
     scan = Mmap.mmap(scan_path)
     step = detect_bin_step(scan, index)
-    WiffRun(String(wiff), String(scan_path), sample, index, windows, ranges, read_method_name(cf), scan, calibration, step)
+    WiffRun(String(wiff), String(scan_path), sample, index, windows, ranges, read_method_name(cf), scan, calibration, step, model)
 end
 
 Base.length(run::WiffRun) = length(run.index)
@@ -95,7 +108,8 @@ end
     detect_bin_step(scan, index) -> Int
 
 Bins per delta unit. ZenoTOF blocks carry metadata and use 8. Blocks without metadata (TripleTOF) are checked against the
-Idx: the step is the one (4 or 8) whose most intense decoded peak lands within 64 bins of the record's base-peak bin.
+Idx: the step is the one (4 or 8) whose most intense decoded peak lands within 64 bins of the record's base-peak bin
+in clearly more of 50 sampled records.
 """
 function detect_bin_step(scan::AbstractVector{UInt8}, index::ScanIndex)
     recs = filter(r -> index.block_size[r] > 0, 1:min(length(index), 2000))
@@ -108,7 +122,9 @@ function detect_bin_step(scan::AbstractVector{UInt8}, index::ScanIndex)
         buf.n > 0 && abs(Float64(buf.bin[argmax(view(buf.intensity, 1:buf.n))]) - index.base_peak_bin[r]) <= 64 && (hits[step] += 1)
     end
     best = hits[4] >= hits[8] ? 4 : 8
-    hits[best] >= 0.8 * length(sample) ||
+    # the Idx base peak is the vendor's centroided value, so the raw maximum often misses it (16/50 on a 5600+);
+    # the wrong step essentially never matches, so require a clear winner rather than a majority
+    hits[best] >= max(5, 4 * hits[12 - best]) ||
         throw(ScanFormatError("cannot determine the bin step: base-peak matches $(hits) of $(length(sample)) records"))
     best
 end
