@@ -28,7 +28,7 @@
 # :precursor_idx not found` rather than seeing zero PSMs. Every such reader
 # already handles zero rows; none of them could handle zero columns.
 _empty_scored_psms(search_data, params) =
-    DataFrame(@view(get_scored_psms(first(search_data), params)[1:0]))
+    scored_psm_table([get_scored_psms(first(search_data), params)], [0], 0, nothing)
 
 """
     library_search(spectra, search_context, params, ms_file_idx) -> DataFrame
@@ -265,8 +265,8 @@ function library_search(
                                " GB; rows scored: ", sum(counts; init = 0))
         end
         _diag_live("deconv: scored, before gather")
-        result = gather_scored_psms([get_scored_psms(search_data[first(t)], params) for t in tt],
-                                    Vector{Int}(counts))
+        result = scored_psm_table([get_scored_psms(search_data[first(t)], params) for t in tt],
+                                  Vector{Int}(counts), ms_file_idx, spectra)
         _diag_live("deconv: after gather")
         if nce_tag !== nothing && !isempty(result)
             result[!, :nce] .= nce_tag

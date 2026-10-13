@@ -67,25 +67,17 @@ avoid `0·log(0) = NaN`. Always finite for any `λ ≥ 0`, `observed ≥ 0`.
 end
 
 
+"""
+    MainSearchScoredPSM{H,L}
+
+One scored MainSearch row in a thread's buffer. Fields are laid out widest first (H, UInt32, L,
+UInt8) so the row has no alignment padding (136 bytes for {Float32, Float16}). `ms_file_idx` and
+`cycle_idx` are not stored per row: the file is the same for every row of a search, and the cycle is
+a function of `scan_idx`; `main_scored_psm_table` adds both columns when it builds the table, which
+has the columns of `MAIN_SCORED_PSM_COLUMNS` in that order.
+"""
 struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
-    #Ion Count Statistics
-    longest_y::UInt8
-    y_count::UInt8
-    total_ions::UInt8       # M0 (monoisotopic) fragment count
-
-    #Basic Metrics
-    poisson::L
-    log2_intensity_explained::L
-    error::L
-
-    #Spectral Similarity
-    gof::L
-    max_matched_residual::L
-    max_unmatched_residual::L
-    fitted_manhattan_distance::L
     weight::H
-
-    fitted_hellinger::L
 
     # Per-rank fitted and shadow intensities from the deconvolved design
     # matrix. These are temporary helper columns for selected-PSM cross-run
@@ -122,16 +114,50 @@ struct MainSearchScoredPSM{H,L<:AbstractFloat} <: ScoredPSM{H,L}
     # ranks 1-3. Zero if no top-3 matches in this scan.
     top3_ms2_mass_error_mean::H
 
+    #Non-scores/Labels
+    precursor_idx::UInt32
+    scan_idx::UInt32
+
+    #Basic Metrics
+    poisson::L
+    log2_intensity_explained::L
+    error::L
+
+    #Spectral Similarity
+    gof::L
+    max_matched_residual::L
+    max_unmatched_residual::L
+    fitted_manhattan_distance::L
+    fitted_hellinger::L
+
     # E6 M0 (Batch E, 2026-05-12): log(b_int + 1) − log(y_int + 1). Real
     # peptides have characteristic b/y intensity ratios; chimeric hits don't.
     log_by_ratio_m0::L
 
-    #Non-scores/Labels
-    precursor_idx::UInt32
-    ms_file_idx::UInt32
-    cycle_idx::UInt32
-    scan_idx::UInt32
+    #Ion Count Statistics
+    longest_y::UInt8
+    y_count::UInt8
+    total_ions::UInt8       # M0 (monoisotopic) fragment count
 end
+
+"""
+Columns of a MainSearch scored-PSM table, in order: the `MainSearchScoredPSM` fields plus
+`ms_file_idx` and `cycle_idx` (UInt32), in the order the table has always had.
+"""
+const MAIN_SCORED_PSM_COLUMNS = (
+    :longest_y, :y_count, :total_ions,
+    :poisson, :log2_intensity_explained, :error,
+    :gof, :max_matched_residual, :max_unmatched_residual, :fitted_manhattan_distance, :weight,
+    :fitted_hellinger,
+    :fitted_frag1_int, :fitted_frag2_int, :fitted_frag3_int, :fitted_frag4_int,
+    :fitted_frag5_int, :fitted_frag6_int, :fitted_frag7_int, :fitted_frag8_int,
+    :shadow_frag1_int, :shadow_frag2_int, :shadow_frag3_int, :shadow_frag4_int,
+    :shadow_frag5_int, :shadow_frag6_int, :shadow_frag7_int, :shadow_frag8_int,
+    :frag1_int, :frag2_int, :frag3_int, :frag4_int, :frag5_int, :frag6_int, :frag7_int, :frag8_int,
+    :top3_ms2_mass_error_mean,
+    :log_by_ratio_m0,
+    :precursor_idx, :ms_file_idx, :cycle_idx, :scan_idx,
+)
 function growScoredPSMs!(scored_psms::Vector{MainSearchScoredPSM{H,L}}, block_size::Int64) where {L,H<:AbstractFloat}
     # Grow in place (geometric buffer growth) without allocating a throwaway
     # `Vector(undef, block_size)` temp each call. New elements are undef, same
@@ -178,21 +204,8 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
         total_ions = Int64(unscored_PSMs[i].y_count + unscored_PSMs[i].b_count)
         total_ions_iso = Int64(unscored_PSMs[i].isotope_count)
 
-        scored_psms[start_idx + i - skipped] = MainSearchScoredPSM(
-            unscored_PSMs[i].longest_y,
-            unscored_PSMs[i].y_count,
-            UInt8(min(total_ions, 255)),
-            Float16(getPoisson(expected_matches, total_ions + total_ions_iso)),
-            Float16(log2(max(unscored_PSMs[i].b_int + unscored_PSMs[i].y_int, Float32(1e-20))/max(spectrum_intensity, Float32(1e-20)))),
-            Float16(log2(max(unscored_PSMs[i].error, Float32(1e-20)))),
-
-            L(spectral_scores[scores_idx].gof),
-            L(spectral_scores[scores_idx].max_matched_residual),
-            L(spectral_scores[scores_idx].max_unmatched_residual),
-            L(spectral_scores[scores_idx].fitted_manhattan_distance),
+        scored_psms[start_idx + i - skipped] = MainSearchScoredPSM{H, L}(
             weight[scores_idx],
-
-            L(spectral_scores[scores_idx].fitted_hellinger),
 
             H(spectral_scores[scores_idx].fitted_frag1_int),
             H(spectral_scores[scores_idx].fitted_frag2_int),
@@ -224,13 +237,25 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
                 unscored_PSMs[i].top3_abs_ppm_err_sum / unscored_PSMs[i].top3_ppm_err_count :
                 zero(H)),
 
+            UInt32(unscored_PSMs[i].precursor_idx),
+            UInt32(scan_idx),
+
+            Float16(getPoisson(expected_matches, total_ions + total_ions_iso)),
+            Float16(log2(max(unscored_PSMs[i].b_int + unscored_PSMs[i].y_int, Float32(1e-20))/max(spectrum_intensity, Float32(1e-20)))),
+            Float16(log2(max(unscored_PSMs[i].error, Float32(1e-20)))),
+
+            L(spectral_scores[scores_idx].gof),
+            L(spectral_scores[scores_idx].max_matched_residual),
+            L(spectral_scores[scores_idx].max_unmatched_residual),
+            L(spectral_scores[scores_idx].fitted_manhattan_distance),
+            L(spectral_scores[scores_idx].fitted_hellinger),
+
             L(log(Float32(unscored_PSMs[i].b_int) + 1f0) -
               log(Float32(unscored_PSMs[i].y_int) + 1f0)),
 
-            UInt32(unscored_PSMs[i].precursor_idx),
-            UInt32(ms_file_idx),
-            UInt32(cycle_idx),
-            UInt32(scan_idx)
+            unscored_PSMs[i].longest_y,
+            unscored_PSMs[i].y_count,
+            UInt8(min(total_ions, 255)),
         )
         last_val += 1
     end

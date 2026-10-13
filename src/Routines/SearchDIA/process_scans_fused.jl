@@ -186,3 +186,29 @@ function gather_scored_psms(bufs::Vector{<:AbstractVector{T}}, counts::Vector{In
     foreach(wait, tasks)
     return DataFrame(collect(AbstractVector, cols), collect(fieldnames(T)); copycols = false)
 end
+
+"""
+    scored_psm_table(bufs, counts, ms_file_idx, spectra) -> DataFrame
+
+The scored-PSM table of one search: `gather_scored_psms` of the per-thread buffers. A MainSearch
+table also gets the columns its rows do not store, `ms_file_idx` (the file) and `cycle_idx` (the
+cycle of each row's scan), and has the columns of `MAIN_SCORED_PSM_COLUMNS` in that order.
+"""
+scored_psm_table(bufs::Vector{<:AbstractVector}, counts::Vector{Int}, ms_file_idx, spectra) =
+    gather_scored_psms(bufs, counts)
+function scored_psm_table(bufs::Vector{<:AbstractVector{<:MainSearchScoredPSM}}, counts::Vector{Int},
+                          ms_file_idx, spectra)
+    df = gather_scored_psms(bufs, counts)
+    n = nrow(df)
+    df[!, :ms_file_idx] = fill(UInt32(ms_file_idx), n)
+    scans = df[!, :scan_idx]::Vector{UInt32}
+    cyc = Vector{UInt32}(undef, n)
+    if n > 0
+        cycles = getCycleIdxs(spectra)
+        Threads.@threads for i in 1:n
+            @inbounds cyc[i] = UInt32(cycles[scans[i]])
+        end
+    end
+    df[!, :cycle_idx] = cyc
+    return select!(df, collect(MAIN_SCORED_PSM_COLUMNS))
+end

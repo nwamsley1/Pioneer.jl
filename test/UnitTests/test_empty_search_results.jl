@@ -22,25 +22,26 @@ end
 
 @testset "empty search results carry the full schema" begin
     # Both stores `get_scored_psms` can dispatch to.
-    for T in (
-        Pioneer.MainSearchScoredPSM{Float32, Float16},
-        Pioneer.TuningScoredPSM{Float32, Float16},
+    # MainSearch tables also carry ms_file_idx and cycle_idx, which their rows do not store.
+    for (T, cols) in (
+        (Pioneer.MainSearchScoredPSM{Float32, Float16}, Pioneer.MAIN_SCORED_PSM_COLUMNS),
+        (Pioneer.TuningScoredPSM{Float32, Float16}, fieldnames(Pioneer.TuningScoredPSM{Float32, Float16})),
     )
         store = T[]
-        empty_frame = DataFrame(@view(store[1:0]))
+        empty_frame = Pioneer.scored_psm_table([store], [0], 0, nothing)
 
         @test nrow(empty_frame) == 0
         # Not a bare DataFrame(): the columns are what the crash was about.
         @test ncol(empty_frame) > 0
         # Every field of the row type, so the schema cannot drift from the
         # non-empty path the way a hand-written column list would.
-        @test Set(Symbol.(names(empty_frame))) == Set(fieldnames(T))
+        @test Tuple(Symbol.(names(empty_frame))) == Tuple(cols)
     end
 
     # The four columns `_add_psm_features!` reads off the frame before doing
     # anything else. If any of these ever leaves MainSearchScoredPSM, the
     # feature pass needs revisiting, not just this test.
-    main_frame = DataFrame(@view((Pioneer.MainSearchScoredPSM{Float32, Float16}[])[1:0]))
+    main_frame = Pioneer.scored_psm_table([Pioneer.MainSearchScoredPSM{Float32, Float16}[]], [0], 0, nothing)
     for col in (:precursor_idx, :scan_idx, :error, :total_ions)
         @test hasproperty(main_frame, col)
     end
