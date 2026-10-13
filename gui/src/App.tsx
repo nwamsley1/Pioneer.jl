@@ -2304,10 +2304,8 @@ export default function App() {
             tone="warning"
             title="Data is on a slow drive"
             body={
-              `${slowStorage.some((s) => s.path !== search.library) ? 'The MS data' : 'The spectral library'} ` +
-              `${slowStorage.length > 1 ? 'are' : 'is'} on a mechanical or optical drive. Pioneer reads MS data ` +
-              'files out of order during a search, which on this kind of drive can make it many times slower ' +
-              'than on an SSD. For best performance, copy the files to an SSD.'
+              `${slowStorage.some((s) => s.path !== search.library) ? 'The MS data are' : 'The spectral library is'} ` +
+              'on a mechanical or optical drive. This may result in substantially longer search times.'
             }
             detail={slowStorage
               .map((s) => `${s.path}  (${s.kind === 'optical' ? 'optical drive' : 'mechanical hard drive'})`)

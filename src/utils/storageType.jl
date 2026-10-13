@@ -267,13 +267,12 @@ Warn (never fail) when the MS data files or the spectral library are on a mechan
 function warn_slow_storage(ms_paths::AbstractVector{<:AbstractString}, library_dir::AbstractString)
     try
         for (path, kind) in slow_storage_paths(ms_paths)
-            @user_warn "MS data ($(dirname(path))) is on $(storage_kind_label(kind)). Pioneer reads MS data " *
-                       "files out of order during the search, which on this kind of drive can make it many " *
-                       "times slower than on an SSD. For best performance, copy the files to an SSD."
+            @user_warn "The MS data ($(dirname(path))) are on $(storage_kind_label(kind)). " *
+                       "This may result in substantially longer search times."
         end
         for (path, kind) in slow_storage_paths([library_dir])
-            @user_warn "The spectral library ($path) is on $(storage_kind_label(kind)); loading it may be slow. " *
-                       "For best performance, keep it on an SSD."
+            @user_warn "The spectral library ($path) is on $(storage_kind_label(kind)). " *
+                       "This may result in substantially longer search times."
         end
     catch
     end
