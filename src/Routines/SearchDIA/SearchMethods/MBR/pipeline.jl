@@ -72,40 +72,31 @@ function write_staged_selection(staged_path::String, source_ref::PSMFileReferenc
 end
 
 """
-    load_staged_psms(path[, cols]; exclude = ()) -> DataFrame
+    load_staged_psms(path[, cols]) -> DataFrame
 
 The PSM table at `path`, or, while `path` is a staged MBR selection (before integration writes
-it), the selected rows of its source table and sidecars. `cols` limits the columns read and
-`exclude` skips columns; only the columns read are copied into memory.
+it), the selected rows of its source table and sidecars. `cols` limits the columns read.
 """
-function load_staged_psms(path::String, cols::Union{Nothing, Vector{Symbol}} = nothing; exclude = ())
+function load_staged_psms(path::String, cols::Union{Nothing, Vector{Symbol}} = nothing)
     selection_path = path * MBR_SELECTION_SUFFIX
     # Read and unmap: these files are replaced or deleted later in the run.
-    if !isfile(selection_path)
-        isempty(exclude) && return load_arrow_dataframe(path; cols)
-        read_cols = with_arrow_table(path) do tbl
-            Symbol[c for c in Tables.columnnames(tbl) if (cols === nothing || c in cols) && !(c in exclude)]
-        end
-        return load_arrow_dataframe(path; cols = read_cols)
-    end
+    isfile(selection_path) || return load_arrow_dataframe(path; cols)
     source_path, sidecar_list, rows = with_arrow_table(selection_path) do selection
         metadata = Arrow.getmetadata(selection)
         (String(metadata["source"]), String(metadata["sidecars"]), Int.(selection.source_row))
     end
     source = PSMFileReference(source_path;
         sidecar_paths = isempty(sidecar_list) ? String[] : split(sidecar_list, '\n'))
-    return _selected_rows(source, rows, cols, exclude)
+    return _selected_rows(source, rows, cols)
 end
 
 # The selected rows of the source table and its sidecars, gathered column by column from the
 # memory-mapped Arrow files: never the whole table (staging keeps 12-31% of rows). Columns follow
-# `load_with_sidecars` order (main table, then each sidecar's), restricted to `cols` when given and
-# without the `exclude` columns.
+# `load_with_sidecars` order (main table, then each sidecar's), restricted to `cols` when given.
 # Each file is unmapped once its rows are copied: these files are replaced or deleted later.
-function _selected_rows(source::PSMFileReference, rows::Vector{Int}, cols::Union{Nothing, Vector{Symbol}},
-                        exclude = ())
+function _selected_rows(source::PSMFileReference, rows::Vector{Int}, cols::Union{Nothing, Vector{Symbol}})
     df = DataFrame()
-    wanted(c) = (cols === nothing || c in cols) && !(c in exclude)
+    wanted(c) = cols === nothing || c in cols
     with_arrow_table(file_path(source)) do main
         for c in Tables.columnnames(main)
             wanted(c) && (df[!, c] = _selected_owned(main, c, rows, file_path(source)))
