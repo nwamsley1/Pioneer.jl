@@ -339,6 +339,8 @@ export default function App() {
     queued: boolean
   } | null>(null)
   const [overwriteOpen, setOverwriteOpen] = useState(false)
+  /** MS data or library paths on a mechanical/optical drive, shown before a search starts. */
+  const [slowStorage, setSlowStorage] = useState<backend.StorageInfo[] | null>(null)
 
   const [pathInfos, setPathInfos] = useState<Record<string, PathInfo>>({})
   /** What the selected .poin records about itself, or null when there is none. */
@@ -1750,7 +1752,7 @@ export default function App() {
     setRunError(failure)
   }
 
-  const run = (skipOverwriteCheck = false) => {
+  const run = (skipOverwriteCheck = false, skipStorageCheck = false) => {
     if (pioneerError) {
       setRunError(pioneerError)
       return
@@ -1783,6 +1785,18 @@ export default function App() {
     }
     if (!skipOverwriteCheck && overwriteNote.level === 'warn') {
       setOverwriteOpen(true)
+      return
+    }
+    // A search reads its MS data out of order, which a mechanical or optical drive
+    // turns into a seek per read: ask before starting one there. Anything the check
+    // cannot classify is let through.
+    if (isSearch && !skipStorageCheck) {
+      const msPaths = search.msDataMode === 'files' ? search.msDataFiles : [search.msData]
+      void backend.storageKinds([...msPaths, search.library].filter((p) => p.trim())).then((infos) => {
+        const slow = infos.filter((i) => i.kind === 'hdd' || i.kind === 'optical')
+        if (slow.length > 0) setSlowStorage(slow)
+        else run(true, true)
+      })
       return
     }
     // Point SearchDIA at what this run is about to produce. Done here rather
@@ -1876,7 +1890,7 @@ export default function App() {
 
   // ---- keyboard ----------------------------------------------------------
 
-  const anyModalOpen = jsonOpen || loadOpen || overwriteOpen || uninstallOpen || !!jobConfirm
+  const anyModalOpen = jsonOpen || loadOpen || overwriteOpen || uninstallOpen || !!jobConfirm || !!slowStorage
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -2281,6 +2295,29 @@ export default function App() {
             onConfirm={() => {
               setOverwriteOpen(false)
               run(true)
+            }}
+          />
+        )}
+
+        {slowStorage && (
+          <ConfirmDialog
+            tone="warning"
+            title="Data is on a slow drive"
+            body={
+              `${slowStorage.some((s) => s.path !== search.library) ? 'The MS data' : 'The spectral library'} ` +
+              `${slowStorage.length > 1 ? 'are' : 'is'} on a mechanical or optical drive. Pioneer reads MS data ` +
+              'files out of order during a search, which on this kind of drive can make it many times slower ' +
+              'than on an SSD. For best performance, copy the files to an SSD.'
+            }
+            detail={slowStorage
+              .map((s) => `${s.path}  (${s.kind === 'optical' ? 'optical drive' : 'mechanical hard drive'})`)
+              .join('\n')}
+            dismissLabel="Cancel"
+            confirmLabel="Run anyway"
+            onDismiss={() => setSlowStorage(null)}
+            onConfirm={() => {
+              setSlowStorage(null)
+              run(true, true)
             }}
           />
         )}

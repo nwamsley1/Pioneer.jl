@@ -217,7 +217,8 @@ function importScripts()
             "runSimilarity.jl",
             "profile.jl",
             "pdfUtils.jl",
-            "calibrationQC.jl"
+            "calibrationQC.jl",
+            "storageType.jl"
         ]
     )
 
