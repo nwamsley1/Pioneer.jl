@@ -29,7 +29,9 @@ sight (`ensure_zt_geometry!`) and sets the deconvolution convergence tolerance f
 function zt_prepare_file!(search_context::SearchContext, params::PioneerParameters,
                           ms_file_idx::Int64, spectra::MassSpecData)
     ensure_zt_geometry!(search_context, ms_file_idx, spectra)
-    if getZTGeometry(search_context, ms_file_idx) !== nothing && !haskey(search_context.zt_file_state, ms_file_idx)
+    # Every file gets the PSM memory budget and partition slot: MainSearch keeps the PSMs of any
+    # large file on disk (chunked_main_deconvolution), not only of scanning-quad ones.
+    if !haskey(search_context.zt_file_state, ms_file_idx)
         search_context.zt_file_state[ms_file_idx] =
             ZTFileState(Float64(params.optimization.machine_learning.max_psm_memory_mb), nothing)
     end

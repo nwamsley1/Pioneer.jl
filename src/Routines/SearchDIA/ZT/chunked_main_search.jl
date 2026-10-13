@@ -184,6 +184,112 @@ function zt_chunked_deconvolution(g::ZTGeometry, params, deconv, spectra::MassSp
 end
 
 """
+Candidates per main-search chunk on a file that is not scanning-quad. A file with more candidates
+than this is deconvolved one chunk of scans at a time and its PSMs go to disk (see
+`chunked_main_deconvolution`), so the per-thread scored-PSM buffers and the gathered table hold one
+chunk, not the file. Same budget as `ZT_CHUNK_CANDIDATES`.
+"""
+const MAIN_CHUNK_CANDIDATES = 30_000_000
+
+"""
+    main_thread_chunks(thread_tasks, scan_to_prec_idx, n_chunks) -> Vector{Vector{Tuple{Int, Vector{Int}}}}
+
+Split a MainSearch file's deconvolution tasks into `n_chunks` rounds. Each task (thread `t` and its
+scans, as `partition_scans` dealt them) is cut into `n_chunks` consecutive segments holding about
+equal numbers of candidates; round `c` is segment `c` of every task.
+
+Every thread therefore deconvolves exactly the scans it would in one pass, in the same order. That
+matters: a thread warm-starts each fit from the weights its previous scans found for the same
+precursors (`initialize_weights!` / `update_precursor_weights!`), so a scan's result depends on the
+scans its thread fitted before it.
+"""
+function main_thread_chunks(thread_tasks::AbstractVector,
+                            scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}}, n_chunks::Int)
+    rounds = [Tuple{Int, Vector{Int}}[] for _ in 1:n_chunks]
+    for (t, scans) in thread_tasks
+        cand = [(r = scan_to_prec_idx[si]; ismissing(r) ? 0 : length(r)) for si in scans]
+        total = sum(cand; init = 0)
+        c = 1; acc = 0; start = 1
+        for (i, n) in enumerate(cand)
+            acc += n
+            # close segment c once it holds its share of this task's candidates
+            if c < n_chunks && acc >= c * total / n_chunks
+                push!(rounds[c], (t, scans[start:i])); start = i + 1; c += 1
+            end
+        end
+        push!(rounds[c], (t, scans[start:end]))
+    end
+    return [filter(tk -> !isempty(last(tk)), r) for r in rounds]
+end
+
+"""
+    chunked_main_deconvolution(params, deconv, spectra, search_context, ms_file_idx,
+                               scan_to_prec_idx, thread_tasks, n_candidates) -> Union{Nothing, DataFrame}
+
+`library_search` hook for MainSearch on files that are not scanning-quad. With more than
+`MAIN_CHUNK_CANDIDATES` candidates, the file is deconvolved in rounds (`main_thread_chunks`); each
+round gets the two per-scan feature passes MainSearch otherwise runs after `library_search` (scan
+competition and the MS1 lookup; both read only a row's own scan), is sorted by
+(precursor_idx, scan_idx) and is written to disk. MainSearch then merges the files into
+precursor-complete parts and scores them as it does a multi-chunk ZT file
+(`zt_mainsearch_best_partitioned!`), so the file's PSM table is never in memory whole. Returns
+`nothing` (search in memory as usual) or a table with no rows (the PSMs are on disk, listed by
+`getZTPsmPartitions`; or there were none).
+
+Each thread scores the same scans in the same order as in one pass, and the merged files hold the
+rows in (precursor_idx, scan_idx) order, the order the in-memory table is sorted into; so the PSM
+rows and their order are the same.
+"""
+function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
+                                    search_context::SearchContext, ms_file_idx::Int64,
+                                    scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
+                                    thread_tasks::AbstractVector, n_candidates::Int)
+    params isa MainSearchParameters || return nothing
+    getZTGeometry(search_context, ms_file_idx) === nothing || return nothing
+    n_candidates > MAIN_CHUNK_CANDIDATES || return nothing
+    chunks = main_thread_chunks(thread_tasks, scan_to_prec_idx, cld(n_candidates, MAIN_CHUNK_CANDIDATES))
+    psm_dir = zt_psm_dir(search_context, ms_file_idx)
+    rm(psm_dir; recursive = true, force = true); mkpath(psm_dir)
+    workspace = Int32SortPermWorkspace()
+    chunk_paths = String[]; n_rows = 0; max_rows = 0; empty_schema = nothing
+    t_deconv = 0.0; t_features = 0.0; t_write = 0.0
+    for (ci, tasks) in enumerate(chunks)
+        isempty(tasks) && continue
+        t_c = time()
+        parts = deconv(tasks)
+        raw = length(parts) == 1 ? parts[1] : vcat(parts...)
+        parts = nothing
+        t_d = time() - t_c
+        empty_schema === nothing && (empty_schema = raw[1:0, :])
+        if nrow(raw) > 0
+            t_features += @elapsed begin
+                @alloc_bucket "scan_competition_features" add_scan_competition_features!(raw)
+                @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(raw, spectra, search_context, ms_file_idx)
+                permute_psms_by_precursor_idx!(raw, workspace)
+            end
+            _assert_precursor_scan_sorted(raw)
+            path = joinpath(psm_dir, "chunk_$(lpad(ci, 4, '0')).arrow")
+            t_write += @elapsed Arrow.write(path, raw)
+            push!(chunk_paths, path)
+        end
+        n_rows += nrow(raw); max_rows = max(max_rows, nrow(raw))
+        t_deconv += t_d
+        @debug_l1 "Main chunk $ci/$(length(chunks)): $(sum(t -> length(last(t)), tasks)) scans -> $(nrow(raw)) PSMs " *
+                  "(deconv $(round(t_d; digits=1))s)"
+        raw = nothing
+    end
+    @user_info "Main search: $(length(chunks)) chunks, $n_rows PSMs (largest chunk $max_rows) on disk; " *
+               "deconv $(round(t_deconv; digits=1))s, per-scan features $(round(t_features; digits=1))s, " *
+               "write $(round(t_write; digits=1))s"
+    if isempty(chunk_paths)
+        rm(psm_dir; recursive = true, force = true)
+        return empty_schema === nothing ? nothing : empty_schema
+    end
+    setZTPsmPartitions!(search_context, ms_file_idx, chunk_paths)
+    return DataFrame()                 # the PSMs are on disk
+end
+
+"""
 Per-chunk reduce: the two per-scan feature passes MainSearch normally runs after `library_search`
 (they need the raw per-bin rows, contiguous by scan), then the meta-scan collapse.
 """

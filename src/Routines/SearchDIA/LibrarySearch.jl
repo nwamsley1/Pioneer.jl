@@ -281,6 +281,14 @@ function library_search(
         release_scored_psm_buffers!(search_data, params)
         return zt_psms
     end
+    # Other MainSearch files with many candidates: deconvolve in chunks of scans and keep the PSMs
+    # on disk (ZT/chunked_main_search.jl); `nothing` for a file searched in memory.
+    chunked = chunked_main_deconvolution(params, _deconv_body, spectra, search_context, ms_file_idx,
+                                         scan_to_prec_idx, thread_tasks, length(precursors_passed))
+    if chunked !== nothing
+        release_scored_psm_buffers!(search_data, params)
+        return chunked
+    end
     all_results = _deconv_body(thread_tasks)
     release_scored_psm_buffers!(search_data, params)
     t_deconv = time() - t_deconv_start

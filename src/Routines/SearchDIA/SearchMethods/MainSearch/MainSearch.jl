@@ -302,7 +302,10 @@ function process_file!(
     psms = @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
     # Scanning-quad (ZT): library_search already ran the two per-scan passes below on each chunk's
     # raw per-bin rows, then collapsed them to meta-PSMs (ZT/chunked_main_search.jl).
-    zt_collapsed = zt_collapsed_in_search(getZTGeometry(search_context, ms_file_idx))
+    # A file whose PSMs library_search wrote to disk in chunks (ZT, or chunked_main_deconvolution)
+    # already has the two per-scan passes below, run per chunk.
+    zt_collapsed = zt_collapsed_in_search(getZTGeometry(search_context, ms_file_idx)) ||
+                   getZTPsmPartitions(search_context, ms_file_idx) !== nothing
     t_lib_search = time() - t_file_start
 
     # IMPORTANT: the next two steps depend on the deconv output being
