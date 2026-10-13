@@ -271,3 +271,30 @@ function build_qvalue_spline_from_refs(
     @debug_l1 "$context complete: files=$(length(refs)) rows=$rows elapsed=$(round(time()-started, digits=2))s"
     return result
 end
+
+"""
+    _passing_qvalue_spline(refs, q_value_threshold, merged_path; fdr_scale_factor) -> calibration or nothing
+
+The q-value spline of the rows PrecursorScoring's initial filter keeps (`global_qval` and `qval` both
+`<= q_value_threshold`, the mask `filter_by_multiple_thresholds` builds), fitted from the unfiltered refs in
+the same file and row order as a fit on the filtered tables, so the recalculated `qval` can be written by
+the filter itself.
+"""
+function _passing_qvalue_spline(refs::Vector{<:FileReference}, q_value_threshold::Float32,
+                                merged_path::String; fdr_scale_factor::Float32)
+    started = time()
+    rows = 0
+    result = build_score_calibration(; compute_pep = false, fdr_scale_factor,
+        memory_budget_bytes = SCORE_WORKSPACE_BYTES, temp_parent = dirname(merged_path)) do emit
+        for ref in refs
+            table = materialize_columns(ref, [:prec_prob, :target, :global_qval, :qval])
+            keep = trues(nrow(table))
+            update_mask_and!(keep, table[!, :global_qval], q_value_threshold, <=)
+            update_mask_and!(keep, table[!, :qval], q_value_threshold, <=)
+            _emit_score_arrays(emit, table[keep, :prec_prob], table[keep, :target])
+            rows += count(keep)
+        end
+    end
+    @debug_l1 "Passing-row q-value spline complete: files=$(length(refs)) rows=$rows elapsed=$(round(time()-started, digits=2))s"
+    return result
+end

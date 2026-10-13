@@ -281,3 +281,27 @@ end
         @test all(==(Float32(count(!, labels) / count(identity, labels))), pep)
     end
 end
+
+@testset "passing-row q-value spline matches a fit on the filtered table" begin
+    mktempdir() do dir
+        n = 400
+        scores = Float32.(range(0.05, 0.99, length = n))
+        labels = Bool[isodd(i) || i > 100 for i in 1:n]
+        qval = Float32[i % 7 == 0 ? 0.05 : 0.005 for i in 1:n]
+        global_qval = Float32[i % 11 == 0 ? 0.05 : 0.005 for i in 1:n]
+        table = DataFrame(prec_prob = scores, target = labels, qval = qval, global_qval = global_qval)
+        all_path = joinpath(dir, "all.arrow")
+        Arrow.write(all_path, table)
+        keep = (qval .<= 0.01f0) .& (global_qval .<= 0.01f0)
+        kept_path = joinpath(dir, "kept.arrow")
+        Arrow.write(kept_path, table[keep, :])
+
+        on_filtered = Pioneer.build_qvalue_spline_from_refs([Pioneer.PSMFileReference(kept_path)], :prec_prob,
+            joinpath(dir, "a.arrow"); fdr_scale_factor = 1.0f0)
+        on_unfiltered = Pioneer._passing_qvalue_spline([Pioneer.PSMFileReference(all_path)], 0.01f0,
+            joinpath(dir, "b.arrow"); fdr_scale_factor = 1.0f0)
+        @test Float32.(on_unfiltered.qval_spline.(scores)) == Float32.(on_filtered.qval_spline.(scores))
+        Pioneer._close_score_calibration(on_filtered)
+        Pioneer._close_score_calibration(on_unfiltered)
+    end
+end

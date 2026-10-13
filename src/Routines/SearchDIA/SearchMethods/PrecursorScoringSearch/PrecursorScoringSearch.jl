@@ -528,6 +528,25 @@ function summarize_results!(
             initial_filter = initial_filter |>
                 ("collect_global_huber_winners" => (df -> collect_huber_winners!(winners, df)))
         end
+        # Without MBR, qval is recalculated from a spline over the passing rows (MBR recalculates it after
+        # integration instead). The spline is fitted on the rows this filter keeps, so the recalculated
+        # qval joins this write rather than costing its own rewrite of every passing table.
+        if !params.match_between_runs
+            step11_time = @elapsed begin
+                spline_result = _passing_qvalue_spline(
+                    annotated_refs,
+                    params.q_value_threshold,
+                    results.merged_quant_path;
+                    fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
+                )
+                if spline_result === nothing
+                    @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
+                else
+                    initial_filter = initial_filter |>
+                        add_interpolated_column(:qval, :prec_prob, spline_result.qval_spline)
+                end
+            end
+        end
         phase_started = time()
         @debug_l1 "Initial precursor q-value filter starting: files=$(length(annotated_refs))"
         passing_refs = apply_pipeline_batch(
@@ -564,35 +583,6 @@ function summarize_results!(
         for ref in annotated_refs
             clear_sidecars!(ref; delete_files = true)
             safeRm(file_path(ref); force = true)
-        end
-    end
-
-    # MBR-enabled searches recalculate q-values after chromatogram integration
-    # and transfer acceptance. The non-MBR path retains the original step.
-    if !params.match_between_runs
-        step11_time = @elapsed begin
-            spline_result = build_qvalue_spline_from_refs(
-                passing_refs,
-                :prec_prob,
-                results.merged_quant_path;
-                fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
-                temp_prefix = "recalc_sidecar",
-            )
-            if spline_result === nothing
-                @user_warn "No non-empty files for q-value recalculation — skipping Step 11"
-            else
-                recalc_pipeline = TransformPipeline() |>
-                    add_interpolated_column(
-                        :qval,
-                        :prec_prob,
-                        spline_result.qval_spline,
-                    )
-                passing_refs = apply_pipeline_batch(
-                    passing_refs,
-                    recalc_pipeline,
-                    passing_psms_folder,
-                )
-            end
         end
     end
 
