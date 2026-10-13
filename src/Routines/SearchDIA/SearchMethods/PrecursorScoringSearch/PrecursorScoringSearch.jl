@@ -155,7 +155,7 @@ WriteOutputs, SearchDIA) for literal references; 76 of the 141 columns in precur
 
 Dropped inside the existing `initial_filter` pass, which already reads, filters and rewrites every file,
 so removal is free rather than costing an extra pass. Everything downstream then reads and writes a
-narrower table -- `_merge_mbr_recoveries!` alone rewrites every file at ~2.45 GB of writeArrow.
+narrower table -- the MBR recovery merge alone used to rewrite every file at ~2.45 GB of writeArrow.
 
 Deliberately RETAINED despite having no downstream reader, because they are plausibly wanted by whoever
 reads the output: best_rt, irt_fwhm, rt_fwhm, smoothness.

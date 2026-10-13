@@ -69,39 +69,49 @@ end
 @testset "MBR recovery scores use the frozen pre-MBR q-value boundary" begin
     mktempdir() do directory
         path = joinpath(directory, "recoveries.arrow")
+        # Row 1 passes on its own, row 2 is a recovery, row 3 neither (dropped by the merge).
         Arrow.write(
             path,
             DataFrame(
-                precursor_idx = UInt32[1, 2],
-                scan_idx = UInt32[10, 20],
-                prec_prob = Float32[0.90, 0.10],
-                mbr_recovered = Bool[false, true],
-                mbr_target_decoy_prob = Float32[NaN, 0.50],
-                mbr_counterfactual_decoy_prob = Float32[NaN, 0.25],
+                precursor_idx = UInt32[1, 2, 3],
+                scan_idx = UInt32[10, 20, 30],
+                qval = Float32[0.005, 0.50, 0.50],
+                global_qval = Float32[0.005, 0.005, 0.50],
+                prec_prob = Float32[0.90, 0.10, 0.05],
+                mbr_recovered = Bool[false, false, false],
             ),
         )
+        Arrow.write(
+            path * Pioneer.RECOVERY_SIDECAR_SUFFIX,
+            DataFrame(
+                precursor_idx = UInt32[1, 2, 3],
+                scan_idx = UInt32[10, 20, 30],
+                mbr_recovered = Bool[false, true, false],
+                MBR_transfer_candidate = Bool[false, true, false],
+                mbr_target_decoy_prob = Float32[NaN, 0.50, NaN],
+                mbr_counterfactual_decoy_prob = Float32[NaN, 0.25, NaN],
+            ),
+        )
+        Arrow.write(path * ".aux.sidecar.arrow", (aux = Float32[3, 4, 5],))
         frozen_qvalue = score ->
             Float32(score) >= 0.80f0 ? 0.005f0 : 0.10f0
+        original = read(path)
 
-        Arrow.write(path * ".aux.sidecar.arrow", (aux=Float32[3, 4],))
-        refs = Pioneer._remap_mbr_scores!(
-            Pioneer.PSMFileReference[
-                Pioneer.PSMFileReference(path),
-            ],
-            joinpath(directory, "unused.arrow");
-            q_value_threshold = 0.01f0,
-            fdr_scale_factor = 1.0f0,
-            pre_mbr_qval_spline = frozen_qvalue,
-        )
-        remapped = DataFrame(Arrow.Table(path))
-        @test length(refs) == 1
-        @test Pioneer.load_with_sidecars(only(refs)).aux == Float32[3, 4]
-        @test Pioneer.has_column_anywhere(only(refs), :mbr_counterfactual_decoy_prec_prob)
-        @test remapped.prec_prob[1] == 0.90f0
-        @test remapped.prec_prob[2] < 0.80f0
-        @test remapped.prec_prob[2] ≈ 0.40f0 atol = 1.0f-4
-        @test remapped.mbr_counterfactual_decoy_prec_prob[1] |> isnan
-        @test remapped.mbr_counterfactual_decoy_prec_prob[2] ≈
+        Pioneer._stage_mbr_recoveries!([path], 0.01f0;
+            remap_bounds = Pioneer._mbr_remap_bounds(frozen_qvalue, 0.01f0))
+        @test read(path) == original                     # the table itself is not rewritten
+        merged = Pioneer._apply_staged_mbr_merge(Pioneer.load_with_sidecars(Pioneer.PSMFileReference(path)))
+
+        @test merged.precursor_idx == UInt32[1, 2]
+        @test merged.aux == Float32[3, 4]
+        @test merged.mbr_recovered == Bool[false, true]
+        @test merged.MBR_transfer_candidate == Bool[false, true]
+        @test !hasproperty(merged, Pioneer.MBR_KEEP_STAGED_COL)
+        @test merged.prec_prob[1] == 0.90f0
+        @test merged.prec_prob[2] < 0.80f0
+        @test merged.prec_prob[2] ≈ 0.40f0 atol = 1.0f-4
+        @test merged.mbr_counterfactual_decoy_prec_prob[1] |> isnan
+        @test merged.mbr_counterfactual_decoy_prec_prob[2] ≈
             0.20f0 atol = 1.0f-4
     end
 end

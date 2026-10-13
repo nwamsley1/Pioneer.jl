@@ -430,8 +430,8 @@ function _write_mbr_recovery_sidecars!(
     return length(file_paths)
 end
 
-# Score-remap bounds derived from the frozen pre-MBR q-value spline. Extracted so the fused path in
-# _merge_mbr_recoveries! and the standalone _remap_mbr_scores! fallback compute them identically.
+# Score-remap bounds derived from a q-value spline: the frozen pre-MBR one, or (the documented fallback in
+# finalize_postintegration_mbr!) one built from the merged, not yet remapped scores.
 function _mbr_remap_bounds(qval_spline, q_value_threshold::Float32)
     score_ceiling = prevfloat(_score_floor_for_qvalue(
         qval_spline,
@@ -485,15 +485,23 @@ including throwing on `missing`.
     return dest
 end
 
-# Recovery columns read only by the score remap. Once the remap has run they are dead (their only other
-# fate was PRECSCORE_DROPPABLE_COLUMNS at the final rewrite); its output, the remapped prec_prob and
-# MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN, is kept.
-const MBR_REMAP_ONLY_COLUMNS = (
-    :mbr_target_decoy_prob, :ftr_qval_true, :ftr_pep_true, :mbr_total_error_qval_true,
-    :mbr_total_error_rate_true, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN,
-)
+# Staged result of the MBR recovery merge (_stage_mbr_recoveries!): row-aligned with the integrated table,
+# under names its columns do not use (register_sidecar! refuses a column the main file already has). The
+# final rewrite applies it (_apply_staged_mbr_merge).
+const MBR_MERGE_SIDECAR_TAG = "mbr_merge"
+const MBR_KEEP_STAGED_COL = :mbr_keep_post_mbr
+const MBR_PREC_PROB_STAGED_COL = :prec_prob_post_mbr
+const MBR_RECOVERED_STAGED_COL = :mbr_recovered_post_mbr
 
-function _merge_mbr_recoveries!(
+"""
+    _stage_mbr_recoveries!(file_paths, q_value_threshold; remap_bounds = nothing) -> file_paths
+
+Merge each file's recovery sidecar with its integrated table without rewriting the table. The rows to keep,
+the recovery flags and, with `remap_bounds`, the remapped `prec_prob` and counterfactual score go to a
+row-aligned sidecar; the final rewrite, which reads and writes every table anyway, applies it
+(`_apply_staged_mbr_merge`). Only the columns the merge needs are read.
+"""
+function _stage_mbr_recoveries!(
     file_paths::Vector{String},
     q_value_threshold::Float32;
     remap_bounds::Union{Nothing, Tuple{Float32, Float32}} = nothing,
@@ -502,57 +510,36 @@ function _merge_mbr_recoveries!(
         recovery_path = path * RECOVERY_SIDECAR_SUFFIX
         isfile(recovery_path) ||
             error("Missing MBR recovery sidecar at $recovery_path")
-        main = load_arrow_dataframe(path)   # unmapped: `path` is rewritten below
+        # A staged merge from an earlier pass (the remap-bounds fallback) is replaced, not re-registered.
+        safeRm(path * "." * MBR_MERGE_SIDECAR_TAG * ".sidecar.arrow"; force = true)
+        main = load_arrow_dataframe(path; cols = [:precursor_idx, :scan_idx, :qval, :global_qval, :prec_prob])
         n = nrow(main)
-        # Every recovery column is copied into `main`, so the sidecar is unmapped afterwards.
-        with_arrow_table(recovery_path) do recovery
+        # Every recovery column used is copied, so the sidecar is unmapped afterwards.
+        recovered, transfer_candidate, transfer, counterfactual = with_arrow_table(recovery_path) do recovery
             length(recovery.precursor_idx) == n ||
                 error("MBR recovery sidecar row-count mismatch at $recovery_path")
             # Resolved once, not once per row -- see _assert_recovery_aligned.
             _assert_recovery_aligned(main[!, :precursor_idx], main[!, :scan_idx],
                                      recovery.precursor_idx, recovery.scan_idx, n, path)
-
-            main[!, :mbr_recovered] =
-                _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.mbr_recovered)
-            main[!, :MBR_transfer_candidate] =
-                _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.MBR_transfer_candidate)
-            main[!, :mbr_target_decoy_prob] =
-                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_target_decoy_prob)
-            main[!, :ftr_qval_true] =
-                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.ftr_qval_true)
-            main[!, :ftr_pep_true] =
-                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.ftr_pep_true)
-            main[!, :mbr_total_error_qval_true] =
-                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_total_error_qval_true)
-            main[!, :mbr_total_error_rate_true] =
-                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_total_error_rate_true)
-            main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN] =
+            (
+                _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.mbr_recovered),
+                _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.MBR_transfer_candidate),
+                _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_target_decoy_prob),
                 _copy_sidecar_column!(
                     Vector{Float32}(undef, n),
                     Tables.getcolumn(recovery, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN),
-                )
-            main[!, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN] =
-                _copy_sidecar_column!(
-                    Vector{UInt8}(undef, n),
-                    Tables.getcolumn(recovery, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN),
-                )
+                ),
+            )
         end
 
-        keep = _mbr_keep_mask(main[!, :qval], main[!, :global_qval],
-                              main[!, :mbr_recovered], n, q_value_threshold)
-        # This table is privately owned, so compact its columns in place.
-        deleteat!(main, .!keep)
+        keep = _mbr_keep_mask(main[!, :qval], main[!, :global_qval], recovered, n, q_value_threshold)
+        prec_prob = copy(main[!, :prec_prob])
+        counterfactual_prec_prob = fill(NaN32, n)
         if remap_bounds !== nothing
             score_floor, width = remap_bounds
-            recovered = main[!, :mbr_recovered]
-            transfer = main[!, :mbr_target_decoy_prob]
-            prec_prob = main[!, :prec_prob]
-            counterfactual = main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
-            counterfactual_prec_prob = fill(NaN32, nrow(main))
-            @inbounds for row in eachindex(recovered)
-                if Bool(recovered[row])
-                    transfer_score =
-                        clamp(Float32(transfer[row]), 0.0f0, 1.0f0)
+            @inbounds for row in 1:n
+                if recovered[row]
+                    transfer_score = clamp(Float32(transfer[row]), 0.0f0, 1.0f0)
                     prec_prob[row] = score_floor + width * transfer_score
                 end
                 counterfactual_score = Float32(counterfactual[row])
@@ -561,78 +548,39 @@ function _merge_mbr_recoveries!(
                         clamp(counterfactual_score, 0.0f0, 1.0f0)
                 end
             end
-            main[!, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN] =
-                counterfactual_prec_prob
-            select!(main, Not(collect(MBR_REMAP_ONLY_COLUMNS)))
         end
-        # Nothing reads the integrated evidence after the feature pass, so this rewrite drops it rather
-        # than carrying it (temporal traces included) to the final rewrite.
-        _drop_internal_mbr_columns!(main)
-        writeArrow(path, main)
+        # Order matters: MBR_transfer_candidate and the counterfactual score stay in the output, after the
+        # integrated table's own columns, as they did when the merge rewrote the table.
+        add_columns_via_sidecar!(
+            PSMFileReference(path),
+            MBR_KEEP_STAGED_COL => Vector{Bool}(keep),
+            MBR_PREC_PROB_STAGED_COL => prec_prob,
+            MBR_RECOVERED_STAGED_COL => recovered,
+            :MBR_transfer_candidate => transfer_candidate,
+            MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN => counterfactual_prec_prob;
+            tag = MBR_MERGE_SIDECAR_TAG,
+        )
     end
     return file_paths
 end
 
-function _remap_mbr_scores!(
-    refs::Vector{PSMFileReference},
-    merged_path::String;
-    q_value_threshold::Float32,
-    fdr_scale_factor::Float32,
-    pre_mbr_qval_spline = nothing,
-)
-    qval_spline = pre_mbr_qval_spline
-    if qval_spline === nothing
-        spline_result = build_qvalue_spline_from_refs(
-            refs,
-            :prec_prob,
-            merged_path;
-            compute_pep = false,
-            fdr_scale_factor = fdr_scale_factor,
-            temp_prefix = "mbr_pre_remap",
-        )
-        spline_result === nothing && return refs
-        qval_spline = spline_result.qval_spline
-    end
-    score_floor, width = _mbr_remap_bounds(qval_spline, q_value_threshold)
+"""
+    _apply_staged_mbr_merge(psms) -> DataFrame
 
-    for ref in refs
-        path = file_path(ref)
-        main = load_arrow_dataframe(path)   # unmapped: `path` is rewritten below
-        hasproperty(main, :mbr_recovered) || continue
-        has_counterfactual =
-            hasproperty(main, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN)
-        counterfactual_prec_prob = has_counterfactual ?
-            fill(NaN32, nrow(main)) : Float32[]
-        @inbounds for row in 1:nrow(main)
-            if Bool(main.mbr_recovered[row])
-                transfer_score = clamp(
-                    Float32(main.mbr_target_decoy_prob[row]),
-                    0.0f0,
-                    1.0f0,
-                )
-                main.prec_prob[row] = score_floor + width * transfer_score
-            end
-            if has_counterfactual
-                counterfactual_score = Float32(
-                    main[row, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
-                )
-                if isfinite(counterfactual_score)
-                    counterfactual_prec_prob[row] = score_floor + width *
-                        clamp(counterfactual_score, 0.0f0, 1.0f0)
-                end
-            end
-        end
-        if has_counterfactual
-            main[!, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN] =
-                counterfactual_prec_prob
-        end
-        writeArrow(path, main)
-    end
-    paths = String[file_path(ref) for ref in refs]
-    sidecar_index = index_sidecar_paths(paths)
-    return PSMFileReference[
-        PSMFileReference(path; sidecar_paths=sidecar_index[path]) for path in paths
-    ]
+Apply a staged recovery merge (`_stage_mbr_recoveries!`) to a table loaded with its sidecars: drop the
+rows the merge did not keep, take the remapped `prec_prob` and the recovery flags, and drop the
+integrated MBR evidence, which nothing reads after the feature pass. A table without a staged merge is
+returned as is.
+"""
+function _apply_staged_mbr_merge(psms::DataFrame)
+    hasproperty(psms, MBR_KEEP_STAGED_COL) || return psms
+    # This table is privately owned, so compact its columns in place.
+    deleteat!(psms, .!Bool.(psms[!, MBR_KEEP_STAGED_COL]))
+    psms[!, :prec_prob] = psms[!, MBR_PREC_PROB_STAGED_COL]
+    psms[!, :mbr_recovered] = psms[!, MBR_RECOVERED_STAGED_COL]
+    select!(psms, Not([MBR_KEEP_STAGED_COL, MBR_PREC_PROB_STAGED_COL, MBR_RECOVERED_STAGED_COL]))
+    _drop_internal_mbr_columns!(psms)
+    return psms
 end
 
 # Sidecar tag for the deferred q-value columns. Deliberately NOT in _cleanup_mbr_sidecars!'s suffix
@@ -652,10 +600,13 @@ function _recalculate_post_mbr_qvalues!(
     q_value_threshold::Float32,
     fdr_scale_factor::Float32,
 )
+    # The merged scores are still staged (_stage_mbr_recoveries!): the remapped prec_prob of the rows the
+    # merge keeps.
     spline_result = build_qvalue_spline_from_refs(
         refs,
-        :prec_prob,
+        MBR_PREC_PROB_STAGED_COL,
         merged_path;
+        keep_col = MBR_KEEP_STAGED_COL,
         compute_pep = true,
         fdr_scale_factor = fdr_scale_factor,
         temp_prefix = "post_integration_mbr",
@@ -667,7 +618,7 @@ function _recalculate_post_mbr_qvalues!(
     qval_spline = spline_result.qval_spline
     pep_interp = spline_result.pep_interp
     for ref in refs
-        scores = materialize_columns(ref, Symbol[:prec_prob])[!, :prec_prob]
+        scores = materialize_columns(ref, Symbol[MBR_PREC_PROB_STAGED_COL])[!, MBR_PREC_PROB_STAGED_COL]
         n = length(scores)
         qvals = Vector{Float32}(undef, n)
         peps = Vector{Float32}(undef, n)
@@ -906,37 +857,36 @@ function finalize_postintegration_mbr!(
     @debug_l1 "Post-integration MBR recovery sidecars complete: elapsed=$(round(time() - phase_started, digits=2))s"
     # When the caller supplies the frozen pre-MBR spline (it always does; see
     # PrecursorScoringSearch.jl:358 -> IntegrateChromatogramsSearch.jl:628) the score remap needs no
-    # global pass, so it rides along with the merge instead of costing its own read-modify-write of
-    # every file. The standalone path is kept for the documented spline === nothing contract.
+    # global pass, so it is staged with the merge. The merge itself is staged as a sidecar
+    # (_stage_mbr_recoveries!) and applied by the final rewrite, instead of rewriting every table here.
     remap_bounds = pre_mbr_qval_spline === nothing ?
         nothing :
         _mbr_remap_bounds(pre_mbr_qval_spline, q_value_threshold)
     phase_started = time()
     @debug_l1 "Post-integration MBR recovery merge starting: files=$(length(file_paths))"
-    _merge_mbr_recoveries!(
-        file_paths,
-        q_value_threshold;
-        remap_bounds = remap_bounds,
-    )
-
+    _stage_mbr_recoveries!(file_paths, q_value_threshold; remap_bounds)
+    staged_refs() = (sidecar_index = index_sidecar_paths(file_paths);
+        PSMFileReference[PSMFileReference(path; sidecar_paths=sidecar_index[path]) for path in file_paths])
+    if remap_bounds === nothing
+        # The documented spline === nothing contract: remap bounds from the merged scores, then stage the
+        # merge again with them.
+        spline_result = build_qvalue_spline_from_refs(
+            staged_refs(),
+            MBR_PREC_PROB_STAGED_COL,
+            merged_path;
+            keep_col = MBR_KEEP_STAGED_COL,
+            compute_pep = false,
+            fdr_scale_factor = fdr_scale_factor,
+            temp_prefix = "mbr_pre_remap",
+        )
+        if spline_result !== nothing
+            _stage_mbr_recoveries!(file_paths, q_value_threshold;
+                remap_bounds = _mbr_remap_bounds(spline_result.qval_spline, q_value_threshold))
+        end
+    end
     @debug_l1 "Post-integration MBR recovery merge complete: elapsed=$(round(time() - phase_started, digits=2))s"
     # Recovery writers have finished; use a fresh snapshot of their sidecars.
-    sidecar_index = index_sidecar_paths(file_paths)
-    refs = PSMFileReference[
-        PSMFileReference(path; sidecar_paths=sidecar_index[path]) for path in file_paths
-    ]
-    if remap_bounds === nothing
-        phase_started = time()
-        @debug_l1 "Post-integration MBR score remapping starting: files=$(length(refs))"
-        refs = _remap_mbr_scores!(
-            refs,
-            merged_path;
-            q_value_threshold = q_value_threshold,
-            fdr_scale_factor = fdr_scale_factor,
-            pre_mbr_qval_spline = pre_mbr_qval_spline,
-        )
-        @debug_l1 "Post-integration MBR score remapping complete: elapsed=$(round(time() - phase_started, digits=2))s"
-    end
+    refs = staged_refs()
     phase_started = time()
     @debug_l1 "Post-integration MBR q-value recalculation starting: files=$(length(refs))"
     refs, qval_deferred = _recalculate_post_mbr_qvalues!(

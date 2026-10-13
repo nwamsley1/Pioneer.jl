@@ -662,6 +662,9 @@ function summarize_results!(
             (isempty(path) || !isfile(path)) && continue
             ref = get(ref_by_path, path, nothing)
             psms = ref === nothing ? load_arrow_dataframe(path) : load_with_sidecars(ref)
+            # The recovery merge was staged alongside the table (_stage_mbr_recoveries!); apply it in
+            # this rewrite, which happens anyway.
+            psms = _apply_staged_mbr_merge(psms)
             if ref !== nothing && summary.qval_deferred &&
                hasproperty(psms, MBR_QVAL_STAGED_COL)
                 # Bake the staged columns over the originals. They are staged under distinct names

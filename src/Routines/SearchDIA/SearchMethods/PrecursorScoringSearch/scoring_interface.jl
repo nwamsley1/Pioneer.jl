@@ -235,6 +235,7 @@ function build_qvalue_spline_from_refs(
     fdr_scale_factor::Float32 = 1.0f0,
     temp_prefix::String = "sidecar",
     memory_budget_bytes::Int = SCORE_WORKSPACE_BYTES,
+    keep_col::Union{Nothing, Symbol} = nothing,
 )
     started = time()
     context = "Score calibration ($temp_prefix, $score_col)"
@@ -244,9 +245,16 @@ function build_qvalue_spline_from_refs(
         temp_parent=dirname(merged_path)) do emit
         for ref in refs
             if ref isa PSMFileReference
-                table = materialize_columns(ref, [score_col, :target])
-                _emit_score_arrays(emit, table[!, score_col], table[!, :target])
-                rows += nrow(table)
+                # `keep_col`: a Bool column marking the rows to calibrate on (the rest are skipped).
+                table = materialize_columns(ref, keep_col === nothing ? [score_col, :target] :
+                                                                        [score_col, :target, keep_col])
+                scores, targets = table[!, score_col], table[!, :target]
+                if keep_col !== nothing
+                    keep = Bool.(table[!, keep_col])
+                    scores, targets = scores[keep], targets[keep]
+                end
+                _emit_score_arrays(emit, scores, targets)
+                rows += length(scores)
             else
                 # Scores are emitted one by one, so the file is unmapped afterwards
                 # (these protein-group files are rewritten later, on worker threads).
