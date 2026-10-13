@@ -422,6 +422,13 @@ fragment/bin arrays, maximizing shared cache utilization.
 
 Returns a flat vector of global precursor IDs (concatenated across all scans).
 """
+"""
+Starting size of the fragment-index emit buffers, in candidates per scan (they double when a thread
+needs more). Measured: 80 candidates/scan on a timsTOF SCP file (3.5M scans, 279M candidates),
+344 on an Astral file; at 200 the timsTOF file's buffers started at 5.6 GB for 2.2 GB of candidates.
+"""
+const EMIT_CANDIDATES_PER_SCAN = 100
+
 function searchFragmentIndexPartitionMajorHinted(
         scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
         pfi::AbstractLocalPartitionedFragmentIndex{Float32},
@@ -456,12 +463,12 @@ function searchFragmentIndexPartitionMajorHinted(
     partition_to_scans = _build_partition_scan_mapping(pfi, scan_prec_min, scan_prec_max, n_scans)
 
     # ── 3. Per-thread buffers (reused via FragIndexScratch when supplied) ──
-    # Per-thread initial guess: n_scans*200 estimates TOTAL emitted candidates,
-    # but each thread only handles a fraction, so divide by n_threads. The emit
-    # buffers grow in place (doubling) if a thread exceeds this, and FragIndexScratch
-    # is grow-only across files, so a low first-file guess self-corrects to the
-    # true high-water-mark. Avoids ~3-20x per-thread over-provisioning (worst on SCP).
-    est_per_thread = max(div(n_scans * 200, n_threads), 100_000)
+    # Per-thread initial guess: n_scans*EMIT_CANDIDATES_PER_SCAN estimates TOTAL emitted
+    # candidates, but each thread only handles a fraction, so divide by n_threads. The emit
+    # buffers grow in place (doubling) if a thread exceeds this, so the guess only sets the
+    # starting allocation, never the result. MainSearch frees them after each file
+    # (release_emit_buffers!), so every file starts from this guess.
+    est_per_thread = max(div(n_scans * EMIT_CANDIDATES_PER_SCAN, n_threads), 100_000)
     max_local = maximum(p -> Int(p.n_local_precs), getPartitions(pfi); init=0)
     I = local_id_type(pfi)                     # counter ID type = the index's local ID type (UInt16 / UInt32)
     mz_buf_size = maximum(si -> getPeakCount(spectra, all_scan_idxs[si]),

@@ -186,7 +186,7 @@ end
     release_emit_buffers!(s::FragIndexScratch)
 
 Free the per-thread candidate emit buffers (`si`, `pid`). They are presized to
-`n_scans * 200 / n_threads` entries per thread (5.6 GB on a 3.5M-scan file at 18 threads) and only
+`n_scans * EMIT_CANDIDATES_PER_SCAN / n_threads` entries per thread (and double when full) and only
 hold candidates until `_collect_frag_index_results!` has gathered them into `precursors_passed`;
 `prepare!` sizes them again for the next search.
 """
