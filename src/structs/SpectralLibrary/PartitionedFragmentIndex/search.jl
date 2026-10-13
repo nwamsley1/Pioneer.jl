@@ -412,6 +412,13 @@ end
 # ── Partition-major hinted search (orchestrator) ─────────────────────────────
 
 """
+Starting size of the fragment-index emit buffers, in candidates per scan (they double when a thread
+needs more). Measured: 80 candidates/scan on a timsTOF SCP file (3.5M scans, 279M candidates),
+344 on an Astral file; at 200 the timsTOF file's buffers started at 5.6 GB for 2.2 GB of candidates.
+"""
+const EMIT_CANDIDATES_PER_SCAN = 100
+
+"""
     searchFragmentIndexPartitionMajorHinted(scan_to_prec_idx, pfi, spectra,
         all_scan_idxs, n_threads, params, qtm, mem, rt_to_irt_spline, irt_tol,
         precursor_mzs)
@@ -422,13 +429,6 @@ fragment/bin arrays, maximizing shared cache utilization.
 
 Returns a flat vector of global precursor IDs (concatenated across all scans).
 """
-"""
-Starting size of the fragment-index emit buffers, in candidates per scan (they double when a thread
-needs more). Measured: 80 candidates/scan on a timsTOF SCP file (3.5M scans, 279M candidates),
-344 on an Astral file; at 200 the timsTOF file's buffers started at 5.6 GB for 2.2 GB of candidates.
-"""
-const EMIT_CANDIDATES_PER_SCAN = 100
-
 function searchFragmentIndexPartitionMajorHinted(
         scan_to_prec_idx::Vector{Union{Missing, UnitRange{Int64}}},
         pfi::AbstractLocalPartitionedFragmentIndex{Float32},
