@@ -192,6 +192,26 @@ chunk, not the file. Same budget as `ZT_CHUNK_CANDIDATES`.
 const MAIN_CHUNK_CANDIDATES = 30_000_000
 
 """
+Peak disk use of a chunked MainSearch file per fragment-index candidate, with margin: the round
+files (~195 B per PSM) and the featured parts (~280 B per PSM) are on disk together while the parts
+are built, and files keep 0.13-0.24 PSMs per candidate (65.5M PSMs from 279M candidates measured
+33 GB at peak).
+"""
+const MAIN_SPILL_BYTES_PER_CANDIDATE = 150
+
+"""Disk space the chunked path of a file with `n_candidates` candidates needs, with 2 GB to spare."""
+main_spill_bytes(n_candidates::Integer) = n_candidates * MAIN_SPILL_BYTES_PER_CANDIDATE + 2_000_000_000
+
+"""Bytes available to this process on the volume holding `path` (`typemax(Int)` if unknown)."""
+function disk_free_bytes(path::AbstractString)
+    try
+        return Int(diskstat(isdir(path) ? path : dirname(path)).available)
+    catch
+        return typemax(Int)
+    end
+end
+
+"""
     main_thread_chunks(thread_tasks, scan_to_prec_idx, n_chunks) -> Vector{Vector{Tuple{Int, Vector{Int}}}}
 
 Split a MainSearch file's deconvolution tasks into `n_chunks` rounds. Each task (thread `t` and its
@@ -247,8 +267,18 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
     params isa MainSearchParameters || return nothing
     getZTGeometry(search_context, ms_file_idx) === nothing || return nothing
     n_candidates > MAIN_CHUNK_CANDIDATES || return nothing
-    chunks = main_thread_chunks(thread_tasks, scan_to_prec_idx, cld(n_candidates, MAIN_CHUNK_CANDIDATES))
     psm_dir = zt_psm_dir(search_context, ms_file_idx)
+    # Not enough free disk for the round files and the featured parts (both are on disk while the
+    # parts are built): search in memory instead, which gives the same results.
+    need = main_spill_bytes(n_candidates)
+    free = disk_free_bytes(getDataOutDir(search_context))
+    if free < need
+        @user_warn "Main search: $(round(free / 1e9, digits = 1)) GB free on the results disk, about " *
+                   "$(round(need / 1e9, digits = 1)) GB needed to keep this file's PSMs on disk; " *
+                   "searching it in memory (same results, more memory)"
+        return nothing
+    end
+    chunks = main_thread_chunks(thread_tasks, scan_to_prec_idx, cld(n_candidates, MAIN_CHUNK_CANDIDATES))
     rm(psm_dir; recursive = true, force = true); mkpath(psm_dir)
     workspace = Int32SortPermWorkspace()
     chunk_paths = String[]; n_rows = 0; max_rows = 0; empty_schema = nothing
