@@ -212,7 +212,10 @@ const PRECSCORE_DROPPABLE_COLUMNS = Symbol[
     :frag7_smoothed_intensity, :frag8_smoothed_intensity, :flanking_ms1_m0_candidate_fraction,
     :flanking_frag_candidate_fraction, :flanking_ms1_frag_sum_corr, :flanking_frag_corr_mean,
     :flanking_frag_corr_strength, :flanking_frag_corr_effective_n, :flanking_frag_corr_best_m0,
-    :flanking_signal_support, :frag_apex_gt2x_flank_bitvec_rank, :irt_diff, :pair_id
+    :flanking_signal_support, :frag_apex_gt2x_flank_bitvec_rank, :irt_diff, :pair_id,
+    # Internal to the search, not of use in the output: the CV fold (last read by MBR), the two
+    # ion-mobility-slice model features, and the integration bounds (MBR drops them earlier).
+    :cv_fold, :n_scans_in_window, :weight_frac_in_cycle, :integration_start_scan, :integration_stop_scan,
 ]
 
 """

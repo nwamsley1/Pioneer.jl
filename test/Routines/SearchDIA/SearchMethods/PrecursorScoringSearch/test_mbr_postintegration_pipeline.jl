@@ -87,7 +87,6 @@ end
                 precursor_idx = UInt32[1, 2, 3],
                 scan_idx = UInt32[10, 20, 30],
                 mbr_recovered = Bool[false, true, false],
-                MBR_transfer_candidate = Bool[false, true, false],
                 mbr_target_decoy_prob = Float32[NaN, 0.50, NaN],
                 mbr_counterfactual_decoy_prob = Float32[NaN, 0.25, NaN],
             ),
@@ -105,7 +104,6 @@ end
         @test merged.precursor_idx == UInt32[1, 2]
         @test merged.aux == Float32[3, 4]
         @test merged.mbr_recovered == Bool[false, true]
-        @test merged.MBR_transfer_candidate == Bool[false, true]
         @test !hasproperty(merged, Pioneer.MBR_KEEP_STAGED_COL)
         @test merged.prec_prob[1] == 0.90f0
         @test merged.prec_prob[2] < 0.80f0
@@ -275,7 +273,6 @@ end
         sidecar = DataFrame(Arrow.Table(sidecar_path))
         @test nrow(sidecar) == n
         @test !any(sidecar.mbr_recovered)
-        @test !any(sidecar.MBR_transfer_candidate)
         @test all(isnan, sidecar.mbr_target_decoy_prob)
         # Row identity must still line up with the file the sidecar describes.
         @test sidecar.precursor_idx == prec

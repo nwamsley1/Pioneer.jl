@@ -91,7 +91,6 @@ end
         candidates = copy(sparse.candidates)
         n = nrow(candidates)
         candidates[!, :mbr_recovered] = trues(n)
-        candidates[!, :MBR_transfer_candidate] = trues(n)
         for column in (:mbr_target_decoy_prob, :ftr_qval_true, :ftr_pep_true,
                        :mbr_total_error_qval_true, :mbr_total_error_rate_true,
                        :mbr_counterfactual_decoy_prob)
@@ -107,11 +106,10 @@ end
             recovered = DataFrame(Arrow.Table(path * Pioneer.RECOVERY_SIDECAR_SUFFIX))
             @test recovered.precursor_idx == main.precursor_idx
             @test recovered.scan_idx == main.scan_idx
-            @test findall(recovered.MBR_transfer_candidate) == rows
             @test findall(recovered.mbr_recovered) == rows
             @test recovered.mbr_target_decoy_prob[rows] ==
                 candidates.mbr_target_decoy_prob[(cursor + 1):(cursor + length(rows))]
-            @test all(isnan, recovered.mbr_target_decoy_prob[.!recovered.MBR_transfer_candidate])
+            @test all(isnan, recovered.mbr_target_decoy_prob[.!recovered.mbr_recovered])
             cursor += length(rows)
         end
 

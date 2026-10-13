@@ -426,7 +426,6 @@ end
     )
     candidate_rows = (n_baseline + 1):n
     @test summary.n_candidates == n_candidates
-    @test all(frame.MBR_transfer_candidate[candidate_rows])
     @test all(isfinite, frame.ftr_qval_true[candidate_rows])
     @test all(isfinite, frame.ftr_pep_true[candidate_rows])
     candidate_summary = Pioneer.apply_postintegration_mbr_rescoring!(

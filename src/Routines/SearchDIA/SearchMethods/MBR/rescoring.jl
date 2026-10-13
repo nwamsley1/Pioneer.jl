@@ -1187,7 +1187,6 @@ function apply_postintegration_mbr_rescoring!(
 )
     n = nrow(frame)
     frame[!, :mbr_recovered] = falses(n)
-    frame[!, :MBR_transfer_candidate] = falses(n)
     frame[!, :mbr_target_decoy_prob] = fill(NaN32, n)
     frame[!, :ftr_qval_true] = fill(NaN32, n)
     frame[!, :ftr_pep_true] = fill(NaN32, n)
@@ -1233,7 +1232,6 @@ function apply_postintegration_mbr_rescoring!(
     # over a frame that is by construction all-true.
     candidate_mask = frame_is_candidates ? trues(n) :
         _mbr_candidate_mask(frame, q_value_threshold)
-    frame[!, :MBR_transfer_candidate] = candidate_mask
     candidate_indices = findall(candidate_mask)
     if isempty(candidate_indices)
         baseline_rate =

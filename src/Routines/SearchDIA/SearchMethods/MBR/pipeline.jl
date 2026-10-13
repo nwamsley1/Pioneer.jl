@@ -321,7 +321,6 @@ function _write_mbr_recovery_sidecars_from_candidates!(
     cand_precursor = candidates[!, :precursor_idx]
     cand_scan      = candidates[!, :scan_idx]
     cand_recovered = candidates[!, :mbr_recovered]
-    cand_flag      = candidates[!, :MBR_transfer_candidate]
     cand_prob      = candidates[!, :mbr_target_decoy_prob]
     cand_ftr_q     = candidates[!, :ftr_qval_true]
     cand_ftr_pep   = candidates[!, :ftr_pep_true]
@@ -338,7 +337,6 @@ function _write_mbr_recovery_sidecars_from_candidates!(
             error("MBR recovery row-count mismatch at $path")
         mask = masks[file_idx]
         recovered = falses(n)
-        flag      = falses(n)
         prob      = fill(NaN32, n)
         ftr_q     = fill(NaN32, n)
         ftr_pep   = fill(NaN32, n)
@@ -354,7 +352,6 @@ function _write_mbr_recovery_sidecars_from_candidates!(
                 main.scan_idx[row] == cand_scan[cursor]
             ) || error("MBR recovery candidate misalignment at row $row of $path")
             recovered[row] = cand_recovered[cursor]
-            flag[row]      = cand_flag[cursor]
             prob[row]      = cand_prob[cursor]
             ftr_q[row]     = cand_ftr_q[cursor]
             ftr_pep[row]   = cand_ftr_pep[cursor]
@@ -367,7 +364,6 @@ function _write_mbr_recovery_sidecars_from_candidates!(
             precursor_idx = UInt32.(main.precursor_idx),
             scan_idx = UInt32.(main.scan_idx),
             mbr_recovered = recovered,
-            MBR_transfer_candidate = flag,
             mbr_target_decoy_prob = prob,
             ftr_qval_true = ftr_q,
             ftr_pep_true = ftr_pep,
@@ -405,8 +401,6 @@ function _write_mbr_recovery_sidecars!(
             precursor_idx = UInt32.(frame.precursor_idx[rows]),
             scan_idx = UInt32.(frame.scan_idx[rows]),
             mbr_recovered = Bool.(frame.mbr_recovered[rows]),
-            MBR_transfer_candidate =
-                Bool.(frame.MBR_transfer_candidate[rows]),
             mbr_target_decoy_prob =
                 Float32.(frame.mbr_target_decoy_prob[rows]),
             ftr_qval_true = Float32.(frame.ftr_qval_true[rows]),
@@ -515,7 +509,7 @@ function _stage_mbr_recoveries!(
         main = load_arrow_dataframe(path; cols = [:precursor_idx, :scan_idx, :qval, :global_qval, :prec_prob])
         n = nrow(main)
         # Every recovery column used is copied, so the sidecar is unmapped afterwards.
-        recovered, transfer_candidate, transfer, counterfactual = with_arrow_table(recovery_path) do recovery
+        recovered, transfer, counterfactual = with_arrow_table(recovery_path) do recovery
             length(recovery.precursor_idx) == n ||
                 error("MBR recovery sidecar row-count mismatch at $recovery_path")
             # Resolved once, not once per row -- see _assert_recovery_aligned.
@@ -523,7 +517,6 @@ function _stage_mbr_recoveries!(
                                      recovery.precursor_idx, recovery.scan_idx, n, path)
             (
                 _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.mbr_recovered),
-                _copy_sidecar_column!(Vector{Bool}(undef, n), recovery.MBR_transfer_candidate),
                 _copy_sidecar_column!(Vector{Float32}(undef, n), recovery.mbr_target_decoy_prob),
                 _copy_sidecar_column!(
                     Vector{Float32}(undef, n),
@@ -549,14 +542,12 @@ function _stage_mbr_recoveries!(
                 end
             end
         end
-        # Order matters: MBR_transfer_candidate and the counterfactual score stay in the output, after the
-        # integrated table's own columns, as they did when the merge rewrote the table.
+        # The counterfactual score is read by protein scoring and dropped before the output.
         add_columns_via_sidecar!(
             PSMFileReference(path),
             MBR_KEEP_STAGED_COL => Vector{Bool}(keep),
             MBR_PREC_PROB_STAGED_COL => prec_prob,
             MBR_RECOVERED_STAGED_COL => recovered,
-            :MBR_transfer_candidate => transfer_candidate,
             MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN => counterfactual_prec_prob;
             tag = MBR_MERGE_SIDECAR_TAG,
         )

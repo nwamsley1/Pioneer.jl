@@ -265,6 +265,9 @@ function summarize_results!(
     keep_decoys = params.params.output.write_decoys
     prepare_for_quant = function (df, ref)
         keep_decoys || filter!(row -> row.target, df)
+        # Protein scoring was the last reader of the MBR counterfactual score; it does not belong in the output.
+        hasproperty(df, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN) &&
+            select!(df, Not(MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN))
         if quant_corrections !== nothing
             df[!, :peak_area_normalized] =
                 normalized_quant_column(df, :peak_area, get(quant_corrections, file_path(ref), nothing))
