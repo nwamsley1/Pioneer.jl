@@ -38,55 +38,99 @@ function _assert_precursor_scan_sorted(df::DataFrame)
     return nothing
 end
 
-# function barrier: every element of `cols` is the same concrete Arrow column type
-function _zt_gather!(dst::Vector, cols::Vector{C}, bf::Vector{Int32}, br::Vector{Int32}, n::Int) where {C}
-    @inbounds for i in 1:n; dst[i] = cols[bf[i]][br[i]]; end
-    return dst
+"""
+    precursor_part_ranges(pcs, target_rows) -> Vector{Tuple{UInt32, UInt32}}
+
+The precursor-id ranges [lo, hi] of the parts a merge of files with precursor columns `pcs` (each
+sorted) is cut into: walking all rows in precursor order, a part is closed before the next
+precursor once it holds `target_rows` rows, so it ends only where the precursor changes.
+"""
+function precursor_part_ranges(pcs::Vector{Vector{UInt32}}, target_rows::Int)
+    allp = reduce(vcat, pcs; init = UInt32[])
+    sort!(allp)
+    ranges = Tuple{UInt32, UInt32}[]
+    acc = 0; lo = UInt32(0); prev = UInt32(0); open = false
+    i = 1; n = length(allp)
+    @inbounds while i <= n
+        pid = allp[i]; j = i
+        while j < n && allp[j + 1] == pid
+            j += 1
+        end
+        if open && acc >= target_rows          # close the part before this precursor
+            push!(ranges, (lo, prev)); acc = 0; open = false
+        end
+        open || (lo = pid; open = true)
+        acc += j - i + 1; prev = pid; i = j + 1
+    end
+    open && push!(ranges, (lo, prev))
+    return ranges
+end
+
+# function barrier: the slices of one column (every element of `cols` the same concrete Arrow column
+# type), concatenated in file order, then put in `perm` order
+function _slice_gather(cols::Vector{C}, slices::Vector{UnitRange{Int}}, perm::AbstractVector{<:Integer},
+                       n::Int) where {C}
+    T = eltype(first(cols))
+    cat = Vector{T}(undef, n); off = 0
+    @inbounds for (f, rng) in enumerate(slices)
+        col = cols[f]
+        for r in rng
+            off += 1; cat[off] = col[r]
+        end
+    end
+    out = Vector{T}(undef, n)
+    @inbounds for i in 1:n
+        out[i] = cat[perm[i]]
+    end
+    return out
 end
 
 """
     zt_merge_by_precursor(on_part, paths; target_rows) -> Int
 
-Stream a k-way merge of Arrow files, each sorted by (precursor_idx, scan_idx), and call
-`on_part(df)` with consecutive parts of about `target_rows` rows. Each part is sorted the same way
-and holds every row of each of its precursors: a part ends only where the precursor changes. Keys
-are packed into a UInt64 and merged through a (key, file) heap; each part's columns are filled
-once, at their final size. Returns the number of parts.
+Merge Arrow files, each sorted by (precursor_idx, scan_idx), and call `on_part(df)` with
+consecutive parts of about `target_rows` rows. Each part is sorted the same way and holds every row
+of each of its precursors: a part ends only where the precursor changes (`precursor_part_ranges`).
+Returns the number of parts.
+
+A part covering precursors [lo, hi] is one contiguous slice of every file (two binary searches on
+its sorted precursor column), so each part is built from slices: concatenated, then sorted by the
+(precursor_idx, scan_idx) key, which is unique per row; the columns are gathered in parallel. The
+parts and their rows are exactly those of a streaming k-way merge, without a heap operation per row.
 
 Checks every part before handing it on: sorted, and starting after the previous part's last
 precursor, so each precursor is in exactly one part; and that the parts hold every input row.
 """
 function zt_merge_by_precursor(on_part, paths::Vector{String}; target_rows::Int)
     tabs = [Arrow.Table(p) for p in paths]
-    pcs = [Vector{UInt32}(t.precursor_idx) for t in tabs]; scs = [Vector{UInt32}(t.scan_idx) for t in tabs]
+    pcs = [Vector{UInt32}(t.precursor_idx) for t in tabs]
     lens = [length(p) for p in pcs]
     names_ = collect(Tables.columnnames(first(tabs)))
     colsets = [[Tables.getcolumn(t, nm) for t in tabs] for nm in names_]
-    heap = BinaryMinHeap{Tuple{UInt64, Int32}}()
-    pos = ones(Int, length(tabs))
-    for f in eachindex(tabs)
-        lens[f] > 0 && push!(heap, (_pid_scan_key(pcs[f], scs[f], 1), Int32(f)))
-    end
-    bf = Int32[]; br = Int32[]; sizehint!(bf, target_rows + 1024); sizehint!(br, target_rows + 1024)
-    n_parts = 0; n_out = 0; last_pid = UInt32(0); prev_pid = typemax(UInt32)
-    function emit!()
-        isempty(bf) && return
-        n = length(bf)
-        df = DataFrame([nm => _zt_gather!(Vector{eltype(first(colsets[j]))}(undef, n), colsets[j], bf, br, n)
-                        for (j, nm) in enumerate(names_)]; copycols = false)
+    scan_cols = [Tables.getcolumn(t, :scan_idx) for t in tabs]
+    ranges = precursor_part_ranges(pcs, target_rows)
+    workspace = Int32SortPermWorkspace()
+    n_parts = 0; n_out = 0; last_pid = UInt32(0)
+    for (lo, hi) in ranges
+        slices = [searchsortedfirst(pcs[f], lo):searchsortedlast(pcs[f], hi) for f in eachindex(pcs)]
+        n = sum(length, slices)
+        keys = Vector{UInt64}(undef, n); off = 0
+        @inbounds for (f, rng) in enumerate(slices)
+            pc = pcs[f]; sc = scan_cols[f]
+            for r in rng
+                off += 1; keys[off] = (UInt64(pc[r]) << 32) | UInt64(sc[r])
+            end
+        end
+        perm = parallel_sortperm_int32!(workspace, keys)
+        cols = Vector{AbstractVector}(undef, length(names_))
+        Threads.@threads for j in eachindex(names_)
+            cols[j] = _slice_gather(colsets[j], slices, perm, n)
+        end
+        df = DataFrame(cols, names_; copycols = false)
         _check_precursor_part(df, last_pid, n_parts + 1)
         last_pid = last(df[!, :precursor_idx]); n_parts += 1; n_out += n
-        empty!(bf); empty!(br)
         on_part(df)
     end
-    while !isempty(heap)
-        key, f = pop!(heap)
-        pid = UInt32(key >> 32)
-        length(bf) >= target_rows && pid != prev_pid && emit!()        # only between precursors
-        r = pos[f]; push!(bf, f); push!(br, Int32(r)); prev_pid = pid; pos[f] = r + 1
-        r + 1 <= lens[f] && push!(heap, (_pid_scan_key(pcs[f], scs[f], r + 1), f))
-    end
-    emit!()
     n_out == sum(lens) || error("ZT merge produced $n_out rows, expected $(sum(lens))")
     return n_parts
 end
