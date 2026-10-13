@@ -686,24 +686,28 @@ function applyNormalization!(
     for fpath in psms_paths
         psms = load_arrow_dataframe(fpath)
         norm_quant_col = Symbol(string(quant_col) * "_normalized")
-        # getQuantSplines skips files that cannot support a spline, so this key may
-        # be absent. Emit the column unchanged rather than omitting it: downstream
-        # readers assume every file carries the same schema.
-        correction_spline = get(corrections, fpath, nothing)
-        if correction_spline === nothing
-            psms[!, norm_quant_col] = Float64.(psms[!, quant_col])
-            writeArrow(fpath, psms)
-            continue
-        end
-        n = size(psms, 1)
-        norm_vals = Vector{Float64}(undef, n)
-        for i in range(1, n)
-            hc = correction_spline(psms[i, :irt_obs])
-            norm_vals[i] = 2^(log2(max(psms[i, quant_col], 0.0)) - hc)
-        end
-        psms[!, norm_quant_col] = norm_vals
+        psms[!, norm_quant_col] = normalized_quant_column(psms, quant_col, get(corrections, fpath, nothing))
         writeArrow(fpath, psms)
     end
+end
+
+"""
+    normalized_quant_column(psms, quant_col, correction_spline) -> Vector{Float64}
+
+One file's normalized abundances: the quant column shifted by the file's RT-dependent correction.
+getQuantSplines skips files that cannot support a spline, so a file may have no correction
+(`nothing`); its column is the quant column unchanged rather than absent, because downstream readers
+assume every file carries the same schema.
+"""
+function normalized_quant_column(psms::AbstractDataFrame, quant_col::Symbol, correction_spline)
+    correction_spline === nothing && return Float64.(psms[!, quant_col])
+    n = size(psms, 1)
+    norm_vals = Vector{Float64}(undef, n)
+    for i in range(1, n)
+        hc = correction_spline(psms[i, :irt_obs])
+        norm_vals[i] = 2^(log2(max(psms[i, quant_col], 0.0)) - hc)
+    end
+    return norm_vals
 end
 
 """
@@ -723,6 +727,23 @@ This corrects systematic RT-dependent intensity differences between MS runs
 without forcing the marginal observed intensity distributions to match.
 """
 function normalizeQuant(
+    psms_paths::Vector{String},
+    quant_col_name::Symbol;
+    kwargs...)
+    corrections = quant_normalization_corrections(psms_paths, quant_col_name; kwargs...)
+    applyNormalization!(psms_paths, quant_col_name, corrections)
+    return nothing
+end
+
+"""
+    quant_normalization_corrections(psms_paths, quant_col_name; N=100, spline_n_knots=7,
+                                    run_ids=nothing, run_similarity_atlas=nothing) -> Dictionary
+
+The per-file RT-dependent corrections `normalizeQuant` applies (see there), keyed by path. Reads the
+files and writes nothing, so the corrections can be applied in a rewrite that happens anyway
+(`normalized_quant_column`). Anchors are target rows only, so decoy rows do not change them.
+"""
+function quant_normalization_corrections(
     psms_paths::Vector{String},
     quant_col_name::Symbol;
     N::Int = 100,
@@ -753,8 +774,7 @@ function normalizeQuant(
                            "$(length(components)) disconnected run groups. " *
                            "Each group is normalized and centered independently."
             end
-            applyNormalization!(psms_paths, quant_col_name, quant_corrections)
-            return nothing
+            return quant_corrections
         end
 
         @user_warn "No run pair had enough exact precursor matches " *
@@ -770,11 +790,7 @@ function normalizeQuant(
         min_anchor_run_fraction = min_anchor_run_fraction,
     )
 
-    quant_corrections_dict = getQuantCorrections(
-        quant_splines_dict, rt_range, N = N)
-
-    applyNormalization!(psms_paths, quant_col_name, quant_corrections_dict)
-    return nothing
+    return getQuantCorrections(quant_splines_dict, rt_range, N = N)
 end
 
 function normalizeQuant(

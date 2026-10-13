@@ -526,4 +526,48 @@ end
     end
 end
 
+@testset "corrections applied in a later rewrite match normalizeQuant" begin
+    mktempdir() do dir
+        paths = [joinpath(dir, "file$i.arrow") for i in 1:3]
+        for (path, offset) in zip(paths, [0.0, 1.5, -1.0])
+            _write_quant_arrow(path, 1000, offset)
+        end
+        before = [DataFrame(Arrow.Table(read(path))) for path in paths]
+        corrections = Pioneer.quant_normalization_corrections(paths, :abundance; N=50, spline_n_knots=5)
+        Pioneer.normalizeQuant(paths, :abundance; N=50, spline_n_knots=5)
+        for (path, df) in zip(paths, before)
+            expected = DataFrame(Arrow.Table(read(path))).abundance_normalized
+            @test Pioneer.normalized_quant_column(df, :abundance, get(corrections, path, nothing)) == expected
+        end
+    end
+end
+
+@testset "decoy rows do not change the corrections" begin
+    # Quantification computes the corrections before its decoy filter runs.
+    mktempdir() do dir
+        targets_only = String[]
+        with_decoys = String[]
+        for (i, offset) in enumerate([0.0, 1.5, -1.0])
+            path = joinpath(dir, "targets$i.arrow")
+            _write_quant_arrow(path, 1000, offset)
+            df = DataFrame(Arrow.Table(read(path)))
+            df[!, :target] = trues(nrow(df))
+            Arrow.write(path, df)
+            push!(targets_only, path)
+            decoys = DataFrame(precursor_idx = UInt32.(5001:5300), irt_obs = Float32.(range(0, 100, length = 300)),
+                               abundance = Float32.(range(50, 5000, length = 300)), target = falses(300))
+            decoy_path = joinpath(dir, "decoys$i.arrow")
+            Arrow.write(decoy_path, vcat(df, decoys))
+            push!(with_decoys, decoy_path)
+        end
+        clean = Pioneer.quant_normalization_corrections(targets_only, :abundance; N=50, spline_n_knots=5)
+        mixed = Pioneer.quant_normalization_corrections(with_decoys, :abundance; N=50, spline_n_knots=5)
+        for (t, d) in zip(targets_only, with_decoys)
+            df = DataFrame(Arrow.Table(read(t)))
+            @test Pioneer.normalized_quant_column(df, :abundance, get(clean, t, nothing)) ==
+                  Pioneer.normalized_quant_column(df, :abundance, get(mixed, d, nothing))
+        end
+    end
+end
+
 end # top-level testset

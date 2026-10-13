@@ -165,7 +165,8 @@ sort_file_by_keys!(ref, :score, :target; reverse=[true, true])
 """
 function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...;
                            reverse::Union{Bool, Vector{Bool}}=false,
-                           show_progress::Bool=true)
+                           show_progress::Bool=true,
+                           transform = nothing)
     validate_exists(ref)
 
     # Validate that all sort keys exist in schema (or in any sidecar, for
@@ -183,6 +184,8 @@ function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...;
 
     # Load file (and any registered sidecars) into memory.
     df = load_with_sidecars(ref)
+    # `transform(df, ref)` rides along with this rewrite (e.g. a row filter or a recomputed column).
+    transform === nothing || (df = transform(df, ref))
 
     # Build sort order vector
     rev_vec = if reverse isa Bool
@@ -200,8 +203,9 @@ function sort_file_by_keys!(ref::FileReference, sort_keys::Symbol...;
 
     # Write back to same file using writeArrow for Windows compatibility.
     # This is now the consolidation point — main + sidecar columns are
-    # merged into one file.
-    writeArrow(file_path(ref), df)
+    # merged into one file. A transform may change rows or columns, so then
+    # the reference's schema and row count are refreshed as well.
+    transform === nothing ? writeArrow(file_path(ref), df) : write_arrow_file(ref, df)
 
     # Sidecars are now stale (their data is in main); clear them and
     # unlink the on-disk sidecar files.
@@ -238,7 +242,7 @@ sort_file_by_keys!(refs, :score, :target; reverse=[true, true])
 """
 function sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...; 
                            reverse::Union{Bool, Vector{Bool}}=false, parallel::Bool=true,
-                           show_progress::Bool=true)
+                           show_progress::Bool=true, transform = nothing)
     # Validate reverse vector length if it's a vector
     if reverse isa Vector{Bool} && length(reverse) != length(keys)
         error("Length of reverse vector ($(length(reverse))) must match number of sort keys ($(length(keys)))")
@@ -248,13 +252,13 @@ function sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...;
         if show_progress
             Threads.@threads for ref in refs
                 if exists(ref)
-                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false)
+                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false, transform=transform)
                 end
             end
         else
             Threads.@threads for ref in refs  # No ProgressBar
                 if exists(ref)
-                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false)
+                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false, transform=transform)
                 end
             end
         end
@@ -263,13 +267,13 @@ function sort_file_by_keys!(refs::Vector{<:FileReference}, keys::Symbol...;
         if show_progress
             for ref in refs
                 if exists(ref)
-                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false)
+                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false, transform=transform)
                 end
             end
         else
             for ref in refs  # No ProgressBar
                 if exists(ref)
-                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false)
+                    sort_file_by_keys!(ref, keys...; reverse=reverse, show_progress=false, transform=transform)
                 end
             end
         end

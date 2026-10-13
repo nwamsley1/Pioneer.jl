@@ -234,17 +234,14 @@ function summarize_results!(
         return nothing
     end
 
-    if !params.params.output.write_decoys
-        decoy_filter_pipeline = TransformPipeline() |>
-            filter_rows(row -> row.target; desc = "keep_target_rows")
-        apply_pipeline!(psm_refs, decoy_filter_pipeline)
-    end
-
     # Normalize the same integrated precursor tables that will feed MaxLFQ.
     # Only run when the result will actually be consumed: MaxLFQ's quant
     # column selector + WriteOutputs both gate on run_to_run_normalization.
     # IntegrateChromatograms already populates :peak_area_normalized with
     # placeholder zeros, so a missing column never breaks downstream.
+    # The corrections come from read-only passes and are applied in the sort's rewrite below. Their
+    # anchors are target rows only, so computing them before the decoy filter changes nothing.
+    quant_corrections = nothing
     if params.run_to_run_normalization
         precursor_scoring_results = get_results(
             search_context,
@@ -253,7 +250,7 @@ function summarize_results!(
         run_similarity_atlas =
             precursor_scoring_results isa PrecursorScoringSearchResults ?
             precursor_scoring_results.run_similarity[] : nothing
-        normalizeQuant(
+        quant_corrections = quant_normalization_corrections(
             [file_path(ref) for ref in psm_refs],
             :peak_area,
             N = MAXLFQ_NORM_N_RT_BINS,
@@ -263,12 +260,24 @@ function summarize_results!(
         )
     end
 
+    # The decoy filter and the normalized abundances ride along with the sort's rewrite, rather than
+    # each costing its own read and rewrite of every file.
+    keep_decoys = params.params.output.write_decoys
+    prepare_for_quant = function (df, ref)
+        keep_decoys || filter!(row -> row.target, df)
+        if quant_corrections !== nothing
+            df[!, :peak_area_normalized] =
+                normalized_quant_column(df, :peak_area, get(quant_corrections, file_path(ref), nothing))
+        end
+        return df
+    end
+
     # Keep inferred protein groups contiguous for MaxLFQ. Ascending group order
     # places `missing` (non-inferred peptides) after all inferred groups; the
     # remaining tie-breakers retain their historical descending order.
     sort_keys = (:inferred_protein_group, :target, :entrapment_group_id, :precursor_idx)
     sort_file_by_keys!(psm_refs, :inferred_protein_group, :target, :entrapment_group_id, :precursor_idx;
-                       reverse=[false, true, true, true], parallel=true )
+                       reverse=[false, true, true, true], parallel=true, transform=prepare_for_quant)
 
     # Chunked merge: split into protein-group-aligned chunks bounded by max_chunk_size_mb
     chunk_dir = joinpath(temp_folder, "merge_chunks")
