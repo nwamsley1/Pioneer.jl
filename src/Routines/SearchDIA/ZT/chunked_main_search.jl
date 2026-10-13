@@ -301,6 +301,9 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
             path = joinpath(psm_dir, "chunk_$(lpad(ci, 4, '0')).arrow")
             t_write += @elapsed Arrow.write(path, raw)
             push!(chunk_paths, path)
+            # Diagnostic: keep a copy of each round file (e.g. to benchmark the merge on it)
+            keep = get(ENV, "PIONEER_DIAG_KEEP_CHUNKS", "")
+            isempty(keep) || (mkpath(keep); cp(path, joinpath(keep, basename(path)); force = true))
         end
         n_rows += nrow(raw); max_rows = max(max_rows, nrow(raw))
         t_deconv += t_d
