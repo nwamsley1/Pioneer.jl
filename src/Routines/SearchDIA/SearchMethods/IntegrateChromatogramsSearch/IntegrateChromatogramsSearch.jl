@@ -313,8 +313,10 @@ function process_file!(
     # kept here — ProteinInferenceSearch and ProteinScoringSearch need them
     # for protein-level FDR / PEP calibration. Final decoy suppression for
     # output happens later in ProteinQuantificationSearch when output.write_decoys=false.
-    # With MBR the input is a staged row selection of the scored table (load_staged_psms).
-    passing_psms = load_staged_psms(passing_psms_path)
+    # With MBR the input is a staged row selection of the scored table (load_staged_psms). The ML
+    # features nothing reads from here on are not loaded (integration_unread_columns), so they are
+    # neither copied into memory nor written back out.
+    passing_psms = load_staged_psms(passing_psms_path; exclude = integration_unread_columns())
 
     # Initialize the integration schema before the empty-file check so an
     # empty staged MBR file remains consumable by the post-integration pass.
@@ -526,6 +528,16 @@ function process_file!(
 
     return results
 end
+
+"""
+    integration_unread_columns()
+
+The PRECSCORE_DROPPABLE_COLUMNS nothing reads once integration has loaded the PSMs: all of them except
+`lgbm_score` (the combined-trace seed, read here), `trace_prob_prepass` and MBR_RECEIVER_FEATURES (read by
+post-integration MBR). Every one of them is dropped before the output anyway.
+"""
+integration_unread_columns() =
+    setdiff(PRECSCORE_DROPPABLE_COLUMNS, [:lgbm_score, :trace_prob_prepass, MBR_RECEIVER_FEATURES...])
 
 function process_search_results!(
     results::IntegrateChromatogramSearchResults,

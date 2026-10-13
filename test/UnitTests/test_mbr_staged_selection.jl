@@ -27,6 +27,9 @@ import Pioneer
         @test eltype.(eachcol(loaded)) == eltype.(eachcol(expected))   # same column types, not just values
         @test isequal(Pioneer.load_staged_psms(staged_path, [:precursor_idx, :qval, :absent]),
                       expected[:, [:precursor_idx, :qval]])
+        # `exclude` skips columns of the source and of its sidecars, keeping the order of the rest.
+        @test isequal(Pioneer.load_staged_psms(staged_path; exclude = [:rt, :qval]),
+                      expected[:, [:precursor_idx, :note]])
 
         # Once integration writes the real table, it is read and the selection is gone.
         Pioneer.writeArrow(staged_path, expected[1:2, :])
@@ -35,6 +38,8 @@ import Pioneer
         @test isfile(source_path)   # the source is kept unless asked for
         @test isequal(Pioneer.load_staged_psms(staged_path), expected[1:2, :])
         @test Pioneer.load_staged_psms(staged_path, [:rt]).rt == expected.rt[1:2]
+        @test isequal(Pioneer.load_staged_psms(staged_path; exclude = [:note]),
+                      expected[1:2, [:precursor_idx, :rt, :qval]])
 
         # An empty selection loads as an empty table with every column.
         empty_path = joinpath(dir, "passing", "run2.arrow")

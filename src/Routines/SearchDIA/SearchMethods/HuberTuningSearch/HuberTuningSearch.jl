@@ -84,7 +84,8 @@ function process_file!(
         return results
     end
 
-    passing_psms = load_staged_psms(passing_psms_path)
+    # The calibration reads only these; copying the other ~100 columns would be wasted memory.
+    passing_psms = load_staged_psms(passing_psms_path, [:precursor_idx, :scan_idx, :rt])
     isempty(passing_psms) && return results
 
     calibration_psms = select_huber_calibration_psms(
