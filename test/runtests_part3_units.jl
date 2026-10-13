@@ -137,6 +137,7 @@ include("./UnitTests/test_sparse_maxlfq.jl")
 include("./UnitTests/test_calibration_qc.jl")
 include("./UnitTests/test_precursor_long_export.jl")
 include("./UnitTests/test_zt_mode.jl")
+include("./UnitTests/test_unit_resolution_scout.jl")
 include("./UnitTests/test_zt_partition_merge.jl")
 include("./UnitTests/test_file_name_labels.jl")
 

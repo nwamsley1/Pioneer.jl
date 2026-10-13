@@ -161,6 +161,20 @@ function collect_raw_psms(
 end
 
 """
+    scout_unit_resolution_tol(spectra) -> Union{Nothing, Float32}
+
+Fragment half-width (Th) for the wide scout on unit-resolution data, or `nothing` to keep
+the ±WIDE_SCOUT_TOL_PPM scout. PioneerConverter writes `mass_resolution` (the run header's
+half peak width, 0.5 on a Stellar) only for ion-trap MS2 files.
+"""
+function scout_unit_resolution_tol(spectra::MassSpecData)
+    meta = getAcquisitionMetadata(spectra)
+    meta === nothing && return nothing
+    res = tryparse(Float32, get(meta, "mass_resolution", ""))
+    return res === nothing || res <= 0 ? nothing : res
+end
+
+"""
     initialize_models!(search_context, ms_file_idx, params)
 
 Initialize mass error and quad transmission models for file.
@@ -658,9 +672,16 @@ function process_file!(
         min_psms_needed = getMinPsms(params)
 
         # Two-phase loop: Phase 1 (wide scout) discovers bias → Phase 2 (collection) refines
+        unit_res_tol = scout_unit_resolution_tol(spectra)
+        scout_model = if unit_res_tol === nothing
+            MassErrorModel(0.0f0, (WIDE_SCOUT_TOL_PPM, WIDE_SCOUT_TOL_PPM))
+        else
+            @debug_l1 "  Wide scout: unit-resolution file, fragment tolerance ±$(unit_res_tol) Th"
+            LinearDaMassErrorModel(0.0f0, 0.0f0, unit_res_tol)
+        end
         phases = (
             (label = "Wide scout",
-             mass_model = MassErrorModel(0.0f0, (WIDE_SCOUT_TOL_PPM, WIDE_SCOUT_TOL_PPM)),
+             mass_model = scout_model,
              target_psms = WIDE_SCOUT_TARGET_PSMS,
              initial_scans = WIDE_SCOUT_INITIAL_SCANS,
              max_peaks = Int(TUNING_TOPN_PEAKS)),
