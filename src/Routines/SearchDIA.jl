@@ -188,7 +188,7 @@ function SearchDIA(params_path::String)
                 return
             end
             check_ms_data_vendors(MS_TABLE_PATHS)
-            warn_slow_storage(MS_TABLE_PATHS, SPEC_LIB_DIR)
+            warn_slow_storage(MS_TABLE_PATHS, SPEC_LIB_DIR, params.paths[:results])
 
             nothing
         end

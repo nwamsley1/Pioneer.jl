@@ -26,7 +26,9 @@ pub fn kinds(paths: &[String]) -> Vec<StorageInfo> {
     let mut seen: Vec<(String, &'static str)> = Vec::new();
     let mut out = Vec::new();
     for p in paths {
-        let Ok(real) = std::fs::canonicalize(p) else {
+        // A folder that does not exist yet (an output folder before the run) is judged by
+        // the nearest existing folder above it: that is the drive it will be created on.
+        let Some(real) = Path::new(p).ancestors().find_map(|a| std::fs::canonicalize(a).ok()) else {
             out.push(StorageInfo { path: p.clone(), kind: "unknown" });
             continue;
         };
@@ -295,9 +297,12 @@ mod tests {
     }
 
     #[test]
-    fn missing_paths_are_unknown_and_volumes_are_probed_once() {
-        let r = kinds(&["/definitely/not/here".to_string()]);
-        assert_eq!(r[0].kind, "unknown");
+    fn missing_paths_take_their_nearest_existing_folder_and_volumes_are_probed_once() {
+        let dir = std::env::temp_dir();
+        let missing = dir.join("pioneer_not_created_yet").join("results");
+        let r = kinds(&[missing.to_string_lossy().into_owned(), dir.to_string_lossy().into_owned()]);
+        assert_eq!(r[0].kind, r[1].kind);
+        assert_eq!(kinds(&[String::new()])[0].kind, "unknown");
         let dir = std::env::temp_dir();
         let r = kinds(&[dir.to_string_lossy().into_owned(), dir.to_string_lossy().into_owned()]);
         assert_eq!(r.len(), 2);

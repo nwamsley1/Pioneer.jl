@@ -1792,7 +1792,7 @@ export default function App() {
     // cannot classify is let through.
     if (isSearch && !skipStorageCheck) {
       const msPaths = search.msDataMode === 'files' ? search.msDataFiles : [search.msData]
-      void backend.storageKinds([...msPaths, search.library].filter((p) => p.trim())).then((infos) => {
+      void backend.storageKinds([...msPaths, search.library, search.results].filter((p) => p.trim())).then((infos) => {
         const slow = infos.filter((i) => i.kind === 'hdd' || i.kind === 'optical')
         if (slow.length > 0) setSlowStorage(slow)
         else run(true, true)
@@ -2303,12 +2303,21 @@ export default function App() {
           <ConfirmDialog
             tone="warning"
             title="Data is on a slow drive"
-            body={
-              `${slowStorage.some((s) => s.path !== search.library) ? 'The MS data are' : 'The spectral library is'} ` +
-              'on a mechanical or optical drive. This may result in substantially longer search times.'
-            }
+            body={(() => {
+              const what = [
+                slowStorage.some((s) => s.path !== search.library && s.path !== search.results) && 'MS data',
+                slowStorage.some((s) => s.path === search.library) && 'spectral library',
+                slowStorage.some((s) => s.path === search.results) && 'output folder',
+              ].filter(Boolean) as string[]
+              const list = what.length > 1 ? `${what.slice(0, -1).join(', ')} and ${what[what.length - 1]}` : what[0]
+              const verb = what.length > 1 || what[0] === 'MS data' ? 'are' : 'is'
+              return `The ${list} ${verb} on a mechanical or optical drive. This may result in substantially longer search times.`
+            })()}
             detail={slowStorage
-              .map((s) => `${s.path}  (${s.kind === 'optical' ? 'optical drive' : 'mechanical hard drive'})`)
+              .map((s) => {
+                const role = s.path === search.library ? 'library' : s.path === search.results ? 'output folder' : 'MS data'
+                return `${s.path}  (${role}, ${s.kind === 'optical' ? 'optical drive' : 'mechanical hard drive'})`
+              })
               .join('\n')}
             dismissLabel="Cancel"
             confirmLabel="Run anyway"

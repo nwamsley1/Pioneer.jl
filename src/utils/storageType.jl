@@ -260,11 +260,14 @@ function slow_storage_paths(paths::AbstractVector{<:AbstractString})
 end
 
 """
-    warn_slow_storage(ms_paths, library_dir)
+    warn_slow_storage(ms_paths, library_dir, results_dir)
 
-Warn (never fail) when the MS data files or the spectral library are on a mechanical or optical drive.
+Warn (never fail) when the MS data files, the spectral library or the output folder are on a mechanical or
+optical drive. The output folder matters as much as the inputs: a search writes and re-reads large temporary
+files there.
 """
-function warn_slow_storage(ms_paths::AbstractVector{<:AbstractString}, library_dir::AbstractString)
+function warn_slow_storage(ms_paths::AbstractVector{<:AbstractString}, library_dir::AbstractString,
+                           results_dir::AbstractString)
     try
         for (path, kind) in slow_storage_paths(ms_paths)
             @user_warn "The MS data ($(dirname(path))) are on $(storage_kind_label(kind)). " *
@@ -272,6 +275,10 @@ function warn_slow_storage(ms_paths::AbstractVector{<:AbstractString}, library_d
         end
         for (path, kind) in slow_storage_paths([library_dir])
             @user_warn "The spectral library ($path) is on $(storage_kind_label(kind)). " *
+                       "This may result in substantially longer search times."
+        end
+        for (path, kind) in slow_storage_paths([results_dir])
+            @user_warn "The output folder ($path) is on $(storage_kind_label(kind)). " *
                        "This may result in substantially longer search times."
         end
     catch
