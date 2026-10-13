@@ -45,14 +45,16 @@ function read_calibration(s::AbstractVector{UInt8}, meta_start::Int64, ff::Int64
 end
 
 """
-    decode_block!(buf, s, meta_start, ff, size) -> buf
+    decode_block!(buf, s, meta_start, ff, size, step = 8) -> buf
 
 Decode the block whose `ffffffff` marker is at 0-based offset `ff` of the `.wiff.scan` bytes `s`.
 """
-function decode_block!(buf::ScanBuffer, s::AbstractVector{UInt8}, meta_start::Int64, ff::Int64, size::Integer)
+function decode_block!(buf::ScanBuffer, s::AbstractVector{UInt8}, meta_start::Int64, ff::Int64, size::Integer,
+                       step::Integer = 8)
     stop = Int(ff + size)
     stop <= length(s) || throw(ScanFormatError("block at $ff runs past end of file"))
-    buf.cal_a, buf.cal_b = read_calibration(s, meta_start, ff)
+    # a block without metadata (meta_start == ff) keeps the calibration the caller set in buf
+    meta_start < ff && ((buf.cal_a, buf.cal_b) = read_calibration(s, meta_start, ff))
     @inbounds begin
         (s[ff+1] == 0xff && s[ff+2] == 0xff && s[ff+3] == 0xff && s[ff+4] == 0xff && s[ff+9] == 0x00) ||
             throw(ScanFormatError("no block marker at $ff"))
@@ -97,7 +99,7 @@ function decode_block!(buf::ScanBuffer, s::AbstractVector{UInt8}, meta_start::In
             throw(ScanFormatError("bad intensity prefix 0x$(string(v, base = 16)) in block at $ff"))
         end
         i <= stop || throw(ScanFormatError("block at $ff ends inside a token"))
-        pos += 8d
+        pos += step * d   # bins per delta unit: 8 on ZenoTOF, 4 on TripleTOF
         n += 1
         bins[n] = pos % UInt32; ints[n] = iv
     end

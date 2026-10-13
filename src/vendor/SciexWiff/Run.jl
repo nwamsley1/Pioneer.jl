@@ -11,6 +11,8 @@ struct WiffRun
     scan_ranges::Vector{Tuple{Float64,Float64}}   # acquired m/z range per experiment
     method_name::String
     scan::Vector{UInt8}          # memory-mapped `.wiff.scan`
+    calibration::Vector{NTuple{2,Float64}}   # per-record (a, b) from TOFCalibrationData; used when a block has none
+    bin_step::Int                            # bins per delta unit (8 ZenoTOF; 4 TripleTOF, detected)
 end
 
 """
@@ -42,11 +44,22 @@ function WiffRun(wiff::AbstractString; sample::Integer = 1, scan_path::AbstractS
     sample in sample_numbers(cf) || throw(ArgumentError("sample $sample not in $wiff (has $(sample_numbers(cf)))"))
     index = ScanIndex(CFB.read_stream(cf, "SampleSubtree/Sample$sample/Idx"))
     windows = read_swath_windows(cf)
-    length(index) % (length(windows) + 1) == 0 ||
-        throw(ArgumentError("$(length(index)) Idx records is not a whole number of $(length(windows) + 1)-experiment cycles"))
+    # A run stopped mid-cycle (seen on TripleTOF 5600/6600) ends with a partial cycle; records are
+    # cycle-aligned from the first, so drop the incomplete last cycle rather than mislabel its scans.
+    full, partial = divrem(length(index), length(windows) + 1)
+    full > 0 || throw(ArgumentError("$(length(index)) Idx records is less than one $(length(windows) + 1)-experiment cycle"))
+    calibration = read_tof_calibration(cf, sample)
+    if partial > 0
+        @warn "$(basename(wiff)): dropping $partial records of an incomplete final cycle ($(length(windows) + 1) experiments per cycle)"
+        keep = 1:(full * (length(windows) + 1))
+        index = ScanIndex(index.block_offset[keep], index.block_size[keep], index.meta_start[keep], index.rt_ms[keep],
+                          index.tic[keep], index.base_peak_intensity[keep], index.base_peak_bin[keep])
+        length(calibration) >= length(keep) && (calibration = calibration[keep])
+    end
     ranges = read_scan_ranges(cf, length(windows) + 1)
     scan = Mmap.mmap(scan_path)
-    WiffRun(String(wiff), String(scan_path), sample, index, windows, ranges, read_method_name(cf), scan)
+    step = detect_bin_step(scan, index)
+    WiffRun(String(wiff), String(scan_path), sample, index, windows, ranges, read_method_name(cf), scan, calibration, step)
 end
 
 Base.length(run::WiffRun) = length(run.index)
@@ -70,7 +83,34 @@ function read_scan!(buf::ScanBuffer, run::WiffRun, r::Integer)
         buf.n = 0
         return buf
     end
-    decode_block!(buf, run.scan, ix.meta_start[r], ix.block_offset[r], ix.block_size[r])
+    if ix.meta_start[r] == ix.block_offset[r]
+        # no per-block metadata (TripleTOF): calibration comes from the .wiff's TOFCalibrationData table
+        r <= length(run.calibration) || throw(ScanFormatError("record $r has no block metadata and no TOFCalibrationData entry"))
+        buf.cal_a, buf.cal_b = run.calibration[r]
+    end
+    decode_block!(buf, run.scan, ix.meta_start[r], ix.block_offset[r], ix.block_size[r], run.bin_step)
+end
+
+"""
+    detect_bin_step(scan, index) -> Int
+
+Bins per delta unit. ZenoTOF blocks carry metadata and use 8. Blocks without metadata (TripleTOF) are checked against the
+Idx: the step is the one (4 or 8) whose most intense decoded peak lands within 64 bins of the record's base-peak bin.
+"""
+function detect_bin_step(scan::AbstractVector{UInt8}, index::ScanIndex)
+    recs = filter(r -> index.block_size[r] > 0, 1:min(length(index), 2000))
+    isempty(recs) && return 8
+    index.meta_start[recs[1]] < index.block_offset[recs[1]] && return 8
+    sample = recs[round.(Int, range(1, length(recs), length = min(50, length(recs))))]
+    buf = ScanBuffer(); hits = Dict(4 => 0, 8 => 0)
+    for step in (4, 8), r in sample
+        decode_block!(buf, scan, index.meta_start[r], index.block_offset[r], index.block_size[r], step)
+        buf.n > 0 && abs(Float64(buf.bin[argmax(view(buf.intensity, 1:buf.n))]) - index.base_peak_bin[r]) <= 64 && (hits[step] += 1)
+    end
+    best = hits[4] >= hits[8] ? 4 : 8
+    hits[best] >= 0.8 * length(sample) ||
+        throw(ScanFormatError("cannot determine the bin step: base-peak matches $(hits) of $(length(sample)) records"))
+    best
 end
 
 """

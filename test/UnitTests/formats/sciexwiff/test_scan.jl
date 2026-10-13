@@ -120,3 +120,20 @@ end
     @test ix.block_offset == Int64[144, 44 + 0xfffff000, (Int64(1) << 32) + 0x1000 + 44]
     @test ix.meta_start[3] == 44 + 0xfffff000 + 0x2000
 end
+
+@testset "blocks without metadata (TripleTOF)" begin
+    steps = [1, 2, 3, 10, 200]; ints = [5, 123, 9_000, 7, 300]
+    file, ms, ff, sz = synthetic_block(steps, ints)
+    sb = ScanBuffer(); sb.cal_a, sb.cal_b = 7.0e-4, 0.5          # calibration set by the caller (TOFCalibrationData)
+    S.decode_block!(sb, file, ff, ff, sz, 4)                     # meta_start == ff: no metadata
+    @test sb.bin[1:sb.n] == UInt32.(1_000_000 .+ 4 .* steps)
+    @test sb.cal_a == 7.0e-4 && sb.cal_b == 0.5
+
+    # the bin step is the one whose most intense decoded peak sits on the Idx base-peak bin
+    bp = Float64(1_000_000 + 4 * steps[argmax(ints)])
+    ix = S.ScanIndex([ff], Int32[sz], [ff], [0.0], [0.0], [9_000.0], [bp])
+    @test S.detect_bin_step(file, ix) == 4
+    # blocks with metadata (ZenoTOF) always use 8
+    ix8 = S.ScanIndex([ff], Int32[sz], [ms], [0.0], [0.0], [9_000.0], [bp])
+    @test S.detect_bin_step(file, ix8) == 8
+end

@@ -72,3 +72,20 @@ function read_method_name(cf::CFB.CompoundFile)
     name = split(name, ',')[1]
     replace(name, r"\d?(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday).*$" => "")
 end
+
+"""
+    read_tof_calibration(cf, sample) -> Vector{NTuple{2,Float64}}
+
+Per-scan TOF calibration `(a, b)` from `SampleSubtree/Sample{N}/TOFCalibrationData`: a 52-byte header, a u32 record
+count at byte 52, then 20-byte records `{f64 a, f64 b, u32}`, one per Idx record. Blocks whose `.wiff.scan` metadata
+carries no calibration (TripleTOF) use it; on ZenoTOF it equals the per-block calibration. Empty if the stream is absent.
+"""
+function read_tof_calibration(cf::CFB.CompoundFile, sample::Integer)
+    p = "SampleSubtree/Sample$sample/TOFCalibrationData"
+    CFB.has_stream(cf, p) || return NTuple{2,Float64}[]
+    s = CFB.read_stream(cf, p)
+    length(s) >= 56 || throw(ArgumentError("$p has $(length(s)) bytes"))
+    n = Int(_rd(UInt32, s, 52))
+    length(s) == 56 + 20n || throw(ArgumentError("$p has $(length(s)) bytes, not 56 + 20·$n"))
+    [(_rd(Float64, s, 56 + 20k), _rd(Float64, s, 64 + 20k)) for k in 0:n-1]
+end
