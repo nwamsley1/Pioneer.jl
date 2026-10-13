@@ -702,11 +702,26 @@ function process_search_results!(
     best_cv_fold = UInt8[getCvFold(precursors, pid) for pid in best_psms.precursor_idx]
     select!(best_psms, Not(filter(c -> hasproperty(best_psms, c), collect(MAINSEARCH_UNWRITTEN_COLUMNS))))
     compact_model_features!(best_psms)
+    # The library-lookup columns and the rt order are added here, so each fold file is written once
+    # (summarize_results! used to reload and rewrite every fold just for these).
+    prec_mz_arr = getMz(precursors)
+    entrap_group_ids = getEntrapmentGroupId(precursors)
     for fold in UInt8[0, 1]
         fold_mask = best_cv_fold .== fold
         if any(fold_mask)
             fold_path = joinpath(main_search_psms_dir, "$(file_name)_fold$(fold).arrow")
-            writeArrow(fold_path, best_psms[fold_mask, :])
+            fold_psms = best_psms[fold_mask, :]
+            N = nrow(fold_psms)
+            prec_mz_col = Vector{Float32}(undef, N)
+            entrap_col = Vector{UInt8}(undef, N)
+            _compute_phase2_columns!(
+                fold_psms[!, :precursor_idx], prec_mz_arr, entrap_group_ids, prec_mz_col, entrap_col
+            )
+            fold_psms[!, :prec_mz] = prec_mz_col
+            fold_psms[!, :entrapment_group_id] = entrap_col
+            sort!(fold_psms, :rt)
+            dropVectorColumns!(fold_psms)
+            writeArrow(fold_path, fold_psms)
         end
     end
     haskey(ENV, "PIONEER_DIAG_ALLOC") && @user_print string("[ALLOC] write_fold_arrow: ",
@@ -749,7 +764,7 @@ function reset_results!(results::MainSearchResults)
 end
 
 """
-Typed inner function for Phase 2 library-lookup columns in `summarize_results!`.
+Typed inner function for the library-lookup columns `process_search_results!` adds to each fold.
 Accepts DataFrame columns (already `Vector{T}`) and library arrays as `AbstractVector`
 so the compiler specializes on concrete types, eliminating dynamic dispatch.
 """
@@ -794,18 +809,13 @@ function summarize_results!(
                     fold0_result.rt_binned_tol : fold1_result.rt_binned_tol
     t1 = time() - t1_start
 
-    # Step 2: Load main_search_psms fold-split files, filter to passing precursors,
-    # add deferred columns, OVERWRITE each fold file in place via writeArrow.
-    # The fold-split layout is preserved here because PrecursorScoringSearch's
+    # Step 2: Register each file's fold-split main_search_psms (written complete by
+    # process_search_results!). The fold-split layout is kept because PrecursorScoringSearch's
     # Pass-1 LGBM CV needs to load one fold's rows at a time. PrecursorScoring
     # later merges fold0+fold1 into a single per-file Arrow (also in
     # main_search_psms_dir) once LGBM training is done.
     t2_start = time()
     _b_t2 = Base.gc_bytes()
-
-    # Library lookups (shared across files)
-    prec_mz_arr = getMz(precursors)
-    entrap_group_ids = getEntrapmentGroupId(precursors)
 
     n_processed_files = 0
     n_total_precs = 0
@@ -827,40 +837,17 @@ function summarize_results!(
                 continue
             end
 
-            # Load this fold's main search PSMs into an in-memory DataFrame and
-            # unmap the file, so the in-place writeArrow below can replace it
-            # (on a network share a still-mapped file cannot be deleted).
-            tbl = load_arrow_dataframe(psm_path)
-            n_before = nrow(tbl)
-            n_before_file += n_before
-            n_total_precs += n_before
+            n_rows = with_arrow_table(tbl -> length(Tables.getcolumn(tbl, :precursor_idx)), psm_path)
+            n_before_file += n_rows
+            n_total_precs += n_rows
+            n_after_file += n_rows
+            n_kept_precs += n_rows
 
-            n_after = nrow(tbl)
-            n_after_file += n_after
-            n_kept_precs += n_after
-
-            if n_after == 0
+            if n_rows == 0
                 # Drop the on-disk file so downstream code skips this fold.
                 safeRm(psm_path)
                 continue
             end
-
-            # Add Phase 2 library-lookup columns (deferred from process_search_results!)
-            N = nrow(tbl)
-            prec_mz_col = Vector{Float32}(undef, N)
-            entrap_col = Vector{UInt8}(undef, N)
-            _compute_phase2_columns!(
-                tbl[!, :precursor_idx], prec_mz_arr, entrap_group_ids, prec_mz_col, entrap_col
-            )
-            tbl[!, :prec_mz] = prec_mz_col
-            tbl[!, :entrapment_group_id] = entrap_col
-
-            sort!(tbl, :rt)
-            dropVectorColumns!(tbl)
-
-            # Overwrite the same fold file in place. writeArrow handles the
-            # tempname → move dance internally for Windows safety.
-            writeArrow(psm_path, tbl)
             file_has_data = true
         end
 
