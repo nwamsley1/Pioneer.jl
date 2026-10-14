@@ -201,7 +201,6 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
     t_merge = @elapsed zt_merge_by_precursor(parts; target_rows = zt_partition_rows(search_context, ms_file_idx)) do df
         t_prepare += @elapsed prepare_psm_features!(df, params, search_context, ms_file_idx, spectra)
         t_ms1 += @elapsed add_chromatogram_features!(df, spectra; bitvec_rank_table = bitvec_rank_table)
-        compact_model_features!(df)
         f = joinpath(dir, "part_$(lpad(length(featured) + 1, 4, '0')).featured.arrow")
         Arrow.write(f, df); push!(featured, f); push!(n_rows, nrow(df))
     end

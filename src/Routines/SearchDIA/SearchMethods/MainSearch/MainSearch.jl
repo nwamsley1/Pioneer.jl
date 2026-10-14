@@ -162,46 +162,6 @@ column's element type rather than the `AbstractVector` that `eachcol` statically
 end
 
 """
-Scan-level PSM features that only models read (MainSearch's per-file LightGBM, Precursor Scoring,
-MBR) and that are bounded, so they are kept as Float16 once computed: LightGBM bins each feature into
-at most 255 levels, and Float16 keeps about 3 significant digits. None is read arithmetically after
-its producer, and all are dropped from the outputs (`PRECSCORE_DROPPABLE_COLUMNS`). 18 columns,
-2 bytes per row each instead of 4.
-"""
-const SCAN_FLOAT16_FEATURE_COLUMNS = (
-    :weight_ratio_at_scan, :weight_frac_in_cycle, :top3_ms2_mass_error_mean,
-    :ms1_isotope_dotp_m0_m1_m2, :ms1_m0_m1_m2_window_fraction, :ms1_m0_m1_m2_window_fraction_pc,
-    :ms1_m0_mass_err_ppm, :ms1_m1_to_m0_pred, :ms1_m1_to_m0_ratio,
-    :ms1_ms2_explained_delta, :ms1_ms2_explained_delta_pc, :ms1_weight_apex_to_m0_apex_irt,
-    :ms1_m0_peak_frag_intensity_fraction,
-    :frag_apex_dispersion_irt, :frag_corr_effective_n, :frag_corr_strength, :frag_corr_best_m0,
-    :delta_frame_peak_center,
-)
-
-"""
-    compact_model_features!(psms) -> psms
-
-Store each column of `SCAN_FLOAT16_FEATURE_COLUMNS` that is present as a Float32 vector as Float16,
-clamped to Float16's finite range (NaN stays NaN). Called right after the passes that produce them
-(per-scan features, chromatogram features), on the in-memory table and on every chunk and part
-written to disk alike, so both paths hold the same values. Columns already compacted, absent, or of
-another type are left as they are.
-"""
-function compact_model_features!(psms::DataFrame)
-    for col in SCAN_FLOAT16_FEATURE_COLUMNS
-        hasproperty(psms, col) || continue
-        v = psms[!, col]
-        v isa Vector{Float32} || continue
-        out = Vector{Float16}(undef, length(v))
-        Threads.@threads for i in eachindex(v)
-            @inbounds out[i] = Float16(clamp(v[i], -floatmax(Float16), floatmax(Float16)))
-        end
-        psms[!, col] = out
-    end
-    return psms
-end
-
-"""
     permute_psms_by_precursor_idx!(psms, sortperm_workspace) -> DataFrame
 
 Sort `psms` in place by `:precursor_idx` with a hand-rolled column-wise gather. Much faster than
@@ -374,7 +334,6 @@ function process_file!(
     # precursor sort, since they group by :precursor_idx.
     t_ms1 = zt_collapsed ? 0.0 :
         @elapsed @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(psms, spectra, search_context, ms_file_idx)
-    compact_model_features!(psms)
 
     # Sort the deconv-output DataFrame by :precursor_idx once. Downstream
     # passes (chrom features, best-per-precursor) can then fast-path their
@@ -468,7 +427,6 @@ function _mainsearch_best_in_memory!(
         spectra;
         bitvec_rank_table = bitvec_rank_table,
     )
-    compact_model_features!(psms)
 
     # Train LightGBM on all PSMs and select the narrow set of representatives
     # needed to fit the out-of-fold iRT correction.

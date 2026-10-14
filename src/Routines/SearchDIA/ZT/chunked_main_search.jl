@@ -299,7 +299,6 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
             t_features += @elapsed begin
                 @alloc_bucket "scan_competition_features" add_scan_competition_features!(raw)
                 @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(raw, spectra, search_context, ms_file_idx)
-                compact_model_features!(raw)
                 permute_psms_by_precursor_idx!(raw, workspace)
             end
             _assert_precursor_scan_sorted(raw)
