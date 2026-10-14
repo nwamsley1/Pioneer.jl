@@ -191,6 +191,9 @@ chunk, not the file. Same budget as `ZT_CHUNK_CANDIDATES`.
 """
 const MAIN_CHUNK_CANDIDATES = 30_000_000
 
+"""Round size in candidates: `MAIN_CHUNK_CANDIDATES`, or the diagnostic override `PIONEER_MAIN_CHUNK_CANDIDATES`."""
+main_chunk_candidates() = parse(Int, get(ENV, "PIONEER_MAIN_CHUNK_CANDIDATES", string(MAIN_CHUNK_CANDIDATES)))
+
 """
 Peak disk use of a chunked MainSearch file per fragment-index candidate, with margin: the round
 files (~195 B per PSM) and the featured parts (~280 B per PSM) are on disk together while the parts
@@ -266,7 +269,8 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
                                     thread_tasks::AbstractVector, n_candidates::Int)
     params isa MainSearchParameters || return nothing
     getZTGeometry(search_context, ms_file_idx) === nothing || return nothing
-    n_candidates > MAIN_CHUNK_CANDIDATES || return nothing
+    round_candidates = main_chunk_candidates()
+    n_candidates > round_candidates || return nothing
     psm_dir = zt_psm_dir(search_context, ms_file_idx)
     # Not enough free disk for the round files and the featured parts (both are on disk while the
     # parts are built): search in memory instead, which gives the same results.
@@ -278,7 +282,7 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
                    "searching it in memory (same results, more memory)"
         return nothing
     end
-    chunks = main_thread_chunks(thread_tasks, scan_to_prec_idx, cld(n_candidates, MAIN_CHUNK_CANDIDATES))
+    chunks = main_thread_chunks(thread_tasks, scan_to_prec_idx, cld(n_candidates, round_candidates))
     rm(psm_dir; recursive = true, force = true); mkpath(psm_dir)
     workspace = Int32SortPermWorkspace()
     chunk_paths = String[]; n_rows = 0; max_rows = 0; empty_schema = nothing
@@ -295,6 +299,7 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
             t_features += @elapsed begin
                 @alloc_bucket "scan_competition_features" add_scan_competition_features!(raw)
                 @alloc_bucket "ms1_lookup_features" add_ms1_lookup_features!(raw, spectra, search_context, ms_file_idx)
+                compact_model_features!(raw)
                 permute_psms_by_precursor_idx!(raw, workspace)
             end
             _assert_precursor_scan_sorted(raw)

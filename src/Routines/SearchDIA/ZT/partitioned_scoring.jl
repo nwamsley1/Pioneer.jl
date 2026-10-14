@@ -201,6 +201,7 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
     t_merge = @elapsed zt_merge_by_precursor(parts; target_rows = zt_partition_rows(search_context, ms_file_idx)) do df
         t_prepare += @elapsed prepare_psm_features!(df, params, search_context, ms_file_idx, spectra)
         t_ms1 += @elapsed add_chromatogram_features!(df, spectra; bitvec_rank_table = bitvec_rank_table)
+        compact_model_features!(df)
         f = joinpath(dir, "part_$(lpad(length(featured) + 1, 4, '0')).featured.arrow")
         Arrow.write(f, df); push!(featured, f); push!(n_rows, nrow(df))
     end
@@ -232,7 +233,7 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
     @debug_l1 "  LightGBM CV (partitioned, $(length(parts)) files): fold0=$(length(idx0)) fold1=$(length(idx1)) PSMs; " *
               "train=$(length.(sub_positions))  MAX_TRAIN=$MAIN_LGBM_MAX_TRAIN"
     fold_predictors = Vector{Any}(undef, 2)
-    t_fit = 0.0
+    t_fit = 0.0; t_gather = 0.0
     for (fi, (fit_idx, _)) in enumerate(fold_pairs)
         sub_pos = fit_idx[sub_positions[fi]]
         y_lbl = _prepare_labels(all_targets[sub_pos])
@@ -244,7 +245,7 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
         cls = build_lightgbm_classifier(; MAINSEARCH_LGBM_HP...)
         b_train = buffers.train
         GC.@preserve b_train begin
-            X_tr = feature_matrix!(b_train, lazy[sub_pos, available_features], available_features)
+            t_gather += @elapsed (X_tr = feature_matrix!(b_train, lazy[sub_pos, available_features], available_features))
             t_fit += @elapsed LightGBM.fit!(cls, X_tr, y_lbl; verbosity = -1)
         end
         fold_predictors[fi] = (kind = :lgbm, value = NaN, model = cls, beta = nothing)
@@ -254,15 +255,18 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
 
     # ---- pass B: out-of-fold scores and the iRT refinement rows ----
     scores_oof = Vector{Float32}(undef, n_total); refinement_parts = DataFrame[]; off = 0
+    t_load_b = 0.0; t_pred_b = 0.0
     for (i, f) in enumerate(featured)
-        df = _zt_load(f)
-        df[!, :lgbm_score] = Float32.(predict_psm_classifier_scores(df, predictor; buffers = buffers))
+        t_load_b += @elapsed (df = _zt_load(f))
+        t_pred_b += @elapsed (df[!, :lgbm_score] = Float32.(predict_psm_classifier_scores(df, predictor; buffers = buffers)))
         scores_oof[(off + 1):(off + n_rows[i])] = df[!, :lgbm_score]
         push!(refinement_parts, _select_irt_refinement_psms(df))
         off += n_rows[i]
     end
     refinement_psms = reduce(vcat, refinement_parts)
     t_train_cv = time() - t_lgbm_start
+    @debug_l1 "  partitioned LightGBM: gather=$(round(t_gather, digits = 2))s fit=$(round(t_fit, digits = 2))s " *
+              "passB load=$(round(t_load_b, digits = 2))s predict=$(round(t_pred_b, digits = 2))s"
     precursors = getPrecursors(getSpecLib(search_context))
     strategy = MainSearchIrtRefinement(precursors;
                                        q_value_threshold = PRESCORE_QVALUE_THRESHOLD,
@@ -274,8 +278,9 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
     # ---- pass C: refined iRT, re-predicted scores, best meta-PSM per precursor ----
     t_c = time()
     all_scores = Vector{Float32}(undef, n_total); best_parts = DataFrame[]; off = 0
+    t_load_c = 0.0
     for (i, f) in enumerate(featured)
-        df = _zt_load(f)
+        t_load_c += @elapsed (df = _zt_load(f))
         rows = (off + 1):(off + n_rows[i])
         if refined
             apply_mainsearch_irt_refinement_model!(df, strategy, models)
@@ -293,7 +298,7 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
     @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, partitioned): " *
               (refined ? "$(length(training_target_precursors)) training precursors" :
                          "skipped ($(length(training_target_precursors)) high-confidence target precursors)") *
-              "; pass C $(round(time() - t_c, digits = 2))s"
+              "; pass C $(round(time() - t_c, digits = 2))s (load $(round(t_load_c, digits = 2))s)"
 
     trace_input = (best, mask, peps) ->
         _zt_trace_rows(featured, n_rows, best, mask, peps, refined, strategy, models, all_scores)
@@ -316,6 +321,7 @@ post-refinement state, with the matching entries of the per-row pass mask and PE
 """
 function _zt_trace_rows(featured, n_rows, best::DataFrame, mask::AbstractVector{Bool}, peps,
                         refined, strategy, models, all_scores)
+    t_d = time()
     keep = Set(best[!, :precursor_idx]::Vector{UInt32})
     tabs = DataFrame[]; sel = Int[]; off = 0
     for (i, f) in enumerate(featured)
@@ -329,6 +335,7 @@ function _zt_trace_rows(featured, n_rows, best::DataFrame, mask::AbstractVector{
         end
         off += n_rows[i]
     end
+    @debug_l1 "  partitioned pass D: $(length(sel)) rows of $(length(keep)) precursors, $(round(time() - t_d, digits = 2))s"
     return (isempty(tabs) ? DataFrame() : reduce(vcat, tabs)), mask[sel], peps[sel]
 end
 
