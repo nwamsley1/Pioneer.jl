@@ -309,8 +309,9 @@ end
 the two per-scan feature passes MainSearch otherwise runs after `library_search` (scan competition
 and the MS1 lookup; both read only a row's own scan) and is sorted by (precursor_idx, scan_idx).
 
-Rounds stay in memory while the projected peak of scoring them in memory (`main_projected_peak` of
-the exact rows held so far) fits `main_memory_budget_bytes()`. If every round fits, they are joined
+Rounds stay in memory while the projected peak of scoring the file in memory (`main_projected_peak`
+of the larger of the rows held so far and the whole file's table, extrapolated from the rows kept per
+candidate in the fitted rounds) fits `main_memory_budget_bytes()`. If every round fits, they are joined
 and sorted into the file's table, which MainSearch scores in memory as usual (per-scan passes and sort
 already done: `main_per_scan_done`). Once a round would not fit, the rounds held so far and every
 later round are written to disk, and MainSearch merges them into precursor-complete parts and scores
@@ -347,8 +348,11 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
         isempty(keep) || (mkpath(keep); cp(path, joinpath(keep, basename(path)); force = true))
     end
     held_ci = Int[]
+    cand_done = 0; bytes_done = 0     # candidates and table bytes of the rounds fitted so far
     for (ci, tasks) in enumerate(chunks)
         isempty(tasks) && continue
+        cand_done += sum(t -> sum(si -> (r = scan_to_prec_idx[si]; ismissing(r) ? 0 : length(r)), last(t); init = 0),
+                         tasks; init = 0)
         t_c = time()
         parts = deconv(tasks)
         raw = length(parts) == 1 ? parts[1] : vcat(parts...)
@@ -363,7 +367,12 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
             end
             _assert_precursor_scan_sorted(raw)
             rb = table_bytes(raw)
-            if !on_disk && (disk_refused || main_projected_peak(held_bytes + rb) <= budget)
+            bytes_done += rb
+            # The whole file's table, extrapolated from the rows the fitted rounds kept per candidate,
+            # so a file that will not fit goes to disk at its first round instead of its last.
+            projected_file = bytes_done * n_candidates / max(cand_done, 1)
+            fits = main_projected_peak(max(held_bytes + rb, round(Int, projected_file))) <= budget
+            if !on_disk && (disk_refused || fits)
                 push!(held, raw); push!(held_ci, ci); held_bytes += rb
             else
                 if !on_disk
@@ -384,8 +393,10 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
                         write_round!(h, hci)
                     end
                     empty!(held); empty!(held_ci); held_bytes = 0; on_disk = true
-                    @debug_l1 "Main search: projected in-memory peak over the $(round(budget / 1e9, digits = 1)) GB " *
-                              "budget at round $ci of $(length(chunks)); keeping this file's PSMs on disk"
+                    @debug_l1 "Main search: projected in-memory peak " *
+                              "$(round(main_projected_peak(round(Int, projected_file)) / 1e9, digits = 1)) GB over the " *
+                              "$(round(budget / 1e9, digits = 1)) GB budget at round $ci of $(length(chunks)); " *
+                              "keeping this file's PSMs on disk"
                 end
                 write_round!(raw, ci)
             end
