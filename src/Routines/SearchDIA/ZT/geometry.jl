@@ -54,14 +54,18 @@ end
 """
     ZTFileState
 
-Per-file scanning-quad state beyond the geometry: the PSM memory budget
-(`optimization.machine_learning.max_psm_memory_mb`) that sizes the on-disk meta-PSM files, and
-those files once a multi-chunk main search has written them (`nothing` otherwise).
+Per-file Main Search state beyond the geometry: the PSM memory budget
+(`optimization.machine_learning.max_psm_memory_mb`) that sizes the on-disk PSM files, those files
+once a multi-chunk main search has written them (`nothing` otherwise), and whether `library_search`
+already ran the per-scan feature passes and the precursor sort on an in-memory table built from
+rounds (`chunked_main_deconvolution`).
 """
 mutable struct ZTFileState
     psm_memory_mb::Float64
     psm_partitions::Union{Nothing, Vector{String}}
+    per_scan_done::Bool
 end
+ZTFileState(psm_memory_mb::Float64, psm_partitions) = ZTFileState(psm_memory_mb, psm_partitions, false)
 
 """Meta-scan half-width, in Q1 bins, for the stages before and during quad tuning. Wide enough for
 the triangle fit to see the whole transmission profile (k_fit was 6 on every method measured)."""

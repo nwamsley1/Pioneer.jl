@@ -304,8 +304,10 @@ function process_file!(
     # raw per-bin rows, then collapsed them to meta-PSMs (ZT/chunked_main_search.jl).
     # A file whose PSMs library_search wrote to disk in chunks (ZT, or chunked_main_deconvolution)
     # already has the two per-scan passes below, run per chunk.
+    # A table library_search built in memory from rounds is also already sorted.
+    in_memory_rounds = main_per_scan_done(search_context, ms_file_idx)
     zt_collapsed = zt_collapsed_in_search(getZTGeometry(search_context, ms_file_idx)) ||
-                   getZTPsmPartitions(search_context, ms_file_idx) !== nothing
+                   getZTPsmPartitions(search_context, ms_file_idx) !== nothing || in_memory_rounds
     t_lib_search = time() - t_file_start
 
     # IMPORTANT: the next two steps depend on the deconv output being
@@ -341,7 +343,7 @@ function process_file!(
     # for any per-precursor parallelism. We use a hand-rolled in-place
     # column permute rather than `sort!(df, :col)` because DataFrames.sort!
     # is ~4× slower on this shape (measured 2026-05-19).
-    t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(
+    t_sort = in_memory_rounds ? 0.0 : @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(
         psms,
         results.sortperm_workspace,
     )

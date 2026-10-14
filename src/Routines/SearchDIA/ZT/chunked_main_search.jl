@@ -246,22 +246,82 @@ function main_thread_chunks(thread_tasks::AbstractVector,
 end
 
 """
+Bytes per row a MainSearch PSM table grows to once scoring adds its features, relative to the table
+after the per-scan features (measured 280 vs 195 B per row on a 65.5M-row file).
+"""
+const MAIN_TABLE_GROWTH = 280 / 195
+
+"""
+Peak process memory while a file's table is scored in memory, as a multiple of the final table
+(measured 37.9 GB private for an 18.4 GB table, library included).
+"""
+const MAIN_IN_MEMORY_PEAK_FACTOR = 2.0
+
+"""
+    main_memory_budget_bytes() -> Int
+
+Memory a MainSearch file may use to be scored in memory: half of the memory available to this
+process (`Sys.total_memory()`, which respects container and cgroup limits), or
+`PIONEER_MAIN_MEMORY_BUDGET_GB` when set.
+"""
+function main_memory_budget_bytes()
+    gb = get(ENV, "PIONEER_MAIN_MEMORY_BUDGET_GB", "")
+    isempty(gb) || return round(Int, parse(Float64, gb) * 1e9)
+    return Int(Sys.total_memory() ÷ 2)
+end
+
+"""Projected peak memory of scoring a table, from its size after the per-scan features."""
+main_projected_peak(table_bytes::Integer) = MAIN_IN_MEMORY_PEAK_FACTOR * MAIN_TABLE_GROWTH * table_bytes
+
+"""Bytes held by a table of plain-data columns."""
+table_bytes(df::DataFrame) = sum(c -> length(c) * sizeof(eltype(c)), eachcol(df); init = 0)
+
+"""
+    concat_rounds!(rounds) -> DataFrame
+
+One table of the rows of `rounds` (same columns), in order. Built column by column, each column
+removed from the rounds once copied, so at most one copy of one column exists twice.
+"""
+function concat_rounds!(rounds::Vector{DataFrame})
+    length(rounds) == 1 && return rounds[1]
+    n = sum(nrow, rounds)
+    cols = names(first(rounds))
+    out = DataFrame()
+    for c in cols
+        T = eltype(first(rounds)[!, c])
+        dst = Vector{T}(undef, n); off = 0
+        for r in rounds
+            v = r[!, c]
+            copyto!(dst, off + 1, v, 1, length(v)); off += length(v)
+            select!(r, Not(c))
+        end
+        out[!, c] = dst
+    end
+    return out
+end
+
+"""
     chunked_main_deconvolution(params, deconv, spectra, search_context, ms_file_idx,
                                scan_to_prec_idx, thread_tasks, n_candidates) -> Union{Nothing, DataFrame}
 
-`library_search` hook for MainSearch on files that are not scanning-quad. With more than
-`MAIN_CHUNK_CANDIDATES` candidates, the file is deconvolved in rounds (`main_thread_chunks`); each
-round gets the two per-scan feature passes MainSearch otherwise runs after `library_search` (scan
-competition and the MS1 lookup; both read only a row's own scan), is sorted by
-(precursor_idx, scan_idx) and is written to disk. MainSearch then merges the files into
-precursor-complete parts and scores them as it does a multi-chunk ZT file
-(`zt_mainsearch_best_partitioned!`), so the file's PSM table is never in memory whole. Returns
-`nothing` (search in memory as usual) or a table with no rows (the PSMs are on disk, listed by
-`getZTPsmPartitions`; or there were none).
+`library_search` hook for MainSearch on files that are not scanning-quad. A file with more than
+`MAIN_CHUNK_CANDIDATES` candidates is deconvolved in rounds (`main_thread_chunks`); each round gets
+the two per-scan feature passes MainSearch otherwise runs after `library_search` (scan competition
+and the MS1 lookup; both read only a row's own scan) and is sorted by (precursor_idx, scan_idx).
 
-Each thread scores the same scans in the same order as in one pass, and the merged files hold the
-rows in (precursor_idx, scan_idx) order, the order the in-memory table is sorted into; so the PSM
-rows and their order are the same.
+Rounds stay in memory while the projected peak of scoring them in memory (`main_projected_peak` of
+the exact rows held so far) fits `main_memory_budget_bytes()`. If every round fits, they are joined
+and sorted into the file's table, which MainSearch scores in memory as usual (per-scan passes and sort
+already done: `main_per_scan_done`). Once a round would not fit, the rounds held so far and every
+later round are written to disk, and MainSearch merges them into precursor-complete parts and scores
+them from disk (`zt_mainsearch_best_partitioned!`), so memory stays bounded whatever the file's size.
+If the results disk is too small for that (`main_spill_bytes`), the file stays in memory.
+
+Each thread scores the same scans in the same order as in one pass, and both paths hold the rows in
+(precursor_idx, scan_idx) order, the order the in-memory table is sorted into; so the PSM rows and
+their order are the same as in one pass, on either path. Returns `nothing` (one round: search in
+memory as usual), the file's table, or a table with no rows (the PSMs are on disk, listed by
+`getZTPsmPartitions`; or there were none).
 """
 function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
                                     search_context::SearchContext, ms_file_idx::Int64,
@@ -271,22 +331,22 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
     getZTGeometry(search_context, ms_file_idx) === nothing || return nothing
     round_candidates = main_chunk_candidates()
     n_candidates > round_candidates || return nothing
-    psm_dir = zt_psm_dir(search_context, ms_file_idx)
-    # Not enough free disk for the round files and the featured parts (both are on disk while the
-    # parts are built): search in memory instead, which gives the same results.
-    need = main_spill_bytes(n_candidates)
-    free = disk_free_bytes(getDataOutDir(search_context))
-    if free < need
-        @user_warn "Main search: $(round(free / 1e9, digits = 1)) GB free on the results disk, about " *
-                   "$(round(need / 1e9, digits = 1)) GB needed to keep this file's PSMs on disk; " *
-                   "searching it in memory (same results, more memory)"
-        return nothing
-    end
+    budget = main_memory_budget_bytes()
     chunks = main_thread_chunks(thread_tasks, scan_to_prec_idx, cld(n_candidates, round_candidates))
-    rm(psm_dir; recursive = true, force = true); mkpath(psm_dir)
+    psm_dir = zt_psm_dir(search_context, ms_file_idx)
     workspace = Int32SortPermWorkspace()
+    held = DataFrame[]; held_bytes = 0; on_disk = false; disk_refused = false
     chunk_paths = String[]; n_rows = 0; max_rows = 0; empty_schema = nothing
     t_deconv = 0.0; t_features = 0.0; t_write = 0.0
+    function write_round!(df, ci)
+        path = joinpath(psm_dir, "chunk_$(lpad(ci, 4, '0')).arrow")
+        t_write += @elapsed Arrow.write(path, df)
+        push!(chunk_paths, path)
+        # Diagnostic: keep a copy of each round file (e.g. to benchmark the merge on it)
+        keep = get(ENV, "PIONEER_DIAG_KEEP_CHUNKS", "")
+        isempty(keep) || (mkpath(keep); cp(path, joinpath(keep, basename(path)); force = true))
+    end
+    held_ci = Int[]
     for (ci, tasks) in enumerate(chunks)
         isempty(tasks) && continue
         t_c = time()
@@ -302,28 +362,60 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
                 permute_psms_by_precursor_idx!(raw, workspace)
             end
             _assert_precursor_scan_sorted(raw)
-            path = joinpath(psm_dir, "chunk_$(lpad(ci, 4, '0')).arrow")
-            t_write += @elapsed Arrow.write(path, raw)
-            push!(chunk_paths, path)
-            # Diagnostic: keep a copy of each round file (e.g. to benchmark the merge on it)
-            keep = get(ENV, "PIONEER_DIAG_KEEP_CHUNKS", "")
-            isempty(keep) || (mkpath(keep); cp(path, joinpath(keep, basename(path)); force = true))
+            rb = table_bytes(raw)
+            if !on_disk && (disk_refused || main_projected_peak(held_bytes + rb) <= budget)
+                push!(held, raw); push!(held_ci, ci); held_bytes += rb
+            else
+                if !on_disk
+                    # Over budget: move to disk, if the results disk can hold the file's PSMs.
+                    need = main_spill_bytes(n_candidates)
+                    free = disk_free_bytes(getDataOutDir(search_context))
+                    if free < need
+                        @user_warn "Main search: this file's PSMs exceed the memory budget " *
+                                   "($(round(budget / 1e9, digits = 1)) GB) but only $(round(free / 1e9, digits = 1)) GB " *
+                                   "is free on the results disk (about $(round(need / 1e9, digits = 1)) GB needed); " *
+                                   "keeping them in memory (same results, more memory)"
+                        disk_refused = true
+                        push!(held, raw); push!(held_ci, ci); held_bytes += rb
+                        @goto next_round
+                    end
+                    rm(psm_dir; recursive = true, force = true); mkpath(psm_dir)
+                    for (h, hci) in zip(held, held_ci)
+                        write_round!(h, hci)
+                    end
+                    empty!(held); empty!(held_ci); held_bytes = 0; on_disk = true
+                    @debug_l1 "Main search: projected in-memory peak over the $(round(budget / 1e9, digits = 1)) GB " *
+                              "budget at round $ci of $(length(chunks)); keeping this file's PSMs on disk"
+                end
+                write_round!(raw, ci)
+            end
         end
+        @label next_round
         n_rows += nrow(raw); max_rows = max(max_rows, nrow(raw))
         t_deconv += t_d
         @debug_l1 "Main chunk $ci/$(length(chunks)): $(sum(t -> length(last(t)), tasks)) scans -> $(nrow(raw)) PSMs " *
                   "(deconv $(round(t_d; digits=1))s)"
         raw = nothing
     end
-    @user_info "Main search: $(length(chunks)) chunks, $n_rows PSMs (largest chunk $max_rows) on disk; " *
-               "deconv $(round(t_deconv; digits=1))s, per-scan features $(round(t_features; digits=1))s, " *
-               "write $(round(t_write; digits=1))s"
-    if isempty(chunk_paths)
-        rm(psm_dir; recursive = true, force = true)
-        return empty_schema === nothing ? nothing : empty_schema
+    if on_disk
+        @user_info "Main search: $(length(chunks)) rounds, $n_rows PSMs (largest round $max_rows) on disk; " *
+                   "deconv $(round(t_deconv; digits=1))s, per-scan features $(round(t_features; digits=1))s, " *
+                   "write $(round(t_write; digits=1))s"
+        setZTPsmPartitions!(search_context, ms_file_idx, chunk_paths)
+        return DataFrame()             # the PSMs are on disk
     end
-    setZTPsmPartitions!(search_context, ms_file_idx, chunk_paths)
-    return DataFrame()                 # the PSMs are on disk
+    isempty(held) && return empty_schema === nothing ? nothing : empty_schema
+    t_join = @elapsed begin
+        psms = concat_rounds!(held)
+        length(held) > 1 && permute_psms_by_precursor_idx!(psms, workspace)
+    end
+    @user_info "Main search: $(length(chunks)) rounds, $n_rows PSMs in memory " *
+               "($(round(held_bytes / 1e9, digits = 1)) GB, projected peak " *
+               "$(round(main_projected_peak(held_bytes) / 1e9, digits = 1)) GB of a " *
+               "$(round(budget / 1e9, digits = 1)) GB budget); deconv $(round(t_deconv; digits=1))s, " *
+               "per-scan features $(round(t_features; digits=1))s, join $(round(t_join; digits=1))s"
+    set_main_per_scan_done!(search_context, ms_file_idx, true)
+    return psms
 end
 
 """

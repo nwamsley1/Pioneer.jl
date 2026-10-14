@@ -117,5 +117,13 @@ getZTPsmPartitions(s::SearchContext, idx::Integer) =
 setZTPsmPartitions!(s::SearchContext, idx::Integer, paths::Union{Nothing, Vector{String}}) =
     (s.zt_file_state[Int64(idx)].psm_partitions = paths)
 
+"""Whether `library_search` built this file's table in memory from rounds, with the per-scan feature
+passes and the precursor sort already applied."""
+main_per_scan_done(s::SearchContext, idx::Integer) =
+    (st = get(s.zt_file_state, Int64(idx), nothing); st !== nothing && st.per_scan_done)
+
+set_main_per_scan_done!(s::SearchContext, idx::Integer, done::Bool) =
+    (s.zt_file_state[Int64(idx)].per_scan_done = done)
+
 """The PSM memory budget in MB for a ZT file (`max_psm_memory_mb`)."""
 zt_psm_memory_mb(s::SearchContext, idx::Integer) = s.zt_file_state[Int64(idx)].psm_memory_mb
