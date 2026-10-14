@@ -276,7 +276,7 @@ jobs:
       # install key points it at the matching /usr/local/lib/pioneer/<version>
       # payload, even when several versions are installed.
       - name: Setup Node (GUI)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
