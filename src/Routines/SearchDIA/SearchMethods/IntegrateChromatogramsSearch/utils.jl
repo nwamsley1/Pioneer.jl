@@ -1641,11 +1641,49 @@ function extract_chromatograms(
                 scan_tic = scan_tic,
                 precursor_im_map = precursor_im_map,
                 im_window_scans = Float32(im_window_scans),
+                as_rows = true,
             )
         end
     end
-    thread_dfs = fetch.(tasks)
-    return vcat(thread_dfs...), scan_tic
+    thread_rows = reduce(vcat, fetch.(tasks))     # every thread's blocks, in thread order
+    _diag_live("integration extract: $(length(thread_rows)) thread row buffers, $(sum(length, thread_rows)) rows")
+    out = rows_to_table(thread_rows)
+    thread_rows = nothing
+    return out, scan_tic
+end
+
+"""Chromatogram buffer block size, in points per scan of a thread's share (see build_chromatograms)."""
+const CHROM_BLOCK_POINTS_PER_SCAN = 4
+
+"""
+    rows_to_table(parts) -> DataFrame
+
+One column table of the rows of `parts` (vectors of the same struct type), in order: what
+`vcat(DataFrame.(parts)...)` gives, with the columns allocated once at their final size and each part
+copied into its own row range in parallel, instead of a DataFrame per part and then a concatenation.
+"""
+function rows_to_table(parts::AbstractVector)
+    T = eltype(first(parts))
+    all(p -> eltype(p) === T, parts) || return vcat(DataFrame.(parts)...)
+    n = sum(length, parts)
+    offs = cumsum(vcat(0, length.(parts)))
+    cols = ntuple(j -> Vector{fieldtype(T, j)}(undef, n), fieldcount(T))
+    Threads.@threads for k in eachindex(parts)
+        _scatter_rows!(cols, parts[k], offs[k])
+    end
+    return DataFrame(collect(Symbol, fieldnames(T)) .=> collect(cols); copycols = false)
+end
+
+# Copy every field of each row of `p` into `cols` (one vector per field) starting after row `o`.
+@generated function _scatter_rows!(cols::Tuple, p::AbstractVector{T}, o::Int) where {T}
+    sets = [:(@inbounds cols[$j][o + i] = getfield(r, $j)) for j in 1:fieldcount(T)]
+    return quote
+        @inbounds for i in eachindex(p)
+            r = p[i]
+            $(sets...)
+        end
+        return nothing
+    end
 end
 
 """
@@ -1677,6 +1715,7 @@ function build_chromatograms(
     scan_tic::Union{Nothing, Vector{Float32}} = nothing,
     precursor_im_map::Union{Dict{UInt32, Float32}, Nothing} = nothing,
     im_window_scans::Float32 = 0f0,
+    as_rows::Bool = false,
 )
     # Fused-kernel working arrays.
     Hs = getHsFused(search_data)
@@ -1696,20 +1735,16 @@ function build_chromatograms(
     id_to_col = getIdToCol(search_data)
     unscored_psms = getTuningUnscoredPsms(search_data)  # placeholder — FusedRTIndexed record_match! is no-op
 
-    # Points per scan measured at 23.81 on 6-file Olsen Exploris (366,129 MS2 scans ->
-    # 8,717,899 chromatogram rows). The old estimate of 100 over-allocated 4.2x, which cost
-    # ~2.1 GB of cumulative allocation per run at 80 B/row.
-    #
-    # 32 leaves ~34 % headroom so the common case never resizes. Note that a resize is NOT free
-    # in cumulative terms: with initial E and k doublings the total allocated is E*(2^(k+1)-1),
-    # so E=20 + one doubling costs 60x scans while E=32 with no doubling costs 32x. The doubling
-    # below still covers datasets that run richer than this one (library size, RT tolerance and
-    # isolation width all move this number, and only one dataset has been measured).
-    estimated_points = length(scan_range) * 32
-    initial_size = max(estimated_points, 10000)
+    # Points are written into blocks: when one fills, it is kept and a new one started (no doubling,
+    # no copy), so memory follows the points actually written on any instrument. A block holds
+    # CHROM_BLOCK_POINTS_PER_SCAN points per scan of this thread's share, at least 100,000.
+    # Measured points per scan: 23.8 (Exploris, 6-file Olsen), 4.1 (timsTOF SCP, ProteoBench); the
+    # previous fixed 32 per scan allocated 8.6 GB of buffers for 1.15 GB of points on the latter.
+    block_size = max(length(scan_range) * CHROM_BLOCK_POINTS_PER_SCAN, 100_000)
     chromatograms = collect_mbr_evidence ?
-        Vector{MS2MBRChromObject}(undef, initial_size) :
-        Vector{MS2ChromObject}(undef, initial_size)
+        Vector{MS2MBRChromObject}(undef, block_size) :
+        Vector{MS2ChromObject}(undef, block_size)
+    full_blocks = typeof(chromatograms)[]
 
     # RT bin tracking state — RT index is in empirical RT space
     rt_bin_start, rt_bin_stop = 1, 1
@@ -1862,8 +1897,10 @@ function build_chromatograms(
             # Record chromatogram points (weighted for matches, zero otherwise).
             for j in 1:prec_temp_size
                 rt_idx += 1
-                if rt_idx + 1 > length(chromatograms)
-                    resize!(chromatograms, length(chromatograms) * 2)
+                if rt_idx > length(chromatograms)
+                    push!(full_blocks, chromatograms)
+                    chromatograms = similar(chromatograms, block_size)
+                    rt_idx = 1
                 end
                 col = id_to_col[precs_temp[j]]
                 score = !collect_mbr_evidence || iszero(col) ?
@@ -1907,8 +1944,10 @@ function build_chromatograms(
             # Too few matches → zero-weight points for every enumerated precursor.
             for j in 1:prec_temp_size
                 rt_idx += 1
-                if rt_idx + 1 > length(chromatograms)
-                    resize!(chromatograms, length(chromatograms) * 2)
+                if rt_idx > length(chromatograms)
+                    push!(full_blocks, chromatograms)
+                    chromatograms = similar(chromatograms, block_size)
+                    rt_idx = 1
                 end
                 if collect_mbr_evidence
                     chromatograms[rt_idx] = MS2MBRChromObject(
@@ -1935,7 +1974,10 @@ function build_chromatograms(
         reset_scan_arrays!(id_to_col, Hs, unscored_psms)
     end
 
-    return DataFrame(@view(chromatograms[1:rt_idx]))
+    # This thread's points in order: the full blocks, then the used part of the last one.
+    blocks = [[@view(b[1:length(b)]) for b in full_blocks]; [@view(chromatograms[1:rt_idx])]]
+    as_rows && return blocks
+    return rows_to_table(blocks)
 end
 
 # MS1 chromatogram extraction is currently unwired (the ms1_quant knob
