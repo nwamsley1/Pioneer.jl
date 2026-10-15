@@ -237,6 +237,26 @@ Main process_file! Function
 ==========================================================#
 
 """
+    tier_scan_cap(n_scans) -> Int
+
+Most scans one collection tier may search: `max(TUNING_TIER_SCAN_CAP_MIN, TUNING_TIER_SCAN_CAP_FRACTION · n_scans)`,
+never more than the file has.
+"""
+tier_scan_cap(n_scans::Integer) =
+    min(Int(n_scans), max(TUNING_TIER_SCAN_CAP_MIN, ceil(Int, TUNING_TIER_SCAN_CAP_FRACTION * n_scans)))
+
+"""
+    tier_max_peaks(score, max_peaks, low_tier_max_peaks) -> Int
+
+Peaks per scan to match at score tier `score` (0 = all): `low_tier_max_peaks` at tiers up to
+`TUNING_LOW_TIER_MAX_SCORE` when it is tighter than `max_peaks`, otherwise `max_peaks`.
+"""
+function tier_max_peaks(score::Integer, max_peaks::Integer, low_tier_max_peaks::Integer)
+    low = low_tier_max_peaks > 0 && score <= TUNING_LOW_TIER_MAX_SCORE
+    return low && (max_peaks == 0 || low_tier_max_peaks < max_peaks) ? Int(low_tier_max_peaks) : Int(max_peaks)
+end
+
+"""
     collect_and_converge!(results, params, search_context, ms_file_idx,
         spectra, scan_priority, initial_scans, max_scans, iteration_state)
 
@@ -258,7 +278,9 @@ function accumulate_psms!(
     n_required_top::Int = TUNING_N_REQUIRED_TOP,
     fdr_threshold::Float16 = Float16(0.01),
     label::String = "accumulate",
-    max_per_precursor::Int = 0      # 0 = count PSM rows; k > 0 = keep the best k per precursor, count rows
+    max_per_precursor::Int = 0,     # 0 = count PSM rows; k > 0 = keep the best k per precursor, count rows
+    low_tier_max_peaks::Int = 0,    # > 0: tiers <= TUNING_LOW_TIER_MAX_SCORE match only this many peaks per scan
+    max_scans_per_tier::Int = typemax(Int)
 )
     all_scan_indices = scan_priority[1:min(length(scan_priority), length(scan_priority))]
     max_scans = length(all_scan_indices)
@@ -270,6 +292,10 @@ function accumulate_psms!(
     t_phase = time()
     end_reason = "exhausted all tiers"
     n_prec = 0; n_capped = 0
+    tier_cap = min(max_scans, max_scans_per_tier)
+    # When no tier converges, return the tier with the most passing PSMs rather than the last one: on thin files
+    # the lower tiers can collapse (Ultra 2 single cell: 81 PSMs at score>=8, 2 at score>=5).
+    best_psms = DataFrame(); best_n = -1; best_score = 0; best_prec = 0
 
     for (tier_idx, score) in enumerate(score_tiers)
         setMassErrorModel!(search_context, ms_file_idx, mass_model)
@@ -284,14 +310,15 @@ function accumulate_psms!(
         # Second-order stopping state: the previous checkpoint and the previous batch's marginal rate.
         prev_scans = 0; prev_passing = 0; prev_marginal = -1.0
         # Every tier grows from initial_scans so the second-order decay check can end it early.
-        scan_target = min(initial_scans, max_scans)
+        scan_target = min(initial_scans, tier_cap)
+        peaks = tier_max_peaks(score, max_peaks, low_tier_max_peaks)
 
-        while prev < max_scans
+        while prev < tier_cap
             batch_indices = all_scan_indices[(prev+1):scan_target]
             batch = collect_raw_psms(
                 spectra, search_context, params, ms_file_idx;
                 scan_indices = batch_indices,
-                max_peaks = max_peaks)
+                max_peaks = peaks)
             if size(batch, 1) > 0
                 if isempty(raw_psms)
                     raw_psms = batch
@@ -334,7 +361,7 @@ function accumulate_psms!(
             end
 
             # Estimate additional scans from rate
-            scans_remaining = max_scans - prev
+            scans_remaining = tier_cap - prev
             scans_remaining <= 0 && break
             rate = n_passing / max(prev, 1)
             # Second-order: marginal yield of the last batch vs the batch before. If it is decaying,
@@ -360,13 +387,18 @@ function accumulate_psms!(
             else
                 min(prev, scans_remaining)
             end
-            scan_target = min(prev + additional, max_scans)
+            scan_target = min(prev + additional, tier_cap)
             scan_target <= prev && break
         end
 
         total_scans_used = prev
         if n_passing >= target_psms
             break
+        end
+        tier_cap < max_scans && prev >= tier_cap &&
+            @debug_l1 "  $(label) (score≥$(score)): stopped at the per-tier scan cap ($(tier_cap) scans)"
+        if n_passing > best_n
+            best_psms = scored_psms; best_n = n_passing; best_score = Int(score); best_prec = n_prec
         end
         @debug_l1 "  $(label): score≥$(score) insufficient ($(n_passing) < $(target_psms)), " *
                    "backing off ($(round(time()-t_tier, digits=2))s)"
@@ -376,6 +408,10 @@ function accumulate_psms!(
     delete!(search_context.bitvec_filter, ms_file_idx)
 
     converged = n_passing >= target_psms
+    if !converged && best_n > n_passing
+        @debug_l1 "  $(label): keeping score≥$(best_score) ($(best_n) PSMs) rather than the last tier ($(n_passing))"
+        scored_psms = best_psms; n_passing = best_n; n_prec = best_prec
+    end
     @debug_l1 "  $(label) summary: $(converged ? "CONVERGED" : "NOT converged") — $(end_reason); " *
                "$(total_scans_used) of $(max_scans) scans searched, $(n_passing) PSMs from $(n_prec) precursors " *
                "(target $(target_psms), unit = " * (max_per_precursor > 0 ? "rows after best-$(max_per_precursor)/precursor cap" : "rows") *
@@ -670,6 +706,9 @@ function process_file!(
              initial_scans = Int64(TUNING_MIN_COLLECT_SCANS),
              max_peaks = 0),
         )
+        # collection only: the low-tier peak limit and the per-tier scan cap (the scout already matches top-N peaks)
+        phase_low_tier_peaks = (0, Int(TUNING_LOW_TIER_MAX_PEAKS))
+        phase_scan_caps = (typemax(Int), tier_scan_cap(total_ms2))
         phase_caps = (0, TUNING_MAX_PSMS_PER_PRECURSOR)   # scout: PSM rows; collection: best-k rows per precursor
 
         scored_psms = DataFrame()
@@ -685,7 +724,9 @@ function process_file!(
                 initial_scans = phase.initial_scans,
                 max_peaks = phase.max_peaks,
                 label = phase.label,
-                max_per_precursor = phase_caps[phase_idx])
+                max_per_precursor = phase_caps[phase_idx],
+                low_tier_max_peaks = phase_low_tier_peaks[phase_idx],
+                max_scans_per_tier = phase_scan_caps[phase_idx])
             n_passing = nrow(scored_psms)
             @debug_l1 "  $(phase.label): $(n_scans) scans → $(n_passing) PSMs ($(round(time()-t_phase, digits=2))s)"
 
@@ -821,6 +862,7 @@ function process_file!(
 
                     iteration_state.best_psms = rt_psms
                     iteration_state.best_psm_count = n_passing
+                    final_psm_count = n_passing
                     results.mass_err_model[] = getMassErrorModel(search_context, ms_file_idx)
                     converged = true
                 end
@@ -1046,6 +1088,9 @@ function summarize_results!(results::ParameterTuningSearchResults, params::P, se
     fallback_count = sum(s.used_fallback for s in file_statuses)
     total_files = length(file_statuses)
     
-    @debug_l1 "Parameter Tuning Summary: $total_files files, $converged_count converged, $fallback_count fallback"
+    # "converged" means calibrated from the file's own PSMs; say how many of those fell short of the collection target
+    short_count = sum(s -> s.converged && !s.used_fallback && s.final_psm_count < getMinPsms(params), file_statuses; init = 0)
+    @debug_l1 "Parameter Tuning Summary: $total_files files, $converged_count calibrated from their own PSMs " *
+              "($short_count below the $(getMinPsms(params))-PSM collection target), $fallback_count fallback"
     
 end

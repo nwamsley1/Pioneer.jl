@@ -23,6 +23,18 @@ const TUNING_MAX_Q_VALUE = Float32(0.01)
 const TUNING_TOPN_PEAKS = Int64(200)            # Top-N intensity peak filter for wide scout
 const TUNING_MAX_FRAGS_FOR_MASS_ERR = UInt8(3)  # Fragments per PSM for mass error estimation
 const TUNING_MIN_COLLECT_SCANS = Int64(5000)    # Minimum initial scan estimate for collection
+# Collection at score tiers <= TUNING_LOW_TIER_MAX_SCORE matches only the TUNING_LOW_TIER_MAX_PEAKS most intense
+# peaks of each scan. On dense spectra (timsTOF Ultra 2 / AIP slices) the all-peaks low tiers flood with noise
+# candidates (up to 527 M on one file) and their PSM yield at 1% FDR collapses; on thin Astral spectra the low tiers
+# keep their yield with the limit (SCP 250 pg: 907 vs 908 and 1,160 vs 1,198 PSMs). Tiers 8 and 7 keep every peak:
+# limiting them cost 9-18% of IDs on ZenoTOF and MTAC Astral.
+const TUNING_LOW_TIER_MAX_SCORE = UInt8(6)
+const TUNING_LOW_TIER_MAX_PEAKS = Int64(200)
+# A collection tier searches at most max(TUNING_TIER_SCAN_CAP_MIN, TUNING_TIER_SCAN_CAP_FRACTION x MS2 scans).
+# Every collection that converged in testing needed <= 30,000 scans; without the cap a tier on a thin file walked
+# all 836,000 slices of a single-cell run for 434 PSMs (~90 s per tier).
+const TUNING_TIER_SCAN_CAP_MIN = Int64(20_000)
+const TUNING_TIER_SCAN_CAP_FRACTION = 0.1
 # Second-order stopping (accumulate_psms!): the scan-priority order draws the richest scans first, so the
 # marginal yield of each batch decays. Once the decay is established, the yield of ALL remaining scans is
 # bounded by a geometric series; if that bound cannot reach the target, the tier backs off immediately
@@ -42,7 +54,9 @@ const TUNING_BIAS_EXTRAP_EDGE_POINTS = Int64(5) # Binned medians per edge for ro
 
 # Wide scout constants
 const WIDE_SCOUT_TOL_PPM = Float32(100.0)       # ±100 ppm wide scout tolerance
-const WIDE_SCOUT_TARGET_PSMS = Int64(1000)      # PSM target at 1% FDR for wide scout
+# PSM target at 1% FDR for the wide scout. 500 lets thin files stop at score>=8 instead of digging into lower tiers
+# (single-cell Ultra 2: 67 s -> 5 s); files that reach 1,000 in their first batch are unchanged.
+const WIDE_SCOUT_TARGET_PSMS = Int64(500)
 const WIDE_SCOUT_INITIAL_SCANS = Int64(2000)    # Starting scan count for wide scout
 const WIDE_SCOUT_FALLBACK_TOL_PPM = Float32(30.0) # Fallback tolerance when <50 fragments
 
