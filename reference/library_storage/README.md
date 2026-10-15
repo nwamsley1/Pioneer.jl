@@ -46,26 +46,3 @@ remains to be added.
 4. Update index rebuilding, DIA-NN decoy processing, fixture/precompile helpers,
    and tools that read the separate CSR file. Counts now live inside
    `detailed_fragments.jls`. Prediction tools can regenerate Koina strings.
-
-## Results and verification
-
-Exact round trips passed for 19 libraries: 18 human narrow-window cases covering
-tryptic, semi-tryptic, and nonenzymatic digestion with up to three phospho mods,
-plus a 54,410-precursor E. coli spline library. Combined index, detailed/CSR, and
-precursor-table sizes fell **42.9–43.8%** in the nonenzymatic/phospho cases and
-**29.1%** in the spline case. See [measurements.csv](measurements.csv).
-
-Validation includes 248 codec checks and 195 precursor-export regression checks.
-Earlier full-search tests matched every field in eight intermediate/final
-tables, with similar runtimes; repeat those comparisons after integration.
-Fixed protein/config files are excluded from size totals, and the smallest
-16-precursor control grew 0.3%. Billion-precursor scaling remains untested.
-
-```sh
-julia --compiled-modules=existing --project test/UnitTests/test_compact_library_storage.jl
-julia --compiled-modules=existing --project reference/library_storage/verify_reference.jl BASELINE_LIBRARY EMPTY_OUTPUT_DIRECTORY
-```
-
-The verifier checks precursor columns, CV folds, text IDs, fragments, CSR,
-and index metadata without changing the source library. Additional evidence
-is recorded in [validation.json](validation.json).
