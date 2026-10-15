@@ -351,6 +351,18 @@ function _diag_live(label::AbstractString)
     return nothing
 end
 
+"""Diagnostic (PIONEER_DIAG_LIVE): live heap plus the rows and bytes of `df`."""
+function _diag_table(label::AbstractString, df)
+    haskey(ENV, "PIONEER_DIAG_LIVE") || return nothing
+    GC.gc(true)
+    nb = df === nothing ? 0 : sum(c -> isbitstype(eltype(c)) ? length(c) * sizeof(eltype(c)) : Base.summarysize(c), eachcol(df); init = 0)
+    nr = df === nothing ? 0 : nrow(df)
+    @user_print string("[LIVE] ", label, ": live=", round(Base.gc_live_bytes() / 1e9, digits=2),
+                       " GB  rss=", round(Sys.maxrss() / 1e9, digits=2), " GB(peak)  table rows=", nr,
+                       " bytes=", round(nb / 1e9, digits=2), " GB cols=", df === nothing ? 0 : ncol(df))
+    return nothing
+end
+
 """
     filter_low_scan_candidates!(scan_to_prec_idx, precursors_passed, min_scan_count)
 
