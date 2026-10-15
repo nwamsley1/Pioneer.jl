@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-15",
+  "baseline_commit": "226abc0b7b15aa5e6ab2c563837228376ad09f9a",
+  "clean_reference": {
+    "unit_checks_passed": 248,
+    "libraries_checked": 19,
+    "indexes_checked": 76,
+    "all_values_equal": true,
+    "scope": [
+      "All retained precursor columns, CV folds and text IDs",
+      "All native fragment values and CSR offsets",
+      "All native index entries, bin metadata, mappings and hints"
+    ],
+    "production_build_load_entrypoints_integrated": false,
+    "existing_precursor_export_checks_passed": 195
+  },
+  "prior_prototype": {
+    "current_branch_commit": "05de0447cb9c8bbcaf2c5af9c5382019a9f63f31",
+    "human_cohorts": 18,
+    "selected_human_proteins": 64,
+    "precursor_windows_mz": [
+      [
+        500,
+        501
+      ],
+      [
+        700,
+        701
+      ],
+      [
+        900,
+        901
+      ]
+    ],
+    "maximum_variable_phosphorylations": 3,
+    "fragment_predictions": "Prosit_2025_intensity_40PTM",
+    "rt_predictions": "Prosit_2024_irt_PTMs_gl",
+    "full_search_fixture": "ecoli_filtered_01.arrow",
+    "full_search_tables_compared_per_variant": 8,
+    "experimental_vs_develop_all_fields_exact": true,
+    "current_vs_develop_all_fields_exact": true,
+    "full_search_seconds": {
+      "develop": 297.41192603111267,
+      "experimental": 298.45382285118103,
+      "current": 295.78335189819336
+    },
+    "timing_limit": "One fresh-process run per mode, including first-call compilation after imports; not a speedup claim."
+  },
+  "limitations": [
+    "Clean reference is not wired into normal BuildSpecLib/SearchDIA; Nathan must integrate all readers and writers together.",
+    "New codecs have no legacy readers or runtime loader replacement.",
+    "No raw data or prediction caches are committed.",
+    "Fixed protein/configuration files excluded from measured byte totals.",
+    "Tiny tryptic controls are dominated by fixed overhead.",
+    "Billion-precursor scaling remains untested."
+  ]
+}

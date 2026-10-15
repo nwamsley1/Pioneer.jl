@@ -171,10 +171,11 @@ Base.length(lp::LibraryPrecursors) = lp.n
 
 getCvFold(lp::LibraryPrecursors, precursor_idx::I) where {I<:Integer} = lp.pid_to_cv_fold[precursor_idx]
 getProteinGroupId(lp::LibraryPrecursors, accession_numbers::String)::UInt32 = lp.accession_numbers_to_pid[accession_numbers]
-getProteomeIdentifiers(lp::LibraryPrecursors)::Arrow.List{S,Int32,Array{UInt8,1}} where {S<:AbstractString} = lp.data[:proteome_identifiers]
-getAccessionNumbers(lp::LibraryPrecursors)::Arrow.List{String, Int32, Vector{UInt8}} = lp.data[:accession_numbers]
-getSequence(lp::LibraryPrecursors)::Arrow.List{S,Int32,Array{UInt8,1}} where {S<:AbstractString} = lp.data[:sequence]
-getStructuralMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:structural_mods]
+# String columns may be Arrow dictionaries; retain their mapped representation.
+getProteomeIdentifiers(lp::LibraryPrecursors) = lp.data[:proteome_identifiers]
+getAccessionNumbers(lp::LibraryPrecursors) = lp.data[:accession_numbers]
+getSequence(lp::LibraryPrecursors) = lp.data[:sequence]
+getStructuralMods(lp::LibraryPrecursors) = lp.data[:structural_mods]
 getCharge(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:prec_charge]
 getCollisionEnergy(lp::LibraryPrecursors)::Arrow.Primitive{Float32, Vector{Float32}} = lp.data[:collision_energy]
 getIsDecoy(lp::LibraryPrecursors)::Arrow.BoolVector{Bool} = lp.data[:is_decoy]
@@ -293,7 +294,7 @@ getCCS(lp::LibraryPrecursors) = hasproperty(lp.data, :ccs) ? lp.data[:ccs] : not
 getInvIonMobility(lp::LibraryPrecursors) =
     hasproperty(lp.data, :inv_ion_mobility) ? lp.data[:inv_ion_mobility] : nothing
 getSulfurCount(lp::LibraryPrecursors)::Arrow.Primitive{UInt8, Vector{UInt8}} = lp.data[:sulfur_count]
-getIsotopicMods(lp::LibraryPrecursors)::Arrow.List{Union{Missing, String}, Int32, Vector{UInt8}} = lp.data[:isotopic_mods]
+getIsotopicMods(lp::LibraryPrecursors) = lp.data[:isotopic_mods]
 getBasePepId(lp::LibraryPrecursors)::Arrow.Primitive{UInt32, Vector{UInt32}} = lp.data[:base_pep_id]
 
 # ============================================================================

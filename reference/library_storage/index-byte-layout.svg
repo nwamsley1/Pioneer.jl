@@ -1,0 +1,341 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="2020" viewBox="0 0 1280 2020" role="img" aria-labelledby="diagramTitle diagramDesc">
+<title id="diagramTitle">Spectral fragment index: original and compact byte layouts</title>
+<desc id="diagramDesc">Byte-accurate diagrams of 16 and 32 bit local precursor records, original and compact fragment-mass bins, the rank mask, Float32 bounds, unchanged RT bins, and decoding into native RAM arrays. Byte counts exclude serialization headers and compression.</desc>
+<defs><pattern id="padding" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#f1f4f6"/><path d="M-2 2L2-2M0 8L8 0M6 10L10 6" stroke="#c7d0d9" stroke-width="1"/></pattern><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#7a8d9f"/></marker></defs>
+<rect width="1280" height="2020" fill="#ffffff"/>
+<g font-family="Arial, Helvetica, sans-serif" fill="#183047">
+<text x="48" y="57" font-size="31" fill="#183047" text-anchor="start" font-weight="500">Spectral fragment index</text>
+<text x="48" y="91" font-size="18" fill="#617386" text-anchor="start" font-weight="400">Original native layout  →  compact disk encoding  →  identical native layout in RAM</text>
+<text x="48" y="120" font-size="14" fill="#617386" text-anchor="start" font-weight="400">Array payloads before Zlib compression · offsets are zero-based · integer byte order shown: little-endian</text>
+<rect x="48" y="146" width="216" height="66" rx="7" fill="#f4f7fa" stroke="#d6e0e8"/>
+<text x="156" y="173" font-size="16" fill="#183047" text-anchor="middle" font-weight="500">Precursor-m/z</text>
+<text x="156" y="195" font-size="13" fill="#617386" text-anchor="middle" font-weight="400">partition</text>
+<path d="M268 179L286 179" stroke="#7a8d9f" fill="none" stroke-width="1" marker-end="url(#arrow)"/>
+<rect x="290" y="146" width="216" height="66" rx="7" fill="#f4f7fa" stroke="#d6e0e8"/>
+<text x="398" y="173" font-size="16" fill="#183047" text-anchor="middle" font-weight="500">RT bin</text>
+<text x="398" y="195" font-size="13" fill="#617386" text-anchor="middle" font-weight="400">range of mass bins</text>
+<path d="M510 179L528 179" stroke="#7a8d9f" fill="none" stroke-width="1" marker-end="url(#arrow)"/>
+<rect x="532" y="146" width="216" height="66" rx="7" fill="#f4f7fa" stroke="#d6e0e8"/>
+<text x="640" y="173" font-size="16" fill="#183047" text-anchor="middle" font-weight="500">Fragment-m/z bin</text>
+<text x="640" y="195" font-size="13" fill="#617386" text-anchor="middle" font-weight="400">range of entries</text>
+<path d="M752 179L770 179" stroke="#7a8d9f" fill="none" stroke-width="1" marker-end="url(#arrow)"/>
+<rect x="774" y="146" width="216" height="66" rx="7" fill="#f4f7fa" stroke="#d6e0e8"/>
+<text x="882" y="173" font-size="16" fill="#183047" text-anchor="middle" font-weight="500">Index entry</text>
+<text x="882" y="195" font-size="13" fill="#617386" text-anchor="middle" font-weight="400">local ID + mask</text>
+<path d="M994 179L1012 179" stroke="#7a8d9f" fill="none" stroke-width="1" marker-end="url(#arrow)"/>
+<rect x="1016" y="146" width="216" height="66" rx="7" fill="#f4f7fa" stroke="#d6e0e8"/>
+<text x="1124" y="173" font-size="16" fill="#183047" text-anchor="middle" font-weight="500">Precursor</text>
+<text x="1124" y="195" font-size="13" fill="#617386" text-anchor="middle" font-weight="400">global ID mapping</text>
+<path d="M48 235L1232 235" stroke="#d6e0e8" fill="none" stroke-width="1"/>
+<text x="48" y="260" font-size="15" fill="#617386" text-anchor="start" font-weight="400">01</text>
+<text x="90" y="260" font-size="22" fill="#183047" text-anchor="start" font-weight="500">Index-entry records</text>
+<text x="90" y="286" font-size="14" fill="#617386" text-anchor="start" font-weight="400">Each numbered cell is one byte. All bits in the ID and rank mask are data; hatched cells are alignment padding.</text>
+<text x="48" y="324" font-size="16" fill="#617386" text-anchor="start" font-weight="500">ORIGINAL · records stored together</text>
+<text x="690" y="324" font-size="16" fill="#617386" text-anchor="start" font-weight="500">COMPACT · IDs and masks stored in separate arrays</text>
+<text x="48" y="363" font-size="19" fill="#183047" text-anchor="start" font-weight="500">UInt16 local precursor IDs</text>
+<rect x="48" y="396" width="96" height="48" rx="0" fill="#dcefee" stroke="none"/>
+<text x="72.0" y="386" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">0</text>
+<path d="M96 396L96 444" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="120.0" y="386" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">1</text>
+<text x="96.0" y="425.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">local ID</text>
+<rect x="144" y="396" width="48" height="48" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="168.0" y="386" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">2</text>
+<text x="168.0" y="425.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">mask</text>
+<rect x="192" y="396" width="48" height="48" rx="0" fill="url(#padding)" stroke="none"/>
+<text x="216.0" y="386" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">3</text>
+<text x="216.0" y="425.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">pad</text>
+<text x="48" y="468" font-size="15" fill="#617386" text-anchor="start" font-weight="400">16-bit ID + 8-bit mask + 8 unused bits = 4 B</text>
+<text x="690" y="363" font-size="16" fill="#183047" text-anchor="start" font-weight="500">ids[i]</text>
+<rect x="690" y="396" width="96" height="48" rx="0" fill="#dcefee" stroke="none"/>
+<text x="714.0" y="386" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">0</text>
+<path d="M738 396L738 444" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="762.0" y="386" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">1</text>
+<text x="738.0" y="425.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">local ID</text>
+<text x="848" y="363" font-size="16" fill="#183047" text-anchor="start" font-weight="500">scores[i]</text>
+<rect x="848" y="396" width="48" height="48" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="872.0" y="386" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">0</text>
+<text x="872.0" y="425.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">mask</text>
+<text x="690" y="468" font-size="15" fill="#617386" text-anchor="start" font-weight="400">2 B + 1 B = 3 B per entry · 25% less payload</text>
+<text x="48" y="518" font-size="19" fill="#183047" text-anchor="start" font-weight="500">UInt32 local precursor IDs</text>
+<rect x="48" y="550" width="192" height="48" rx="0" fill="#dcefee" stroke="none"/>
+<text x="72.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">0</text>
+<path d="M96 550L96 598" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="120.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">1</text>
+<path d="M144 550L144 598" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="168.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">2</text>
+<path d="M192 550L192 598" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="216.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">3</text>
+<text x="144.0" y="579.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">local precursor ID</text>
+<rect x="240" y="550" width="48" height="48" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="264.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">4</text>
+<text x="264.0" y="579.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">mask</text>
+<rect x="288" y="550" width="144" height="48" rx="0" fill="url(#padding)" stroke="none"/>
+<text x="312.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">5</text>
+<path d="M336 550L336 598" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="360.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">6</text>
+<path d="M384 550L384 598" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="408.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">7</text>
+<text x="360.0" y="579.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">padding</text>
+<text x="48" y="622" font-size="15" fill="#617386" text-anchor="start" font-weight="400">32-bit ID + 8-bit mask + 24 unused bits = 8 B</text>
+<text x="690" y="518" font-size="16" fill="#183047" text-anchor="start" font-weight="500">ids[i]</text>
+<rect x="690" y="550" width="192" height="48" rx="0" fill="#dcefee" stroke="none"/>
+<text x="714.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">0</text>
+<path d="M738 550L738 598" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="762.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">1</text>
+<path d="M786 550L786 598" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="810.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">2</text>
+<path d="M834 550L834 598" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="858.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">3</text>
+<text x="786.0" y="579.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">local precursor ID</text>
+<text x="930" y="518" font-size="16" fill="#183047" text-anchor="start" font-weight="500">scores[i]</text>
+<rect x="930" y="550" width="48" height="48" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="954.0" y="540" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">0</text>
+<text x="954.0" y="579.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">mask</text>
+<text x="690" y="622" font-size="15" fill="#617386" text-anchor="start" font-weight="400">4 B + 1 B = 5 B per entry · 37.5% less payload</text>
+<text x="48" y="656" font-size="14" fill="#617386" text-anchor="start" font-weight="400">IDs are unsigned integers with no embedded flags. Masks retain all eight bits in both formats.</text>
+<path d="M48 689L1232 689" stroke="#d6e0e8" fill="none" stroke-width="1"/>
+<text x="48" y="714" font-size="15" fill="#617386" text-anchor="start" font-weight="400">02</text>
+<text x="90" y="714" font-size="22" fill="#183047" text-anchor="start" font-weight="500">Fragment-m/z bins</text>
+<text x="90" y="740" font-size="14" fill="#617386" text-anchor="start" font-weight="400">Each row below is one element of a separate array—not one contiguous struct. Byte-cell width is the same on both sides.</text>
+<text x="48" y="778" font-size="17" fill="#183047" text-anchor="start" font-weight="500">ORIGINAL · 16 B per logical bin</text>
+<text x="690" y="778" font-size="17" fill="#183047" text-anchor="start" font-weight="500">COMPACT · 9 B with an 8-bit delta</text>
+<text x="48" y="827" font-size="16" fill="#183047" text-anchor="start" font-weight="500">lows[i]</text>
+<rect x="203" y="803" width="176" height="37" rx="0" fill="#e1ecfa" stroke="none"/>
+<path d="M247 803L247 840" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M291 803L291 840" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M335 803L335 840" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="291.0" y="826.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">Float32</text>
+<text x="403" y="827" font-size="14" fill="#617386" text-anchor="start" font-weight="400">4 B</text>
+<text x="48" y="880" font-size="16" fill="#183047" text-anchor="start" font-weight="500">highs[i]</text>
+<rect x="203" y="856" width="176" height="37" rx="0" fill="#e1ecfa" stroke="none"/>
+<path d="M247 856L247 893" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M291 856L291 893" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M335 856L335 893" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="291.0" y="879.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">Float32</text>
+<text x="403" y="880" font-size="14" fill="#617386" text-anchor="start" font-weight="400">4 B</text>
+<text x="48" y="933" font-size="16" fill="#183047" text-anchor="start" font-weight="500">first_bins[i]</text>
+<rect x="203" y="909" width="176" height="37" rx="0" fill="#faecd9" stroke="none"/>
+<path d="M247 909L247 946" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M291 909L291 946" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M335 909L335 946" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="291.0" y="932.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">UInt32</text>
+<text x="403" y="933" font-size="14" fill="#617386" text-anchor="start" font-weight="400">4 B</text>
+<text x="48" y="986" font-size="16" fill="#183047" text-anchor="start" font-weight="500">last_bins[i]</text>
+<rect x="203" y="962" width="176" height="37" rx="0" fill="#faecd9" stroke="none"/>
+<path d="M247 962L247 999" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M291 962L291 999" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M335 962L335 999" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="291.0" y="985.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">UInt32</text>
+<text x="403" y="986" font-size="14" fill="#617386" text-anchor="start" font-weight="400">4 B</text>
+<text x="690" y="827" font-size="16" fill="#183047" text-anchor="start" font-weight="500">lows[i]</text>
+<rect x="845" y="803" width="176" height="37" rx="0" fill="#e1ecfa" stroke="none"/>
+<path d="M889 803L889 840" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M933 803L933 840" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M977 803L977 840" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="933.0" y="826.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">Float32</text>
+<text x="1045" y="827" font-size="14" fill="#617386" text-anchor="start" font-weight="400">4 B</text>
+<text x="690" y="880" font-size="16" fill="#183047" text-anchor="start" font-weight="500">delta[i]</text>
+<rect x="845" y="856" width="44" height="37" rx="0" fill="#e5f1dd" stroke="none"/>
+<text x="867.0" y="879.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">δ</text>
+<text x="1045" y="880" font-size="14" fill="#617386" text-anchor="start" font-weight="400">1 B</text>
+<text x="690" y="933" font-size="16" fill="#617386" text-anchor="start" font-weight="400">first_bins[i]</text>
+<text x="845" y="933" font-size="16" fill="#617386" text-anchor="start" font-weight="400">not stored</text>
+<text x="690" y="986" font-size="16" fill="#183047" text-anchor="start" font-weight="500">ends[i]</text>
+<rect x="845" y="962" width="176" height="37" rx="0" fill="#faecd9" stroke="none"/>
+<path d="M889 962L889 999" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M933 962L933 999" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M977 962L977 999" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="933.0" y="985.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">UInt32</text>
+<text x="1045" y="986" font-size="14" fill="#617386" text-anchor="start" font-weight="400">4 B</text>
+<text x="48" y="1035" font-size="16" fill="#183047" text-anchor="start" font-weight="500">high_bits = low_bits + δ</text>
+<text x="48" y="1060" font-size="14" fill="#617386" text-anchor="start" font-weight="400">Exact integer addition on Float32 bit patterns; no m/z rounding.</text>
+<text x="690" y="1035" font-size="16" fill="#183047" text-anchor="start" font-weight="500">first[i] = ends[i − 1] + 1; first[1] = 1</text>
+<text x="690" y="1060" font-size="14" fill="#617386" text-anchor="start" font-weight="400">Only the end offset is stored for each contiguous entry range.</text>
+<text x="48" y="1102" font-size="15" fill="#617386" text-anchor="start" font-weight="400">One delta width is chosen for the entire partition:</text>
+<rect x="48" y="1120" width="44" height="36" rx="0" fill="#e5f1dd" stroke="none"/>
+<text x="70.0" y="1143.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">8 bits</text>
+<text x="48" y="1180" font-size="14" fill="#617386" text-anchor="start" font-weight="400">max δ ≤ 255</text>
+<rect x="300" y="1120" width="88" height="36" rx="0" fill="#e5f1dd" stroke="none"/>
+<path d="M344 1120L344 1156" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="344.0" y="1143.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">16 bits</text>
+<text x="300" y="1180" font-size="14" fill="#617386" text-anchor="start" font-weight="400">max δ ≤ 65,535</text>
+<rect x="592" y="1120" width="176" height="36" rx="0" fill="#e5f1dd" stroke="none"/>
+<path d="M636 1120L636 1156" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M680 1120L680 1156" stroke="#ffffff" fill="none" stroke-width="1"/>
+<path d="M724 1120L724 1156" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="680.0" y="1143.0" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">32 bits</text>
+<text x="592" y="1180" font-size="14" fill="#617386" text-anchor="start" font-weight="400">otherwise</text>
+<text x="916" y="1139" font-size="15" fill="#617386" text-anchor="start" font-weight="400">Bin payload</text>
+<text x="916" y="1174" font-size="23" fill="#183047" text-anchor="start" font-weight="500">9 / 10 / 12 bytes</text>
+<text x="48" y="1214" font-size="14" fill="#617386" text-anchor="start" font-weight="400">SIMD tail: seven Float32 +∞ values (28 B) are replaced by a padding count and recreated on load.</text>
+<path d="M48 1247L1232 1247" stroke="#d6e0e8" fill="none" stroke-width="1"/>
+<text x="48" y="1272" font-size="15" fill="#617386" text-anchor="start" font-weight="400">03</text>
+<text x="90" y="1272" font-size="22" fill="#183047" text-anchor="start" font-weight="500">Inside the bits</text>
+<text x="90" y="1298" font-size="14" fill="#617386" text-anchor="start" font-weight="400">Field widths stay exact; the compact file changes their arrangement and removes derivable fields.</text>
+<text x="48" y="1330" font-size="18" fill="#183047" text-anchor="start" font-weight="500">Rank mask · UInt8</text>
+<text x="690" y="1330" font-size="18" fill="#183047" text-anchor="start" font-weight="500">Every Float32 bound · 32 bits</text>
+<text x="78" y="1363" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">bit 7</text>
+<rect x="48" y="1377" width="60" height="49" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="78" y="1408" font-size="14" fill="#183047" text-anchor="middle" font-weight="400">rank 8</text>
+<text x="140" y="1363" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">bit 6</text>
+<rect x="110" y="1377" width="60" height="49" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="140" y="1408" font-size="14" fill="#183047" text-anchor="middle" font-weight="400">rank 7</text>
+<text x="202" y="1363" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">bit 5</text>
+<rect x="172" y="1377" width="60" height="49" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="202" y="1408" font-size="14" fill="#183047" text-anchor="middle" font-weight="400">rank 6</text>
+<text x="264" y="1363" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">bit 4</text>
+<rect x="234" y="1377" width="60" height="49" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="264" y="1408" font-size="14" fill="#183047" text-anchor="middle" font-weight="400">rank 5</text>
+<text x="326" y="1363" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">bit 3</text>
+<rect x="296" y="1377" width="60" height="49" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="326" y="1408" font-size="14" fill="#183047" text-anchor="middle" font-weight="400">rank 4</text>
+<text x="388" y="1363" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">bit 2</text>
+<rect x="358" y="1377" width="60" height="49" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="388" y="1408" font-size="14" fill="#183047" text-anchor="middle" font-weight="400">rank 3</text>
+<text x="450" y="1363" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">bit 1</text>
+<rect x="420" y="1377" width="60" height="49" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="450" y="1408" font-size="14" fill="#183047" text-anchor="middle" font-weight="400">rank 2</text>
+<text x="512" y="1363" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">bit 0</text>
+<rect x="482" y="1377" width="60" height="49" rx="0" fill="#ece5f7" stroke="none"/>
+<text x="512" y="1408" font-size="14" fill="#183047" text-anchor="middle" font-weight="400">rank 1</text>
+<text x="48" y="1454" font-size="14" fill="#617386" text-anchor="start" font-weight="400">One bit per selected index rank, up to eight ranks.</text>
+<text x="48" y="1477" font-size="14" fill="#617386" text-anchor="start" font-weight="400">Example: rank 4 → 00001000. Search combines masks with OR.</text>
+<rect x="690" y="1377" width="16" height="49" rx="0" fill="#e5f1dd" stroke="none"/>
+<text x="698.0" y="1408" font-size="13" fill="#183047" text-anchor="middle" font-weight="400">S</text>
+<rect x="706" y="1377" width="128" height="49" rx="0" fill="#e1ecfa" stroke="none"/>
+<text x="770.0" y="1408" font-size="13" fill="#183047" text-anchor="middle" font-weight="400">exponent · 8 bits</text>
+<rect x="834" y="1377" width="368" height="49" rx="0" fill="#dcefee" stroke="none"/>
+<text x="1018.0" y="1408" font-size="13" fill="#183047" text-anchor="middle" font-weight="400">fraction · 23 bits</text>
+<text x="698.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">31</text>
+<path d="M690 1377L690 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="714.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">30</text>
+<path d="M706 1377L706 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="730.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">29</text>
+<path d="M722 1377L722 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="746.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">28</text>
+<path d="M738 1377L738 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="762.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">27</text>
+<path d="M754 1377L754 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="778.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">26</text>
+<path d="M770 1377L770 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="794.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">25</text>
+<path d="M786 1377L786 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="810.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">24</text>
+<path d="M802 1377L802 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="826.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">23</text>
+<path d="M818 1377L818 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="842.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">22</text>
+<path d="M834 1377L834 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="858.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">21</text>
+<path d="M850 1377L850 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="874.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">20</text>
+<path d="M866 1377L866 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="890.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">19</text>
+<path d="M882 1377L882 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="906.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">18</text>
+<path d="M898 1377L898 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="922.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">17</text>
+<path d="M914 1377L914 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="938.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">16</text>
+<path d="M930 1377L930 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="954.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">15</text>
+<path d="M946 1377L946 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="970.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">14</text>
+<path d="M962 1377L962 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="986.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">13</text>
+<path d="M978 1377L978 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1002.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">12</text>
+<path d="M994 1377L994 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1018.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">11</text>
+<path d="M1010 1377L1010 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1034.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">10</text>
+<path d="M1026 1377L1026 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1050.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">9</text>
+<path d="M1042 1377L1042 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1066.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">8</text>
+<path d="M1058 1377L1058 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1082.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">7</text>
+<path d="M1074 1377L1074 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1098.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">6</text>
+<path d="M1090 1377L1090 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1114.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">5</text>
+<path d="M1106 1377L1106 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1130.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">4</text>
+<path d="M1122 1377L1122 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1146.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">3</text>
+<path d="M1138 1377L1138 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1162.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">2</text>
+<path d="M1154 1377L1154 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1178.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">1</text>
+<path d="M1170 1377L1170 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1194.0" y="1363" font-size="11" fill="#617386" text-anchor="middle" font-weight="400">0</text>
+<path d="M1186 1377L1186 1383" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="690" y="1454" font-size="14" fill="#617386" text-anchor="start" font-weight="400">S = sign bit · bit 31</text>
+<text x="690" y="1477" font-size="14" fill="#617386" text-anchor="start" font-weight="400">δ encodes the difference between entire 32-bit patterns.</text>
+<path d="M48 1510L1232 1510" stroke="#d6e0e8" fill="none" stroke-width="1"/>
+<text x="48" y="1535" font-size="15" fill="#617386" text-anchor="start" font-weight="400">04</text>
+<text x="90" y="1535" font-size="22" fill="#183047" text-anchor="start" font-weight="500">RT bins and other metadata stay unchanged</text>
+<text x="48" y="1574" font-size="17" fill="#183047" text-anchor="start" font-weight="500">RT bin · 16 B · four adjacent 32-bit fields</text>
+<rect x="48" y="1605" width="256" height="49" rx="0" fill="#e1ecfa" stroke="none"/>
+<text x="80.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">0</text>
+<path d="M112 1605L112 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="144.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">1</text>
+<path d="M176 1605L176 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="208.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">2</text>
+<path d="M240 1605L240 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="272.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">3</text>
+<text x="176.0" y="1634.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">low iRT · Float32</text>
+<rect x="304" y="1605" width="256" height="49" rx="0" fill="#e1ecfa" stroke="none"/>
+<text x="336.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">4</text>
+<path d="M368 1605L368 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="400.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">5</text>
+<path d="M432 1605L432 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="464.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">6</text>
+<path d="M496 1605L496 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="528.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">7</text>
+<text x="432.0" y="1634.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">high iRT · Float32</text>
+<rect x="560" y="1605" width="256" height="49" rx="0" fill="#faecd9" stroke="none"/>
+<text x="592.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">8</text>
+<path d="M624 1605L624 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="656.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">9</text>
+<path d="M688 1605L688 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="720.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">10</text>
+<path d="M752 1605L752 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="784.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">11</text>
+<text x="688.0" y="1634.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">first mass bin · UInt32</text>
+<rect x="816" y="1605" width="256" height="49" rx="0" fill="#faecd9" stroke="none"/>
+<text x="848.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">12</text>
+<path d="M880 1605L880 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="912.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">13</text>
+<path d="M944 1605L944 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="976.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">14</text>
+<path d="M1008 1605L1008 1654" stroke="#ffffff" fill="none" stroke-width="1"/>
+<text x="1040.0" y="1595" font-size="12" fill="#617386" text-anchor="middle" font-weight="400">15</text>
+<text x="944.0" y="1634.5" font-size="15" fill="#183047" text-anchor="middle" font-weight="500">last mass bin · UInt32</text>
+<text x="48" y="1699" font-size="16" fill="#183047" text-anchor="start" font-weight="400">Partition m/z bounds</text>
+<text x="605" y="1699" font-size="15" fill="#617386" text-anchor="start" font-weight="400">2 × Float32</text>
+<text x="954" y="1699" font-size="15" fill="#617386" text-anchor="start" font-weight="400">8 B / partition</text>
+<path d="M48 1711L1232 1711" stroke="#d6e0e8" fill="none" stroke-width="1"/>
+<text x="48" y="1734" font-size="16" fill="#183047" text-anchor="start" font-weight="400">Local → global precursor mapping</text>
+<text x="605" y="1734" font-size="15" fill="#617386" text-anchor="start" font-weight="400">UInt32</text>
+<text x="954" y="1734" font-size="15" fill="#617386" text-anchor="start" font-weight="400">4 B / local precursor</text>
+<path d="M48 1746L1232 1746" stroke="#d6e0e8" fill="none" stroke-width="1"/>
+<text x="48" y="1769" font-size="16" fill="#183047" text-anchor="start" font-weight="400">Skip hints</text>
+<text x="605" y="1769" font-size="15" fill="#617386" text-anchor="start" font-weight="400">UInt16</text>
+<text x="954" y="1769" font-size="15" fill="#617386" text-anchor="start" font-weight="400">2 B / fragment-m/z bin</text>
+<path d="M48 1781L1232 1781" stroke="#d6e0e8" fill="none" stroke-width="1"/>
+<text x="48" y="1804" font-size="16" fill="#183047" text-anchor="start" font-weight="400">Local precursor count</text>
+<text x="605" y="1804" font-size="15" fill="#617386" text-anchor="start" font-weight="400">UInt16 or UInt32</text>
+<text x="954" y="1804" font-size="15" fill="#617386" text-anchor="start" font-weight="400">2 or 4 B / partition</text>
+<path d="M48 1816L1232 1816" stroke="#d6e0e8" fill="none" stroke-width="1"/>
+<rect x="48" y="1861" width="400" height="65" rx="7" fill="#f3f7fa" stroke="#d6e0e8"/>
+<text x="248" y="1889" font-size="19" fill="#183047" text-anchor="middle" font-weight="500">Compact disk arrays</text>
+<text x="248" y="1911" font-size="14" fill="#617386" text-anchor="middle" font-weight="400">9–12 B / bin · 3 or 5 B / entry</text>
+<path d="M470 1894L735 1894" stroke="#7a8d9f" fill="none" stroke-width="1" marker-end="url(#arrow)"/>
+<text x="602" y="1877" font-size="15" fill="#617386" text-anchor="middle" font-weight="400">decode once during loading</text>
+<rect x="760" y="1861" width="472" height="65" rx="7" fill="#f3f7fa" stroke="#d6e0e8"/>
+<text x="996" y="1889" font-size="19" fill="#183047" text-anchor="middle" font-weight="500">Original native arrays in RAM</text>
+<text x="996" y="1911" font-size="14" fill="#617386" text-anchor="middle" font-weight="400">16 B / bin · 4 or 8 B / entry</text>
+<text x="48" y="1965" font-size="14" fill="#617386" text-anchor="start" font-weight="400">Scopes: array payloads only; object headers, serialization metadata and Zlib compression are excluded.</text>
+<text x="48" y="1989" font-size="14" fill="#617386" text-anchor="start" font-weight="400">The accepted compact format does not introduce shared-fragment templates or new indirection during search.</text>
+</g></svg>
