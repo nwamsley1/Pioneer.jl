@@ -246,6 +246,15 @@ tier_scan_cap(n_scans::Integer) =
     min(Int(n_scans), max(TUNING_TIER_SCAN_CAP_MIN, ceil(Int, TUNING_TIER_SCAN_CAP_FRACTION * n_scans)))
 
 """
+    projected_short(n_passing, n_scans, scan_cap, target_psms) -> Bool
+
+Whether a tier's yield so far (`n_passing` PSMs in `n_scans` scans), extrapolated to `scan_cap` scans, falls below
+`TUNING_PROJECTION_STOP_FRACTION` of `target_psms`.
+"""
+projected_short(n_passing::Integer, n_scans::Integer, scan_cap::Integer, target_psms::Integer) =
+    n_passing / max(n_scans, 1) * scan_cap < TUNING_PROJECTION_STOP_FRACTION * target_psms
+
+"""
     tier_max_peaks(score, max_peaks, low_tier_max_peaks) -> Int
 
 Peaks per scan to match at score tier `score` (0 = all): `low_tier_max_peaks` at tiers up to
@@ -280,7 +289,8 @@ function accumulate_psms!(
     label::String = "accumulate",
     max_per_precursor::Int = 0,     # 0 = count PSM rows; k > 0 = keep the best k per precursor, count rows
     low_tier_max_peaks::Int = 0,    # > 0: tiers <= TUNING_LOW_TIER_MAX_SCORE match only this many peaks per scan
-    max_scans_per_tier::Int = typemax(Int)
+    max_scans_per_tier::Int = typemax(Int),
+    projection_stop::Bool = false   # back off a tier whose extrapolated yield cannot approach the target
 )
     all_scan_indices = scan_priority[1:min(length(scan_priority), length(scan_priority))]
     max_scans = length(all_scan_indices)
@@ -360,6 +370,12 @@ function accumulate_psms!(
                 break
             end
 
+            if projection_stop && prev < tier_cap && projected_short(n_passing, prev, tier_cap, target_psms)
+                @debug_l1 "  $(label) (score≥$(score)): projected $(round(Int, n_passing / max(prev, 1) * tier_cap)) PSMs " *
+                           "at the scan cap, backing off"
+                end_reason = "score≥$(score) projected short at $(prev) scans"
+                break
+            end
             # Estimate additional scans from rate
             scans_remaining = tier_cap - prev
             scans_remaining <= 0 && break
@@ -709,6 +725,7 @@ function process_file!(
         # collection only: the low-tier peak limit and the per-tier scan cap (the scout already matches top-N peaks)
         phase_low_tier_peaks = (0, Int(TUNING_LOW_TIER_MAX_PEAKS))
         phase_scan_caps = (typemax(Int), tier_scan_cap(total_ms2))
+        phase_projection_stop = (false, true)
         phase_caps = (0, TUNING_MAX_PSMS_PER_PRECURSOR)   # scout: PSM rows; collection: best-k rows per precursor
 
         scored_psms = DataFrame()
@@ -726,7 +743,8 @@ function process_file!(
                 label = phase.label,
                 max_per_precursor = phase_caps[phase_idx],
                 low_tier_max_peaks = phase_low_tier_peaks[phase_idx],
-                max_scans_per_tier = phase_scan_caps[phase_idx])
+                max_scans_per_tier = phase_scan_caps[phase_idx],
+                projection_stop = phase_projection_stop[phase_idx])
             n_passing = nrow(scored_psms)
             @debug_l1 "  $(phase.label): $(n_scans) scans → $(n_passing) PSMs ($(round(time()-t_phase, digits=2))s)"
 

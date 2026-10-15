@@ -31,8 +31,9 @@ The historical "3-phase bias-shift × multi-score × scan-scaling" iteration was
 │  Mass model: from Phase 1 fit                           │
 │  Target PSMs: TUNING_MIN_SAMPLES (1200)                 │
 │  Initial scans: TUNING_MIN_COLLECT_SCANS (5000)         │
-│  Tiers ≤6: TUNING_LOW_TIER_MAX_PEAKS (200) peaks/scan   │
+│  Tiers ≤7: TUNING_LOW_TIER_MAX_PEAKS (200) peaks/scan   │
 │  Per-tier scan cap: max(20,000, 10% of MS2 scans)       │
+│  Tier backs off when its yield projects < 25% of target│
 │  Not converged → keep the tier with the most PSMs       │
 │  → Refine model with PSMs collected at the fitted tol  │
 │  → Fit final RT alignment spline                        │
@@ -83,13 +84,14 @@ This replaced the 32-byte `FragmentMatch` per-thread buffer (~2.7× smaller; 320
 
 Each phase steps down the score tiers (`TUNING_SCORE_TIERS`, 8 → 5) until it reaches its target. In collection:
 - tiers ≤ `TUNING_LOW_TIER_MAX_SCORE` match only the `TUNING_LOW_TIER_MAX_PEAKS` most intense peaks of each scan;
-- no tier searches more than `tier_scan_cap` scans;
+- no tier searches more than `tier_scan_cap` scans, and a tier backs off as soon as its yield extrapolated to that cap
+  falls below `TUNING_PROJECTION_STOP_FRACTION` of the target (`projected_short`);
 - if no tier reaches the target, the tier with the most passing PSMs is kept, not the last one tried.
 
 Why (measured 2026-10): on dense timsTOF slices (Ultra 2, AIP) the all-peaks low tiers flood with noise candidates and
 their yield collapses, and a failing tier would otherwise walk the whole file (a single-cell run: 836,000 slices per
-tier, ~90 s each). Thin Astral files still gain PSMs at tiers 6 and 5, so the tiers stay; tiers 8 and 7 keep every
-peak because limiting them cost 9–18% of IDs on ZenoTOF and MTAC Astral.
+tier, ~90 s each). Thin Astral files still gain PSMs at the lower tiers, so the tiers stay; tier 8 keeps every peak
+because limiting it cost 9–18% of IDs on ZenoTOF and MTAC Astral.
 
 "Converged" in the run summary means calibrated from the file's own PSMs; the summary also counts files whose
 collection ended below the `TUNING_MIN_SAMPLES` target.

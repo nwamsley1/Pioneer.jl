@@ -25,16 +25,21 @@ const TUNING_MAX_FRAGS_FOR_MASS_ERR = UInt8(3)  # Fragments per PSM for mass err
 const TUNING_MIN_COLLECT_SCANS = Int64(5000)    # Minimum initial scan estimate for collection
 # Collection at score tiers <= TUNING_LOW_TIER_MAX_SCORE matches only the TUNING_LOW_TIER_MAX_PEAKS most intense
 # peaks of each scan. On dense spectra (timsTOF Ultra 2 / AIP slices) the all-peaks low tiers flood with noise
-# candidates (up to 527 M on one file) and their PSM yield at 1% FDR collapses; on thin Astral spectra the low tiers
-# keep their yield with the limit (SCP 250 pg: 907 vs 908 and 1,160 vs 1,198 PSMs). Tiers 8 and 7 keep every peak:
-# limiting them cost 9-18% of IDs on ZenoTOF and MTAC Astral.
-const TUNING_LOW_TIER_MAX_SCORE = UInt8(6)
+# candidates (up to 527 M on one file) and their PSM yield at 1% FDR collapses (AIP score>=7: 4.4 M candidates,
+# 15 s, 341 PSMs; with the limit 3.5 k candidates, 1 s, 913 PSMs); on thin Astral spectra the limited tiers keep their
+# yield (SCP 250 pg: 907 vs 908 and 1,160 vs 1,198 PSMs). Tier 8 keeps every peak: limiting it cost 9-18% of IDs on
+# ZenoTOF and MTAC Astral, whose collection converges at score>=8.
+const TUNING_LOW_TIER_MAX_SCORE = UInt8(7)
 const TUNING_LOW_TIER_MAX_PEAKS = Int64(200)
 # A collection tier searches at most max(TUNING_TIER_SCAN_CAP_MIN, TUNING_TIER_SCAN_CAP_FRACTION x MS2 scans).
 # Every collection that converged in testing needed <= 30,000 scans; without the cap a tier on a thin file walked
 # all 836,000 slices of a single-cell run for 434 PSMs (~90 s per tier).
 const TUNING_TIER_SCAN_CAP_MIN = Int64(20_000)
 const TUNING_TIER_SCAN_CAP_FRACTION = 0.1
+# A collection tier backs off as soon as its PSM rate so far, extrapolated to the tier's scan cap, falls below this
+# fraction of the target (single-cell Ultra 2 at score>=8: 3 PSMs in 5,000 slices -> backs off after 1 s instead of
+# searching to the cap for 15 s). Files that converge do so within their first batch and never trigger it.
+const TUNING_PROJECTION_STOP_FRACTION = 0.25
 # Second-order stopping (accumulate_psms!): the scan-priority order draws the richest scans first, so the
 # marginal yield of each batch decays. Once the decay is established, the yield of ALL remaining scans is
 # bounded by a geometric series; if that bound cannot reach the target, the tier backs off immediately
