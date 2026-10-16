@@ -22,7 +22,7 @@ import AcceleratedKernels
 using Base64
 using Base.Order
 using Base.Iterators: partition
-using CSV, Combinatorics, CodecZlib
+using CSV, Combinatorics, CodecZlib, LibDeflate
 using Serialization
 using SHA
 using DataFrames, DataStructures, Dictionaries, Distributions

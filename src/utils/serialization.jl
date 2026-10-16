@@ -18,7 +18,7 @@
 """
 Serialization utilities for Pioneer spectral library data.
 
-Uses Julia's base Serialization with Zlib compression (via CodecZlib).
+Uses Julia's base Serialization with Zlib compression (written via CodecZlib, read via LibDeflate).
 Files use the `.jls` extension.
 """
 
@@ -68,12 +68,24 @@ fragments = deserialize_from_jls("fragments.jls")
 ```
 """
 function deserialize_from_jls(filepath::String)
-    open(filepath, "r") do file_io
-        stream = ZlibDecompressorStream(file_io)
+    # Inflate the whole file at once with libdeflate (~2.5x faster than streaming through zlib), then
+    # deserialize from memory. zlib does not record the inflated size, so the output buffer is an
+    # oversized anonymous mapping: pages never written are never committed, and the buffer is unmapped
+    # as soon as the object is read.
+    compressed = Mmap.mmap(filepath)
+    n_out = max(4 * length(compressed), 1 << 20)
+    while true
+        inflated = Mmap.mmap(Vector{UInt8}, n_out)
         try
-            return deserialize(stream)
+            n = LibDeflate.zlib_decompress!(LibDeflate.Decompressor(), inflated, compressed)
+            if n isa LibDeflate.LibDeflateError
+                n === LibDeflate.LibDeflateErrors.insufficient_output_space || error("Could not inflate $filepath: $n")
+                n_out *= 2
+                continue
+            end
+            return GC.@preserve inflated deserialize(IOBuffer(unsafe_wrap(Array, pointer(inflated), n)))
         finally
-            close(stream)
+            Base.finalize(inflated)
         end
     end
 end

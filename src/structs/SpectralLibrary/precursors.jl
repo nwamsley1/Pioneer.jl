@@ -49,25 +49,15 @@ struct StandardLibraryPrecursors <: LibraryPrecursors
                         "inferred_num_variable_modifications must match the precursor table length"
                     ))
             end
-            accession_numbers = precursor_table[:accession_numbers]
-            accession_keys = String[_accession_key(accs) for accs in accession_numbers]
-
-            unique_proteins = unique(accession_keys)
+            unique_proteins, protein_of_pid = _accession_groups(precursor_table[:accession_numbers])
             accession_number_to_pgid = Dictionary(
                 unique_proteins, range(one(UInt32), UInt32(length(unique_proteins)))
             )
 
             # Assign CV folds by protein group (all precursors of a protein get the same fold)
-            pg_to_cv_fold = Dictionary{String, UInt8}()
             cv_folds = UInt8[0, 1]
             Random.seed!(1776)
-            for pg in unique_proteins
-                insert!(pg_to_cv_fold, pg, rand(cv_folds))
-            end
-            pid_to_cv_fold = Vector{UInt8}(undef, n)
-            for pid in range(1, n)
-                pid_to_cv_fold[pid] = pg_to_cv_fold[accession_keys[pid]]
-            end
+            pid_to_cv_fold = _protein_cv_folds(protein_of_pid, length(unique_proteins), cv_folds)
             if length(keys(accession_number_to_pgid)) <= 1
                 # Only one (or zero) unique protein in the library — protein-grouped
                 # CV folds collapse to a single fold, which defeats the purpose.
@@ -95,6 +85,47 @@ end
 
 _accession_key(accs::AbstractString) = String(accs)
 _accession_key(accs) = join(string.(collect(accs)), ";")
+
+# The distinct accession keys in first-seen order, and each row's index into them.
+function _accession_groups(accession_numbers)
+    ids = Dict{String, UInt32}()
+    protein_of_pid = UInt32[get!(ids, _accession_key(accs), UInt32(length(ids) + 1)) for accs in accession_numbers]
+    return _keys_by_id(ids), protein_of_pid
+end
+
+_accession_groups(accession_numbers::Arrow.List{String}) = _first_seen_ids(accession_numbers)
+
+# The distinct strings of an Arrow string column in first-seen order, and each row's index into
+# them. Hashes each row's bytes in place (views into one copy of the string data) instead of
+# materializing a String per row.
+function _first_seen_ids(values::Arrow.List{String})
+    data = String(copy(values.data))
+    ids = Dict{SubString{String}, UInt32}()
+    distinct = SubString{String}[]
+    row_ids = Vector{UInt32}(undef, length(values))
+    for i in eachindex(row_ids)
+        lo, hi = values.offsets[i]
+        key = SubString(data, Int(lo) - 1, Int(hi - lo + 1), Val(:noshift))
+        row_ids[i] = get!(ids, key) do
+            push!(distinct, key)
+            UInt32(length(distinct))
+        end
+    end
+    return String.(distinct), row_ids
+end
+
+function _protein_cv_folds(protein_of_pid::Vector{UInt32}, n_proteins::Int, cv_folds::Vector{UInt8})
+    protein_cv_fold = UInt8[rand(cv_folds) for _ in 1:n_proteins]
+    return UInt8[protein_cv_fold[p] for p in protein_of_pid]
+end
+
+function _keys_by_id(ids::AbstractDict)
+    keys_by_id = Vector{String}(undef, length(ids))
+    for (key, id) in ids
+        keys_by_id[id] = String(key)
+    end
+    return keys_by_id
+end
 
 @inline _count_mox(seq::AbstractString) = UInt8(count("Unimod:35", seq))
 @inline _count_mox(::Missing) = zero(UInt8)
@@ -201,13 +232,37 @@ function _rank_ids(values, ::Type{K}) where {K}
     for (value, id) in first_seen
         distinct[id] = value
     end
-    order = sortperm(distinct)
+    return _rank_first_seen(distinct, ids)
+end
+
+_rank_ids(values::Arrow.List{String}, ::Type{String}) = _rank_first_seen(_first_seen_ids(values)...)
+
+# Turn first-seen IDs into ranks of the distinct values in sort order.
+function _rank_first_seen(distinct::Vector, ids::Vector{UInt32})
+    order = _sort_order(distinct)
     rank = Vector{UInt32}(undef, length(distinct))
     rank[order] = UInt32.(1:length(distinct))
     @inbounds for i in eachindex(ids)
         ids[i] = rank[ids[i]]
     end
     return ids, distinct[order]
+end
+
+_sort_order(distinct) = sortperm(distinct)
+
+# sortperm for many strings: sort (first 8 bytes as a big-endian integer, index) pairs, which stay in
+# cache, and compare whole strings only on a tied prefix. Same order as sortperm (bytewise isless).
+function _sort_order(distinct::Vector{String})
+    keys = Vector{Tuple{UInt64, Int}}(undef, length(distinct))
+    for (i, str) in enumerate(distinct)
+        prefix = zero(UInt64)
+        for j in 1:8
+            prefix = (prefix << 8) | (j <= ncodeunits(str) ? UInt64(codeunit(str, j)) : zero(UInt64))
+        end
+        keys[i] = (prefix, i)
+    end
+    sort!(keys; lt = (a, b) -> a[1] < b[1] || (a[1] == b[1] && isless(distinct[a[2]], distinct[b[2]])))
+    return last.(keys)
 end
 
 """
