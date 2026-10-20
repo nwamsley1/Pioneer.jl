@@ -104,6 +104,17 @@ export const startJob = (
 
 export const cancelJob = (jobId: string): Promise<void> => invoke('cancel_job', { jobId })
 
+/** The kind of drive a path is on: 'ssd', 'hdd', 'optical', 'network' or 'unknown'. */
+export interface StorageInfo {
+  path: string
+  kind: 'ssd' | 'hdd' | 'optical' | 'network' | 'unknown'
+}
+
+/** What kind of drive each path is on. Resolves to [] if the check itself fails, so a
+ *  failed check never blocks a run. */
+export const storageKinds = (paths: string[]): Promise<StorageInfo[]> =>
+  invoke<StorageInfo[]>('storage_kinds', { paths }).catch(() => [])
+
 /** One finished run as the store holds it. `snapshot` is the form state as
  *  JSON — opaque to the Rust side, which should not need to know the shape of
  *  three different parameter sets. */
