@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Scanning-quad (ZT) hooks in ParameterTuningSearch.
 
 """Q1 bins per RT bin in the scan priority order for scanning-quad files."""

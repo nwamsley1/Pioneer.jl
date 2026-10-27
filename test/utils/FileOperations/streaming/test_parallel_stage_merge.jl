@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Staging groups of a hierarchical merge are merged concurrently. The result must be identical, row for row and
 # including the order of tied rows, to merging the groups one after another (the previous behaviour).
 

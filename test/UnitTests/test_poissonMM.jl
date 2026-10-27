@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Unit tests for solvePoissonMM_fast! — bisection fallback vs Float64 accumulators
 #
 # Tests two fixes for the "stuck weight" bug where columns with tiny a_ij values

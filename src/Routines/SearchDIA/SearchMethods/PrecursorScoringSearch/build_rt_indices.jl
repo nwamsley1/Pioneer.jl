@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 """
     build_rt_indices!(search_context, valid_file_indices, passing_refs; min_prob=0.5f0)
 

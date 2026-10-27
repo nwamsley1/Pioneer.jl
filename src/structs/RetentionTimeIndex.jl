@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Retention time index for chromatogram extraction.
 #
 # Maps RT ranges to precursors, enabling efficient lookup of which precursors

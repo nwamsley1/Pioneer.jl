@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Regression tests for searches that find nothing.
 #
 # A file that matches nothing is a normal outcome — the wrong library, a blank

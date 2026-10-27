@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # convertBruker input handling: what counts as a Bruker bundle, and the errors for inputs that are not. The
 # conversion itself is TimsSlices.convert_run (src/vendor/TimsSlices), tested in test/UnitTests/formats/timsslices and end to end by the timsTOF searches.
 

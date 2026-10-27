@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # LightGBM training (with low-data probit fallback) and best-per-precursor
 # selection for MainSearch. The training core (`train_psm_classifier_with_fallback`)
 # is shared with PrecursorScoringSearch — both stages use the same hyperparameters,

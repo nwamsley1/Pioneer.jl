@@ -2,7 +2,7 @@
 
 # Pioneer: Fast and Open-Source Analysis of Data-Independent Acquisition Proteomics Experiments
 
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue)](LICENSE)
+[![License: WashU non-commercial](https://img.shields.io/badge/License-WashU%20non--commercial-blue)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-stable-blue)](https://nwamsley1.github.io/Pioneer.jl/docs/stable/)
 [![Dev Docs](https://img.shields.io/badge/docs-dev-cyan)](https://nwamsley1.github.io/Pioneer.jl/docs/dev/)
 [![Regression Reports](https://img.shields.io/badge/regression-reports-orange)](https://nwamsley1.github.io/Pioneer.jl/reports/)

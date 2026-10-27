@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Tests for src/Routines/BuildSpecLib/utils/parse_mods.jl. The functions here
 # parse the (pos,aa,mod_name) modification strings that drive precursor and
 # fragment m/z calculation; bugs surface as wrong masses everywhere

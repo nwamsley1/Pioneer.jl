@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Huber-loss coordinate descent for spectral deconvolution.
 #
 # Restores the robust solver used before the Poisson MM integration path,

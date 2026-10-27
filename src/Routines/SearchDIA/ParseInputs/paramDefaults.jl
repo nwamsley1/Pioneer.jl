@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # No module wrapper - these functions become part of the Pioneer module
 # JSON is already imported in Pioneer.jl, no need to import again
 

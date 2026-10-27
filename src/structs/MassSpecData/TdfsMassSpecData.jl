@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # TdfsMassSpecData: Pioneer's view of a `.tdfs` (TimsSlices.jl) — IM-smoothed, m/z-centroided timsTOF slices
 # stored as one zstd block per slice. Every slice is one Pioneer scan.
 #

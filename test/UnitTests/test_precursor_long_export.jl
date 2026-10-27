@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Library text is not stored on precursor chunks; the writer restores it from a library table
 # indexed by :precursor_idx. Build that table from the expected text columns.
 function _precursor_long_export_text(dir, rows, file_names)

@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Scanning-quad (ZT) per-file state: whether a file is searched in ZT mode, its Q1 bin lattice,
 # and the settings that follow from it. Everything else in SearchDIA reaches ZT through
 # `getZTGeometry(search_context, ms_file_idx)`, which is `nothing` for every other file.
