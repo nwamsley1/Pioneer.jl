@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Tests for the ion-mobility (CCS) Koina model path in BuildSpecLib:
 # request preparation, response parsing, the offline synthetic client, the
 # CCS -> 1/K0 conversion, and parameter validation of `im_model` and the

@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # encode_codec2 (tdf/block.jl) is the inverse of decode_codec2!: synthetic frames round-trip exactly.
 
 "Decode a block produced by encode_codec2 (header + payload) with the reader's decoder."

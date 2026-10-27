@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Unit tests for parallel utilities:
 #   - parallel_foreach!  (src/utils/parallelUtils.jl)
 #   - _distribute_scans_to_threads, _sort_scans_by_mz_in_rt_bins!  (partitionThreadTasks.jl)

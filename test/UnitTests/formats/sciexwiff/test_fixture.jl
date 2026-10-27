@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # The truncated SCIEX SWATH fixture (Zenodo; made by test/fixtures/tools/make_wiff_fixture.jl): opening the patched
 # .wiff + truncated .wiff.scan, .wiff -> .scxs conversion, reading the .scxs back, and convertSciex end to end.
 

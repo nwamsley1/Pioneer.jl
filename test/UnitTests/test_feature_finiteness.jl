@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Stress-tests for the ML feature pipeline guarding against Inf/NaN.
 #
 # Background: a 1-fragment match where the matched peak's centroid landed

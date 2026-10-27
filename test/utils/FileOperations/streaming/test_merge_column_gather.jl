@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # The k-way merge gathers each output column from typed source columns (one lookup per column
 # per batch). These tests pin the gathered values to an in-memory merge for every column type the
 # merge writes, and keep a mismatched input column an error.

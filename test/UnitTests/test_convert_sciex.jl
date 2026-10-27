@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # convertSciex input handling: what counts as a SCIEX run, and the errors for inputs that are not. The conversion
 # itself is SciexWiff.convert, tested in SciexWiff.jl. With PIONEER_TEST_WIFF set to a .wiff (its .wiff.scan beside
 # it), also converts it and opens the result as MS data.

@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # ScxsMassSpecData: Pioneer's view of a `.scxs` (SciexWiff.jl) — centroided SCIEX SWATH scans stored as one zstd
 # block per scan. Every scan is one Pioneer scan; there is no ion mobility (`getImScans` stays `nothing`), so the
 # search takes the same code paths as for Arrow data.

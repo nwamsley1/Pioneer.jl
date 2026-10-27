@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 """Per-file calibration QC. Statuses and reason flags are stored without strings."""
 @enum CalibrationQCStatus::UInt8 QC_NOT_ASSESSED QC_NORMAL QC_SUSPICIOUS QC_WARNING QC_FAILED
 const CALIBRATION_QC_STAGES = (:rt, :ms2_mass, :ms1_mass, :quadrupole, :nce, :ion_mobility)

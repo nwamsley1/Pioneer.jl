@@ -1,11 +1,8 @@
-# Copyright (C) 2024 Nathan Wamsley
+# ©2026 Washington University
 #
-# This file is part of Pioneer.jl
-#
-# Pioneer.jl is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
 
 using Test
 

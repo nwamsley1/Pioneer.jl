@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Acquisition metadata: the user-declared scan mode, its sanity check, and what is recorded about a ZT run.
 
 @testset "ZT Scan DIA window table and naming" begin

@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Pioneer test suite — part 2 (unit tests, group A: foundations).
 #
 # Runs in its own Julia subprocess (separate from part 1 and part 3) so

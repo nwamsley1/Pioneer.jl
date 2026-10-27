@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Predicted iRT refinement for MainSearch.
 #
 # MainSearch first trains a per-run classifier on the library iRT predictions.

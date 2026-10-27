@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 @testset "Model peptide-length limits" begin
     # Altimeter's ceiling is 40, probed against Koina: a 40-mer is accepted and
     # a 41-mer is rejected outright. The catalog builds at exactly 7-40, so this

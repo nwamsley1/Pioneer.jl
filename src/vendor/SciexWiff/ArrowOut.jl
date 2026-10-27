@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Pioneer's scan Arrow schema (the columns `convertMzML` writes, PioneerScanElement), in record batches.
 
 const ARROW_BATCH_PEAKS = 50_000_000   # list offsets are Int32 per record batch; this also bounds pending RAM

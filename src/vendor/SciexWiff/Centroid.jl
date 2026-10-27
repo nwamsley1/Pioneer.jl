@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Centroiding decoded profile bins (notes/format.md §9).
 #
 # Stored bins are the non-zero TOF bins of a sparse profile on a grid of 8-unit steps; a bin that is

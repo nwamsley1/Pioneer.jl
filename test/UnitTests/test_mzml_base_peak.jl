@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # convertMzML: each scan's base peak is its most intense stored peak, even when the mzML reports another
 # (MS:1000504, MS:1000505): the Huber weight ceiling assumes no intensity in the scan exceeds it.
 

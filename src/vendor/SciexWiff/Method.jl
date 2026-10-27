@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # SWATH windows from `MethodSubtree/Method1/DeviceMethod0/SWATHMethod` (notes/format.md §5):
 # a 40-byte preamble (u16 window count at byte 38) then 20-byte records {f64 lo, f64 hi, u32}.
 # Experiment k+1 of each cycle is window k; experiment 1 is the MS1 survey.

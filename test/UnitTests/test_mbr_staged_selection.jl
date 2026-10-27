@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # A staged MBR integration input is a row selection of a scored table and its sidecars. Loading it
 # must give exactly what the old staging copy gave: the selected rows, every column, in order.
 using Test, Arrow, DataFrames

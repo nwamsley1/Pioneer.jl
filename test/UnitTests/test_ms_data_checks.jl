@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # The search refuses, before any search work, to mix timsTOF .tdfs runs with .arrow files and to search .tdfs data
 # with a library that has no predicted ion mobility.
 
