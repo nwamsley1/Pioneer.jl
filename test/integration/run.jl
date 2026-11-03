@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Integration test driver: runnable from a fresh shell, no REPL state.
 #
 #   julia --project=. -t auto test/integration/run.jl              # search only (uses committed .poin)

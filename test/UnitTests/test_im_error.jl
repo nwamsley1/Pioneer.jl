@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Tests for the per-file ion-mobility calibration: the z2 line (fit_im_line), the median line for files without
 # one (fill_missing_im_lines!), and MainSearch's im_error / im_obs features (add_im_error!).
 

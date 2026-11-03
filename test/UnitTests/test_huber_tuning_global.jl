@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 @testset "global Huber delta calibration" begin
     delta_grid = Float32[100, 200, 300]
     tuning_psms = DataFrame(

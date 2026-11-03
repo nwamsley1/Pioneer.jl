@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Tests for the ion-mobility helpers: the fragment-index gate (im_gate_lines / passes_im_gate) and the 1/K0 ->
 # IM-scan conversion of the chromatogram window and integration band (im_half_width_scans).
 

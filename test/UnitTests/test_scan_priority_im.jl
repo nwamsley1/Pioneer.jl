@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Tests for the ion-mobility (packet) scan priority order used by ParameterTuningSearch:
 # get_ms2_scan_priority_order_im stratifies each RT bin over (isolation window, IM bin) cells,
 # and getImScans detects the `imScan` column.

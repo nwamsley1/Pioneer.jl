@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 using Pioneer, JSON, Statistics, Serialization
 # REPLAY_ROOT contains replay_inputs/metadata.jls and replays/matrices.jsonl.
 # These are the saved pre-quantification inputs from the MTAC replay experiment.

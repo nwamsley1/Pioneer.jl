@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Construction of retentionTimeIndex from precursor RT/mz data.
 #
 # buildRtIndex groups precursors into RT bins of configurable width, with

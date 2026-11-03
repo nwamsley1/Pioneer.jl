@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Tests for the per-file vs. global protein-inference dispatch in
 # ProteinInferenceSearch. These exercise the *semantic* difference at the
 # `infer_proteins` level: when a peptide set forms a parsimonious explanation

@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 @testset "Attach Pass-1 predictions while merging folds" begin
     function write_scored_fold_fixture(dir, name, ids; infold=:scores)
         path = joinpath(dir, name * ".arrow")

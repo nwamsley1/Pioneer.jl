@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Scanning-quad (ZT) candidacy: re-anchor fragment-index emissions on the precursor's own Q1
 # bin and expand each candidate across its meta-scan.
 

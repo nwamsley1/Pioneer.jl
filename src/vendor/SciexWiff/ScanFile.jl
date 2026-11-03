@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Decoding one `.wiff.scan` block. Layout and evidence: notes/format.md §3–4.
 #
 #   [varint len][protobuf: 1 = {1: f64 a, 2: f64 b}, 2* = {1: start bin, 2: seek offset}]

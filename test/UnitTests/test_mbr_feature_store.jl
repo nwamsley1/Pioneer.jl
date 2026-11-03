@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 using Test, Pioneer, DataFrames, Arrow, Random
 
 function mbr_store_fixture(n=1200)

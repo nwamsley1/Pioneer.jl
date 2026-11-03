@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # DIA-NN-style decoy generation
 #
 # Instead of shuffling sequences and predicting new spectra/RTs via deep learning,

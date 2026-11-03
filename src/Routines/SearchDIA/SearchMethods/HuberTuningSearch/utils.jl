@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 const DEFAULT_HUBER_DELTA_EXP = 1.5f0
 const DEFAULT_HUBER_DELTA_ITERS = 15
 const DEFAULT_MAX_PSMS_FOR_HUBER = 5000

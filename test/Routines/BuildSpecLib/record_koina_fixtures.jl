@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Capture live Koina responses for every BuildSpecLib invocation in
 # test/Routines/BuildSpecLib/test_build_spec_lib.jl, save them to
 # test/Routines/BuildSpecLib/koina_fixtures.json, then commit that

@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Add Koina ion-mobility predictions (ccs, inv_ion_mobility) to an existing .poin library's precursors_table.arrow,
 # in place, with the same functions BuildSpecLib's im_model step uses. Used to give the committed E. coli test library
 # (test/integration/ecoli_lib.poin) the 1/K0 column that searching the timsTOF .d fixture needs.

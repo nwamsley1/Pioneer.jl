@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 @testset "MS1 isolation-window helper features" begin
     @test Pioneer._ms1_m0_m1_m2_window_fraction(10f0, 5f0, 0f0, 100f0) == 0.15f0
     @test Pioneer._ms1_m0_m1_m2_window_fraction(10f0, 5f0, 0f0, 0f0) == 0f0

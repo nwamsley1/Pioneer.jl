@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Build the truncated timsTOF diaPASEF `.d` test fixture (published on Zenodo, record 23023765) from a full run.
 #
 #   julia --project=<Pioneer> make_d_fixture.jl <source.d> <out.d> [rt_lo_s rt_hi_s prec_lo prec_hi]
