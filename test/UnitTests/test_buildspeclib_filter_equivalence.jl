@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Byte-equivalence regression test for BuildSpecLib's keap1 synthetic build.
 #
 # Originally written to gate §9 commit 3 (move filters from build to

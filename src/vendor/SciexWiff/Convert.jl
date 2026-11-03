@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Conversion driver: `.wiff` -> Pioneer Arrow and/or `.scxs`, scans processed in batches on all threads,
 # written in acquisition order.
 

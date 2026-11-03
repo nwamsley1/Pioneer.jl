@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 "Requested fragment-index local ID type: `library_params[\"frag_index_local_id_type\"]`, `\"auto\"` when absent."
 frag_index_local_id_request(library_params) = String(get(library_params, "frag_index_local_id_type", "auto"))
 

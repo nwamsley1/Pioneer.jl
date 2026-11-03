@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 @testset "window_trapezoid_area reproduces the quantified area" begin
     # The diagnostic area is only comparable to peak_area if the two use the same
     # quadrature. Integrating the *baseline-subtracted* trace with the diagnostic

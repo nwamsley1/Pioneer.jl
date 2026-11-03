@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # The `.scxs` container: centroided SCIEX scans, one zstd block per scan (the `.tdfs` layout of TimsSlices.jl,
 # with a per-scan m/z calibration). See notes/scxs_format.md.
 #

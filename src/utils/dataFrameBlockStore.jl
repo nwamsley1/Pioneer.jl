@@ -1,5 +1,8 @@
-# Copyright (C) 2024 Nathan Wamsley
-# Licensed under AGPL v3+; see LICENSE.
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
 
 """
     DataFrameBlockStore(path, budget)

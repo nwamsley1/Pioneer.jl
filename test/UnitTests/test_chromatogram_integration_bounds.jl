@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 @testset "single-scan peak integrates at least five points" begin
     # getIntegrationBounds! starts the boundary search at apex +/-2, so even a
     # one-scan spike integrates over five scans (3bcbe5a0e). Seven points here

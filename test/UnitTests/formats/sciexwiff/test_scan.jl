@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Block decoding and centroiding on synthetic data, plus real-data checks when SCIEXWIFF_DATA is set.
 
 const S = SciexWiff

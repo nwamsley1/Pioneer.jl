@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Unit tests for Whittaker-Henderson smoother (src/utils/ML/wittakerHendersonSmoothing.jl).
 #
 # Tests the pentadiagonal LDL' smoother used for chromatogram smoothing

@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # TdfsMassSpecData against BasicMassSpecData on the same slices: TimsSlices writes a .tdfs and its expanded Arrow
 # from the same quantised slices, so every getter must agree scan for scan, in any access order, from any task.
 # Peaks are decoded into caller-owned PeakDecodeBuffers; the task tests check that a task's peaks survive yields

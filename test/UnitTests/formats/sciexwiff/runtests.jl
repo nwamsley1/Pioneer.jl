@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # SciexWiff (src/vendor/SciexWiff, folded in from SciexWiff.jl). Wrapped in a module so the submodule's exports
 # (ConvertParams, bin_to_mz, ...) do not leak into the shared test namespace or clash with TimsSlices'.
 module SciexWiffTests

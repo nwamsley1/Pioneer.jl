@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # ScxsMassSpecData: SCIEX scans from a `.scxs` (SciexWiff.jl). The synthetic part builds a small `.scxs` with
 # TimsSlices' block encoder (the blocks are byte-identical) and checks the getters and the per-scan calibration.
 # The real-data part runs when PIONEER_TEST_SCXS points at a directory holding `<name>.scxs` and the `<name>.arrow`

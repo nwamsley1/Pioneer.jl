@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # build_scan_to_ms1: nearest MS1 scan by RT on plain files; nearest MS1 frame at the nearest IM scan on
 # ion-mobility packet / slice files.
 

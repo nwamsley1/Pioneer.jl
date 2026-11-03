@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Lightweight tests for the small quad transmission model files and the
 # IsotopeTraceType abstraction. These are mostly trivial getter / dispatch
 # wrappers, but they ship at 0% coverage in the develop snapshot. The tests

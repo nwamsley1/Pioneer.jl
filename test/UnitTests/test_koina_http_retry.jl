@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Unit tests for make_koina_http_request retry / error-handling logic.
 #
 # The function is the production HTTP path that lives behind the

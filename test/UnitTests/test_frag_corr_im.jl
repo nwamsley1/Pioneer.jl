@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # n_scans_in_window and weight_frac_in_cycle of _add_fragment_chromatogram_features! on ion-mobility slice data (timsTOF):
 # PSMs of one precursor spread over mobility slices and cycles.
 using Test

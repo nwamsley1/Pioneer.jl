@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # Pass-1 LightGBM: sample a fixed pool, fit/select models on pool OOF scores,
 # then release the pool and stream final predictions over every source file.
 

@@ -1,3 +1,9 @@
+# ©2026 Washington University
+#
+# This file is part of Pioneer.jl and is licensed under the
+# Washington University non-commercial research license.
+# See the LICENSE file in the project root for full terms.
+
 # The truncated E. coli diaPASEF fixture (Zenodo; made by test/fixtures/tools/make_d_fixture.jl): raw frame decode,
 # .d -> .tdfs conversion, reading the .tdfs back, and convertBruker end to end.
 
