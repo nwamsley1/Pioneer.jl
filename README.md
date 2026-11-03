@@ -9,9 +9,9 @@
 [![Main branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=main&label=Main%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Amain)
 [![Develop branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=develop&label=Develop%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Adevelop)
 [![Coverage](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/develop/graph/badge.svg)](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/develop)
-[![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.02.16.706201v2-B31B1B)](https://www.biorxiv.org/content/10.64898/2026.02.16.706201v2)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.02.16.706201v3-B31B1B)](https://www.biorxiv.org/content/10.64898/2026.02.16.706201v3)
 
-Pioneer is fast and scalable solution for the analysis of protein mass spectrometry data. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo Fisher, Sciex, and Bruker instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data.
+Pioneer is a fast and scalable solution for the analysis of protein mass spectrometry data. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo Fisher, Sciex, and Bruker instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data.
 
 **[Documentation](https://nwamsley1.github.io/Pioneer.jl/docs/stable/)** &bull; **[Regression Reports](https://nwamsley1.github.io/Pioneer.jl/reports/)** &bull; **[Landing Page](https://nwamsley1.github.io/Pioneer.jl/)**
 
@@ -26,10 +26,11 @@ The Pioneer manuscript is available on bioRxiv:
 ## Features
 
 - **Cross-Platform:** Pioneer and the file conversion tool run on Linux, macOS, and Windows.
-- **Multi-Vendor:** Supports Thermo Fisher, Sciex, and Bruker instruments
-- **GUI:** Ships with a graphical user interface.
-- **Fast:** Pioneer searches large datasets much faster than the data can be acquired.
-- **Deep Proteome Coverage:** Pioneer achieves high-sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters. 
+- **Multi-Vendor:** Supports Thermo Fisher, Sciex, and Bruker instruments.
+- **GUI:** Includes a graphical user interface.
+- **Fast:** Pioneer searches run many times faster than data acquisition.
+- **Scalable:** Pioneer handles experiments with hundreds to thousands of runs with standard desktop hardware.
+- **Deep Proteome Coverage:** Pioneer achieves high sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.
 
 ## Installation
 
