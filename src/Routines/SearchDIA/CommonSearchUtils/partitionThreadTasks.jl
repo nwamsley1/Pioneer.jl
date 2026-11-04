@@ -46,14 +46,13 @@ end
 
 """
 Distribute scan indices to threads using round-robin batches of 10.
-Returns a Vector of `(thread_id, scan_ids)` tuples (concretely typed, so loops over a task's scans
-are not dynamically dispatched).
+Returns Vector of [thread_id, scan_ids_vector] pairs.
 """
 function _distribute_scans_to_threads(scan_indices::Vector{Int64}, n_threads::Int)
     batch_sz = 10
     spectra_count = length(scan_indices)
     if spectra_count == 0
-        return Tuple{Int, Vector{Int64}}[(i, Int64[]) for i in 1:n_threads]
+        return [[i, Int64[]] for i in 1:n_threads]
     end
 
     scans_per_thread = max(1, spectra_count ÷ n_threads) + max(n_threads, batch_sz) + 1
@@ -79,7 +78,7 @@ function _distribute_scans_to_threads(scan_indices::Vector{Int64}, n_threads::In
         task[2] = task[2][1:(n-1)]
     end
 
-    return Tuple{Int, Vector{Int64}}[(task[1]::Int, task[2]::Vector{Int64}) for task in thread_tasks]
+    return thread_tasks
 end
 
 #############################################################################

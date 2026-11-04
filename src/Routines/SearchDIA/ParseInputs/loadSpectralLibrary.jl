@@ -106,11 +106,6 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     # This message will be captured by the logging system when SearchDIA runs
     spec_lib = Dict{String, Any}()
 
-    # The presearch index (read below) is independent of the fragments: read it on another thread
-    # while this one reads the fragments (each read is single-threaded decompression).
-    presearch_path = joinpath(SPEC_LIB_DIR, fragment_index.presearch)
-    presearch_task = Threads.@spawn deserialize_from_jls(presearch_path)
-
     # Load detailed fragments and convert to CompactFrag for the search pipeline
     frag_path = joinpath(SPEC_LIB_DIR, "detailed_fragments")
     raw_frags = if isfile(frag_path * ".jls")
@@ -183,7 +178,8 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     # presearch index is read now (parameter tuning runs first, and it fixes the index type); the main
     # index is read on first use. Asking for one index releases the other, and SearchDIA releases the
     # main index after Main Search (LazyFragmentIndex).
-    presearch = fetch(presearch_task)
+    presearch_path = joinpath(SPEC_LIB_DIR, fragment_index.presearch)
+    presearch = deserialize_from_jls(presearch_path)
     P = typeof(presearch)
     presearch_partitioned_index = LazyFragmentIndex{P}(presearch_path, presearch, ReentrantLock())
     partitioned_index = LazyFragmentIndex{P}(joinpath(SPEC_LIB_DIR, fragment_index.main))

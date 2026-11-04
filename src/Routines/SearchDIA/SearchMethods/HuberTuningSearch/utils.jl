@@ -91,26 +91,23 @@ function select_huber_calibration_psms(psms::DataFrame, max_psms::Int64)
     return filter(row -> UInt32(row.scan_idx) in scans_to_keep, psms)
 end
 
-huber_scan_precursor_mapping(psms::DataFrame) =
-    _huber_scan_precursor_mapping(psms[!, :scan_idx], psms[!, :precursor_idx])
-
-# Column kernels (function barriers: `psms[!, col]` is untyped).
-function _huber_scan_precursor_mapping(scan_idxs::AbstractVector, precursor_idxs::AbstractVector)
+function huber_scan_precursor_mapping(psms::DataFrame)
     scan_to_prec = Dict{UInt32, Vector{UInt32}}()
-    for i in eachindex(scan_idxs, precursor_idxs)
-        push!(get!(() -> UInt32[], scan_to_prec, UInt32(scan_idxs[i])), UInt32(precursor_idxs[i]))
+    for row in eachrow(psms)
+        scan_idx = UInt32(row.scan_idx)
+        if !haskey(scan_to_prec, scan_idx)
+            scan_to_prec[scan_idx] = UInt32[]
+        end
+        push!(scan_to_prec[scan_idx], UInt32(row.precursor_idx))
     end
     return scan_to_prec
 end
 
-huber_precursor_rt_map(psms::DataFrame) =
-    _huber_precursor_rt_map(psms[!, :precursor_idx], psms[!, :rt])
-
-function _huber_precursor_rt_map(precursor_idxs::AbstractVector, rts::AbstractVector)
+function huber_precursor_rt_map(psms::DataFrame)
     precursor_rt_map = Dict{UInt32, Float32}()
-    sizehint!(precursor_rt_map, length(precursor_idxs))
-    for i in eachindex(precursor_idxs, rts)
-        precursor_rt_map[UInt32(precursor_idxs[i])] = Float32(rts[i])
+    sizehint!(precursor_rt_map, nrow(psms))
+    for row in eachrow(psms)
+        precursor_rt_map[UInt32(row.precursor_idx)] = Float32(row.rt)
     end
     return precursor_rt_map
 end
@@ -168,9 +165,7 @@ function process_huber_calibration_scans!(
     ms_file_idx::Int64,
 )
     chrom_params = params.chromatogram_params
-    # Result columns as typed vectors (a row push into a DataFrame is slow); one DataFrame at the end.
-    res_file, res_prec, res_scan = UInt32[], UInt32[], UInt32[]
-    res_delta, res_weight = Float32[], Float32[]
+    tuning_results = empty_huber_tuning_results()
 
     Hs = getHsFused(search_data)
     weights = getTempWeights(search_data)
@@ -300,11 +295,13 @@ function process_huber_calibration_scans!(
                 for precursor_idx in target_precursors
                     col = id_to_col[precursor_idx]
                     iszero(col) && continue
-                    push!(res_file, UInt32(ms_file_idx))
-                    push!(res_prec, precursor_idx)
-                    push!(res_scan, scan_key)
-                    push!(res_delta, delta)
-                    push!(res_weight, weights[col])
+                    push!(tuning_results, (
+                        UInt32(ms_file_idx),
+                        precursor_idx,
+                        scan_key,
+                        delta,
+                        weights[col],
+                    ))
                 end
             end
         end
@@ -312,8 +309,7 @@ function process_huber_calibration_scans!(
         reset_scan_arrays!(id_to_col, Hs, unscored_psms)
     end
 
-    return DataFrame(ms_file_idx = res_file, precursor_idx = res_prec, scan_idx = res_scan,
-                     huber_delta = res_delta, weight = res_weight; copycols = false)
+    return tuning_results
 end
 
 """

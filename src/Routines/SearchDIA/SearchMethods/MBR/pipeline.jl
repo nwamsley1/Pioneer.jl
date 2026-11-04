@@ -521,10 +521,23 @@ function _merge_mbr_recoveries!(
         deleteat!(main, .!keep)
         if remap_bounds !== nothing
             score_floor, width = remap_bounds
+            recovered = main[!, :mbr_recovered]
+            transfer = main[!, :mbr_target_decoy_prob]
+            prec_prob = main[!, :prec_prob]
+            counterfactual = main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
             counterfactual_prec_prob = fill(NaN32, nrow(main))
-            _remap_recovered_scores!(main[!, :prec_prob], counterfactual_prec_prob,
-                main[!, :mbr_recovered], main[!, :mbr_target_decoy_prob],
-                main[!, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN], score_floor, width)
+            @inbounds for row in eachindex(recovered)
+                if Bool(recovered[row])
+                    transfer_score =
+                        clamp(Float32(transfer[row]), 0.0f0, 1.0f0)
+                    prec_prob[row] = score_floor + width * transfer_score
+                end
+                counterfactual_score = Float32(counterfactual[row])
+                if isfinite(counterfactual_score)
+                    counterfactual_prec_prob[row] = score_floor + width *
+                        clamp(counterfactual_score, 0.0f0, 1.0f0)
+                end
+            end
             main[!, MBR_COUNTERFACTUAL_DECOY_PRECURSOR_PROB_COLUMN] =
                 counterfactual_prec_prob
         end
@@ -922,22 +935,4 @@ function finalize_postintegration_mbr!(
             qval_threshold = q_value_threshold,
         ),
     )
-end
-
-# Per-row kernel of the MBR recovery merge (a function barrier: the columns are untyped).
-function _remap_recovered_scores!(prec_prob, counterfactual_prec_prob, recovered, transfer,
-                                  counterfactual, score_floor, width)
-    @inbounds for row in eachindex(recovered)
-        if Bool(recovered[row])
-            transfer_score =
-                clamp(Float32(transfer[row]), 0.0f0, 1.0f0)
-            prec_prob[row] = score_floor + width * transfer_score
-        end
-        counterfactual_score = Float32(counterfactual[row])
-        if isfinite(counterfactual_score)
-            counterfactual_prec_prob[row] = score_floor + width *
-                clamp(counterfactual_score, 0.0f0, 1.0f0)
-        end
-    end
-    return nothing
 end
