@@ -106,6 +106,11 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     # This message will be captured by the logging system when SearchDIA runs
     spec_lib = Dict{String, Any}()
 
+    # The presearch index (read below) is independent of the fragments: read it on another thread
+    # while this one reads the fragments (each read is single-threaded decompression).
+    presearch_path = joinpath(SPEC_LIB_DIR, fragment_index.presearch)
+    presearch_task = Threads.@spawn deserialize_from_jls(presearch_path)
+
     # Load detailed fragments and convert to CompactFrag for the search pipeline
     frag_path = joinpath(SPEC_LIB_DIR, "detailed_fragments")
     raw_frags = if isfile(frag_path * ".jls")
@@ -173,9 +178,15 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     precursors = Arrow.Table(joinpath(SPEC_LIB_DIR, "precursors_table.arrow"))
     proteins = Arrow.Table(joinpath(SPEC_LIB_DIR, "proteins_table.arrow"))
 
-    # Load the partitioned fragment indexes of the chosen width (choose_fragment_index)
-    partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, fragment_index.main))
-    presearch_partitioned_index = deserialize_from_jls(joinpath(SPEC_LIB_DIR, fragment_index.presearch))
+    # The partitioned fragment indexes of the chosen width (choose_fragment_index). Only one is needed
+    # at a time: the presearch index (no iRT bins) for parameter tuning, the main index afterwards. The
+    # presearch index is read now (parameter tuning runs first, and it fixes the index type); the main
+    # index is read on first use. Asking for one index releases the other, and SearchDIA releases the
+    # main index after Main Search (LazyFragmentIndex).
+    presearch = fetch(presearch_task)
+    P = typeof(presearch)
+    presearch_partitioned_index = LazyFragmentIndex{P}(presearch_path, presearch, ReentrantLock())
+    partitioned_index = LazyFragmentIndex{P}(joinpath(SPEC_LIB_DIR, fragment_index.main))
 
     # Load the BuildSpecLib config (if present) for output policy and for
     # reconstructing variable-modification counts in older precursor tables.
@@ -193,7 +204,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
     variable_mod_names = _configured_variable_mod_names(build_config)
 
     if typeof(library_fragment_lookup_table) == Pioneer.StandardFragmentLookup{Float32}
-        return FragmentIndexLibrary(
+        return FragmentIndexLibrary{P}(
             presearch_partitioned_index,
             partitioned_index,
             SetPrecursors(precursors; variable_mod_names = variable_mod_names),
@@ -202,7 +213,7 @@ function loadSpectralLibrary(SPEC_LIB_DIR::String,
             output_schema_policy
         )
     else
-        return SplineFragmentIndexLibrary(
+        return SplineFragmentIndexLibrary{P}(
             presearch_partitioned_index,
             partitioned_index,
             SetPrecursors(precursors; variable_mod_names = variable_mod_names),

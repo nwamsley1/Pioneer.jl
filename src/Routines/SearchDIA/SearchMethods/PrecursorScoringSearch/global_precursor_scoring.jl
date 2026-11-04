@@ -74,6 +74,19 @@ struct GlobalPrecursorInputs
     folds::Dict{UInt32, UInt8}
 end
 
+# Per-row body of build_precursor_run_similarity behind a function barrier (the columns are
+# untyped). Every run seen gets an entry, even when none of its rows pass the score floor.
+function _add_observed_precursors!(observed_precursors_by_run, file_idxs, default_file_idx::UInt32,
+                                   probs, precursor_idxs, score_floor)
+    @inbounds for row in eachindex(precursor_idxs)
+        file_idx = file_idxs === nothing ? default_file_idx : UInt32(file_idxs[row])
+        observed_precursors = get!(() -> UInt32[], observed_precursors_by_run, file_idx)
+        Float32(probs[row]) >= score_floor || continue
+        push!(observed_precursors, UInt32(precursor_idxs[row]))
+    end
+    return nothing
+end
+
 """
     build_precursor_run_similarity(refs, score_floor, n_runs_total)
 
@@ -98,17 +111,14 @@ function build_precursor_run_similarity(
         has_ms_file_idx && push!(requested, :ms_file_idx)
         columns = materialize_columns(ref, requested)
 
-        @inbounds for row in axes(columns, 1)
-            file_idx = has_ms_file_idx ?
-                UInt32(columns.ms_file_idx[row]) : UInt32(ref_position)
-            observed_precursors = get!(
-                observed_precursors_by_run,
-                file_idx,
-                UInt32[],
-            )
-            Float32(columns.prec_prob[row]) >= score_floor || continue
-            push!(observed_precursors, UInt32(columns.precursor_idx[row]))
-        end
+        _add_observed_precursors!(
+            observed_precursors_by_run,
+            has_ms_file_idx ? columns.ms_file_idx : nothing,
+            UInt32(ref_position),
+            columns.prec_prob,
+            columns.precursor_idx,
+            score_floor,
+        )
     end
 
     return build_run_similarity(observed_precursors_by_run)
@@ -141,6 +151,28 @@ function logodds(
     return _logodds_from_sorted(sort(probabilities; rev = true), top_n)
 end
 
+# Per-row body of _collect_global_precursor_inputs behind a function barrier (the columns are
+# untyped).
+function _collect_precursor_run_scores!(run_scores, targets, folds, precursor_idxs, probs,
+                                        target_col, cv_folds, file_idxs, default_file_idx::UInt32)
+    @inbounds for row in eachindex(precursor_idxs)
+        precursor_idx = UInt32(precursor_idxs[row])
+        precursor_run_scores = get!(run_scores, precursor_idx) do
+            GlobalPrecursorRunScore[]
+        end
+        push!(
+            precursor_run_scores,
+            GlobalPrecursorRunScore(
+                file_idxs === nothing ? default_file_idx : UInt32(file_idxs[row]),
+                Float32(probs[row]),
+            ),
+        )
+        targets[precursor_idx] = Bool(target_col[row])
+        folds[precursor_idx] = UInt8(cv_folds[row])
+    end
+    return nothing
+end
+
 function _collect_global_precursor_inputs(
     refs::Vector{PSMFileReference},
     n_precursors::Int,
@@ -160,22 +192,9 @@ function _collect_global_precursor_inputs(
             ref,
             requested,
         )
-        @inbounds for row in axes(columns, 1)
-            precursor_idx = UInt32(columns.precursor_idx[row])
-            precursor_run_scores = get!(run_scores, precursor_idx) do
-                GlobalPrecursorRunScore[]
-            end
-            push!(
-                precursor_run_scores,
-                GlobalPrecursorRunScore(
-                    has_ms_file_idx ?
-                        UInt32(columns.ms_file_idx[row]) : UInt32(ref_position),
-                    Float32(columns.prec_prob[row]),
-                ),
-            )
-            targets[precursor_idx] = Bool(columns.target[row])
-            folds[precursor_idx] = UInt8(columns.cv_fold[row])
-        end
+        _collect_precursor_run_scores!(run_scores, targets, folds,
+            columns.precursor_idx, columns.prec_prob, columns.target, columns.cv_fold,
+            has_ms_file_idx ? columns.ms_file_idx : nothing, UInt32(ref_position))
     end
 
     isempty(run_scores) &&

@@ -35,7 +35,9 @@ sight (`ensure_zt_geometry!`) and sets the deconvolution convergence tolerance f
 function zt_prepare_file!(search_context::SearchContext, params::PioneerParameters,
                           ms_file_idx::Int64, spectra::MassSpecData)
     ensure_zt_geometry!(search_context, ms_file_idx, spectra)
-    if getZTGeometry(search_context, ms_file_idx) !== nothing && !haskey(search_context.zt_file_state, ms_file_idx)
+    # Every file gets the PSM memory budget and partition slot: MainSearch keeps the PSMs of any
+    # large file on disk (chunked_main_deconvolution), not only of scanning-quad ones.
+    if !haskey(search_context.zt_file_state, ms_file_idx)
         search_context.zt_file_state[ms_file_idx] =
             ZTFileState(Float64(params.optimization.machine_learning.max_psm_memory_mb), nothing)
     end
@@ -120,6 +122,14 @@ getZTPsmPartitions(s::SearchContext, idx::Integer) =
 
 setZTPsmPartitions!(s::SearchContext, idx::Integer, paths::Union{Nothing, Vector{String}}) =
     (s.zt_file_state[Int64(idx)].psm_partitions = paths)
+
+"""Whether `library_search` built this file's table in memory from rounds, with the per-scan feature
+passes and the precursor sort already applied."""
+main_per_scan_done(s::SearchContext, idx::Integer) =
+    (st = get(s.zt_file_state, Int64(idx), nothing); st !== nothing && st.per_scan_done)
+
+set_main_per_scan_done!(s::SearchContext, idx::Integer, done::Bool) =
+    (s.zt_file_state[Int64(idx)].per_scan_done = done)
 
 """The PSM memory budget in MB for a ZT file (`max_psm_memory_mb`)."""
 zt_psm_memory_mb(s::SearchContext, idx::Integer) = s.zt_file_state[Int64(idx)].psm_memory_mb

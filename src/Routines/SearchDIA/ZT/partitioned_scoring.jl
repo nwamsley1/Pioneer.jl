@@ -44,20 +44,80 @@ function _assert_precursor_scan_sorted(df::DataFrame)
     return nothing
 end
 
-# function barrier: every element of `cols` is the same concrete Arrow column type
+"""
+    precursor_part_ranges(pcs, target_rows) -> Vector{Tuple{UInt32, UInt32}}
+
+The precursor-id ranges [lo, hi] of the parts a merge of files with precursor columns `pcs` (each
+sorted) is cut into: walking all rows in precursor order, a part is closed before the next
+precursor once it holds `target_rows` rows, so it ends only where the precursor changes.
+"""
+function precursor_part_ranges(pcs::Vector{Vector{UInt32}}, target_rows::Int)
+    allp = reduce(vcat, pcs; init = UInt32[])
+    sort!(allp)
+    ranges = Tuple{UInt32, UInt32}[]
+    acc = 0; lo = UInt32(0); prev = UInt32(0); open = false
+    i = 1; n = length(allp)
+    @inbounds while i <= n
+        pid = allp[i]; j = i
+        while j < n && allp[j + 1] == pid
+            j += 1
+        end
+        if open && acc >= target_rows          # close the part before this precursor
+            push!(ranges, (lo, prev)); acc = 0; open = false
+        end
+        open || (lo = pid; open = true)
+        acc += j - i + 1; prev = pid; i = j + 1
+    end
+    open && push!(ranges, (lo, prev))
+    return ranges
+end
+
+# function barrier: one column of a part, gathered row by row in merge order (`bf` = file, `br` = row)
 function _zt_gather!(dst::Vector, cols::Vector{C}, bf::Vector{Int32}, br::Vector{Int32}, n::Int) where {C}
     @inbounds for i in 1:n; dst[i] = cols[bf[i]][br[i]]; end
     return dst
 end
 
 """
+    _part_merge_order(pcs, scs, lo, hi) -> (bf, br)
+
+Merge order of one part: the rows of precursors [lo, hi] from every file, by (precursor_idx,
+scan_idx). Each file holds them as one contiguous slice (two binary searches on its sorted precursor
+column); the slices are merged through a small (key, file) heap. `bf[i]`, `br[i]` are the file and
+row of the part's i-th row.
+"""
+function _part_merge_order(pcs::Vector{Vector{UInt32}}, scs::Vector{Vector{UInt32}}, lo::UInt32, hi::UInt32)
+    nf = length(pcs)
+    a = [searchsortedfirst(pcs[f], lo) for f in 1:nf]
+    b = [searchsortedlast(pcs[f], hi) for f in 1:nf]
+    n = sum(f -> max(0, b[f] - a[f] + 1), 1:nf; init = 0)
+    bf = Vector{Int32}(undef, n); br = Vector{Int32}(undef, n)
+    heap = BinaryMinHeap{Tuple{UInt64, Int32}}()
+    pos = copy(a)
+    for f in 1:nf
+        a[f] <= b[f] && push!(heap, (_pid_scan_key(pcs[f], scs[f], a[f]), Int32(f)))
+    end
+    i = 0
+    @inbounds while !isempty(heap)
+        _, f = pop!(heap)
+        r = pos[f]; i += 1; bf[i] = f; br[i] = Int32(r); pos[f] = r + 1
+        r + 1 <= b[f] && push!(heap, (_pid_scan_key(pcs[f], scs[f], r + 1), f))
+    end
+    return bf, br
+end
+
+"""
     zt_merge_by_precursor(on_part, paths; target_rows) -> Int
 
-Stream a k-way merge of Arrow files, each sorted by (precursor_idx, scan_idx), and call
-`on_part(df)` with consecutive parts of about `target_rows` rows. Each part is sorted the same way
-and holds every row of each of its precursors: a part ends only where the precursor changes. Keys
-are packed into a UInt64 and merged through a (key, file) heap; each part's columns are filled
-once, at their final size. Returns the number of parts.
+Merge Arrow files, each sorted by (precursor_idx, scan_idx), and call `on_part(df)` with
+consecutive parts of about `target_rows` rows. Each part is sorted the same way and holds every row
+of each of its precursors: a part ends only where the precursor changes (`precursor_part_ranges`).
+Returns the number of parts.
+
+The parts' precursor ranges are fixed up front, so every part's row order is merged independently,
+all parts in parallel (`_part_merge_order`); then each part's columns are gathered in parallel, one
+column per task, and the parts are handed on in order. The parts and their rows are exactly those of
+one streaming k-way merge over all rows.
 
 Checks every part before handing it on: sorted, and starting after the previous part's last
 precursor, so each precursor is in exactly one part; and that the parts hold every input row.
@@ -68,31 +128,25 @@ function zt_merge_by_precursor(on_part, paths::Vector{String}; target_rows::Int)
     lens = [length(p) for p in pcs]
     names_ = collect(Tables.columnnames(first(tabs)))
     colsets = [[Tables.getcolumn(t, nm) for t in tabs] for nm in names_]
-    heap = BinaryMinHeap{Tuple{UInt64, Int32}}()
-    pos = ones(Int, length(tabs))
-    for f in eachindex(tabs)
-        lens[f] > 0 && push!(heap, (_pid_scan_key(pcs[f], scs[f], 1), Int32(f)))
+    ranges = precursor_part_ranges(pcs, target_rows)
+    orders = Vector{Tuple{Vector{Int32}, Vector{Int32}}}(undef, length(ranges))
+    Threads.@threads for p in eachindex(ranges)
+        orders[p] = _part_merge_order(pcs, scs, ranges[p]...)
     end
-    bf = Int32[]; br = Int32[]; sizehint!(bf, target_rows + 1024); sizehint!(br, target_rows + 1024)
-    n_parts = 0; n_out = 0; last_pid = UInt32(0); prev_pid = typemax(UInt32)
-    function emit!()
-        isempty(bf) && return
+    n_parts = 0; n_out = 0; last_pid = UInt32(0)
+    for p in eachindex(orders)
+        bf, br = orders[p]
         n = length(bf)
-        df = DataFrame([nm => _zt_gather!(Vector{eltype(first(colsets[j]))}(undef, n), colsets[j], bf, br, n)
-                        for (j, nm) in enumerate(names_)]; copycols = false)
+        cols = Vector{AbstractVector}(undef, length(names_))
+        Threads.@threads for j in eachindex(names_)
+            cols[j] = _zt_gather!(Vector{eltype(first(colsets[j]))}(undef, n), colsets[j], bf, br, n)
+        end
+        df = DataFrame(cols, names_; copycols = false)
         _check_precursor_part(df, last_pid, n_parts + 1)
         last_pid = last(df[!, :precursor_idx]); n_parts += 1; n_out += n
-        empty!(bf); empty!(br)
+        orders[p] = (Int32[], Int32[])            # free this part's order
         on_part(df)
     end
-    while !isempty(heap)
-        key, f = pop!(heap)
-        pid = UInt32(key >> 32)
-        length(bf) >= target_rows && pid != prev_pid && emit!()        # only between precursors
-        r = pos[f]; push!(bf, f); push!(br, Int32(r)); prev_pid = pid; pos[f] = r + 1
-        r + 1 <= lens[f] && push!(heap, (_pid_scan_key(pcs[f], scs[f], r + 1), f))
-    end
-    emit!()
     n_out == sum(lens) || error("ZT merge produced $n_out rows, expected $(sum(lens))")
     return n_parts
 end
@@ -184,7 +238,7 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
     @debug_l1 "  LightGBM CV (partitioned, $(length(parts)) files): fold0=$(length(idx0)) fold1=$(length(idx1)) PSMs; " *
               "train=$(length.(sub_positions))  MAX_TRAIN=$MAIN_LGBM_MAX_TRAIN"
     fold_predictors = Vector{Any}(undef, 2)
-    t_fit = 0.0
+    t_fit = 0.0; t_gather = 0.0
     for (fi, (fit_idx, _)) in enumerate(fold_pairs)
         sub_pos = fit_idx[sub_positions[fi]]
         y_lbl = _prepare_labels(all_targets[sub_pos])
@@ -196,7 +250,7 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
         cls = build_lightgbm_classifier(; MAINSEARCH_LGBM_HP...)
         b_train = buffers.train
         GC.@preserve b_train begin
-            X_tr = feature_matrix!(b_train, lazy[sub_pos, available_features], available_features)
+            t_gather += @elapsed (X_tr = feature_matrix!(b_train, lazy[sub_pos, available_features], available_features))
             t_fit += @elapsed LightGBM.fit!(cls, X_tr, y_lbl; verbosity = -1)
         end
         fold_predictors[fi] = (kind = :lgbm, value = NaN, model = cls, beta = nothing)
@@ -206,15 +260,18 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
 
     # ---- pass B: out-of-fold scores and the iRT refinement rows ----
     scores_oof = Vector{Float32}(undef, n_total); refinement_parts = DataFrame[]; off = 0
+    t_load_b = 0.0; t_pred_b = 0.0
     for (i, f) in enumerate(featured)
-        df = _zt_load(f)
-        df[!, :lgbm_score] = Float32.(predict_psm_classifier_scores(df, predictor; buffers = buffers))
+        t_load_b += @elapsed (df = _zt_load(f))
+        t_pred_b += @elapsed (df[!, :lgbm_score] = Float32.(predict_psm_classifier_scores(df, predictor; buffers = buffers)))
         scores_oof[(off + 1):(off + n_rows[i])] = df[!, :lgbm_score]
         push!(refinement_parts, _select_irt_refinement_psms(df))
         off += n_rows[i]
     end
     refinement_psms = reduce(vcat, refinement_parts)
     t_train_cv = time() - t_lgbm_start
+    @debug_l1 "  partitioned LightGBM: gather=$(round(t_gather, digits = 2))s fit=$(round(t_fit, digits = 2))s " *
+              "passB load=$(round(t_load_b, digits = 2))s predict=$(round(t_pred_b, digits = 2))s"
     precursors = getPrecursors(getSpecLib(search_context))
     strategy = MainSearchIrtRefinement(precursors;
                                        q_value_threshold = PRESCORE_QVALUE_THRESHOLD,
@@ -226,8 +283,9 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
     # ---- pass C: refined iRT, re-predicted scores, best meta-PSM per precursor ----
     t_c = time()
     all_scores = Vector{Float32}(undef, n_total); best_parts = DataFrame[]; off = 0
+    t_load_c = 0.0
     for (i, f) in enumerate(featured)
-        df = _zt_load(f)
+        t_load_c += @elapsed (df = _zt_load(f))
         rows = (off + 1):(off + n_rows[i])
         if refined
             apply_mainsearch_irt_refinement_model!(df, strategy, models)
@@ -245,7 +303,7 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
     @debug_l1 "  iRT refinement (file_idx=$ms_file_idx, partitioned): " *
               (refined ? "$(length(training_target_precursors)) training precursors" :
                          "skipped ($(length(training_target_precursors)) high-confidence target precursors)") *
-              "; pass C $(round(time() - t_c, digits = 2))s"
+              "; pass C $(round(time() - t_c, digits = 2))s (load $(round(t_load_c, digits = 2))s)"
 
     trace_input = (best, mask, peps) ->
         _zt_trace_rows(featured, n_rows, best, mask, peps, refined, strategy, models, all_scores)
@@ -268,6 +326,7 @@ post-refinement state, with the matching entries of the per-row pass mask and PE
 """
 function _zt_trace_rows(featured, n_rows, best::DataFrame, mask::AbstractVector{Bool}, peps,
                         refined, strategy, models, all_scores)
+    t_d = time()
     keep = Set(best[!, :precursor_idx]::Vector{UInt32})
     tabs = DataFrame[]; sel = Int[]; off = 0
     for (i, f) in enumerate(featured)
@@ -281,6 +340,7 @@ function _zt_trace_rows(featured, n_rows, best::DataFrame, mask::AbstractVector{
         end
         off += n_rows[i]
     end
+    @debug_l1 "  partitioned pass D: $(length(sel)) rows of $(length(keep)) precursors, $(round(time() - t_d, digits = 2))s"
     return (isempty(tabs) ? DataFrame() : reduce(vcat, tabs)), mask[sel], peps[sel]
 end
 
