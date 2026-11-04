@@ -38,7 +38,7 @@ Pioneer is a fast and scalable solution for the analysis of protein mass spectro
 - **Fast:** Pioneer searches files many times faster than data acquisition with whole-proteome, in silico libraries even with the latest, fast-scanning TOF instruments. 
 - **Scalable:** Pioneer may process experiments with hundreds to thousands of runs using standard desktop hardware (32-64GB RAM). Search time grows linearly with the number of MS data files. 
 - **Deep Proteome Coverage:** Pioneer achieves high sensitivity and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.
-- **FDR Control and Regression Testing:** Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers searches on the benchmark datasets, which include entrapment false discovery rate and false transfer rate analyses. **[Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/)**.
+- **Regression Testing and FDR Control:** Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers searches on the benchmark datasets, which include entrapment false discovery rate and false transfer rate analyses. **[Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/)**.
 
 ## Graphical User Interface
 
