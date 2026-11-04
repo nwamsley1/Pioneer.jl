@@ -33,9 +33,9 @@ The latest Pioneer manuscript is available on bioRxiv:
 - **Deep Proteome Coverage:** Pioneer achieves high sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.
 - **Regression Testing:** Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers end-to-end searches on the benchmark datasets. **[Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/)**.
 
-## License 
+## License
 
-Licenses for commercial, human subjects, or clinical use are available upon request. Please contact Washington University's Office of Technology Management to request a license agreement: otm@wustl.edu. 
+Non-commercial research use that is non-clinical and does not involve human subjects is permitted under the [Washington University license](LICENSE). Licenses for commercial, clinical, or human subjects use are available upon request. Please contact Washington University's Office of Technology Management to request a license agreement: otm@wustl.edu.
 
 ## Installation
 
