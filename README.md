@@ -61,10 +61,6 @@ Pioneer maintains a public suite of regression tests across diverse instruments 
 
 **[Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/)**
 
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on our Git Flow workflow and development process.
-
 ## Labs
 Pioneer is developed in the [Major Lab](https://majorlab.wustl.edu/) and [Goldfarb Lab](https://goldfarblab.wustl.edu/) at Washington University in St. Louis.
 
