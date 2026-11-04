@@ -28,7 +28,7 @@ The Pioneer manuscript is available on bioRxiv:
 - **Cross-Platform:** Pioneer and the file conversion tool run on Linux, macOS, and Windows.
 - **Multi-Vendor:** Supports Thermo Fisher, Sciex, and Bruker instruments.
 - **GUI:** Includes a graphical user interface.
-- **Fast:** Pioneer searches files many times faster than data acquisition.
+- **Fast:** Pioneer searches files many times faster than data acquisition with whole-proteome in silico libraries. 
 - **Scalable:** Pioneer handles experiments with hundreds to thousands of runs with standard desktop hardware.
 - **Deep Proteome Coverage:** Pioneer achieves high sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.
 
