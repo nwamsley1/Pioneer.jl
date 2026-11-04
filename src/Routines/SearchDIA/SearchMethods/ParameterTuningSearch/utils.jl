@@ -180,18 +180,28 @@ function filter_top_psms_per_precursor(psms::DataFrame, max_per_precursor::Int=3
         return psms
     end
 
-    # Group by precursor_idx and keep top N by probability score
-    filtered_psms = combine(groupby(psms, :precursor_idx)) do group
-        n_to_keep = min(nrow(group), max_per_precursor)
-        if n_to_keep == nrow(group)
-            return group
-        end
-        # Sort by prob (descending) and take top N
-        sorted_indices = sortperm(group.prob, rev=true)
-        return group[sorted_indices[1:n_to_keep], :]
-    end
+    # Keep the top N rows by probability in each precursor group, in group order, with one index
+    # of the table (instead of a sub-table per group through combine). Same rows, order and
+    # columns as the combine form, which puts the grouping column first.
+    grouped = groupby(psms, :precursor_idx)
+    rows = _top_rows_per_group(grouped, psms.prob, max_per_precursor)
+    filtered_psms = psms[rows, :]
+    return select!(filtered_psms, :precursor_idx, Not(:precursor_idx))
+end
 
-    return filtered_psms
+function _top_rows_per_group(grouped::GroupedDataFrame, prob::AbstractVector, max_per_precursor::Int)
+    rows = Int[]
+    for group in grouped
+        group_rows = parentindices(group)[1]
+        if length(group_rows) <= max_per_precursor
+            append!(rows, group_rows)
+        else
+            # Sort by prob (descending) and take top N
+            order = sortperm(view(prob, group_rows), rev=true)
+            append!(rows, group_rows[order[1:max_per_precursor]])
+        end
+    end
+    return rows
 end
 
 """

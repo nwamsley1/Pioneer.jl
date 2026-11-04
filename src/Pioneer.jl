@@ -12,6 +12,7 @@ using Base64
 using Base.Order
 using Base.Iterators: partition
 using CSV, Combinatorics, CodecZlib
+import CodecZlibNG
 using Serialization
 using SHA
 using DataFrames, DataStructures, Dictionaries, Distributions

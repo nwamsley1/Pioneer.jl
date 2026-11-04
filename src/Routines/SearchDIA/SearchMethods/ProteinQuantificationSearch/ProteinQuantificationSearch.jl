@@ -227,7 +227,7 @@ function summarize_results!(
 
     if !params.params.output.write_decoys
         decoy_filter_pipeline = TransformPipeline() |>
-            filter_rows(row -> row.target; desc = "keep_target_rows")
+            filter_rows(:target => identity; desc = "keep_target_rows")
         apply_pipeline!(psm_refs, decoy_filter_pipeline)
     end
 

@@ -47,12 +47,7 @@ function build_rt_indices!(
         out_mzs = Vector{Float32}(undef, n_precs)
         out_pids = Vector{UInt32}(undef, n_precs)
 
-        for i in 1:n_precs
-            pid = UInt32(pids[i])
-            out_pids[i] = pid
-            out_mzs[i] = lib_mzs[pid]
-            out_rts[i] = Float32(rts[i])
-        end
+        _fill_rt_index_columns!(out_pids, out_mzs, out_rts, pids, rts, lib_mzs)
 
         # Column named :irt for compatibility with buildRtIndex, but values are empirical RT
         rt_df = DataFrame(irt = out_rts, prec_mz = out_mzs, precursor_idx = out_pids)
@@ -66,4 +61,15 @@ function build_rt_indices!(
         elapsed = round(time() - t_file_start, digits=3)
         @debug_l1 "  RT index $(file_name): $(n_precs) precursors (empirical RT) in $(elapsed)s"
     end
+end
+
+# Per-row kernel of the RT index build (a function barrier: the columns are untyped).
+function _fill_rt_index_columns!(out_pids, out_mzs, out_rts, pids, rts, lib_mzs)
+    for i in eachindex(pids, rts)
+        pid = UInt32(pids[i])
+        out_pids[i] = pid
+        out_mzs[i] = lib_mzs[pid]
+        out_rts[i] = Float32(rts[i])
+    end
+    return nothing
 end

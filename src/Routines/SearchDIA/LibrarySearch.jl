@@ -17,7 +17,7 @@
 # :precursor_idx not found` rather than seeing zero PSMs. Every such reader
 # already handles zero rows; none of them could handle zero columns.
 _empty_scored_psms(search_data, params) =
-    DataFrame(@view(get_scored_psms(first(search_data), params)[1:0]))
+    scored_psm_table([get_scored_psms(first(search_data), params)], [0], 0, nothing)
 
 """
     library_search(spectra, search_context, params, ms_file_idx) -> DataFrame
@@ -94,6 +94,12 @@ function library_search(
         getPresearchPartitionedIndex(spec_lib)
     else
         get_fragment_index(spec_lib, params)
+    end
+    if haskey(ENV, "PIONEER_DIAG_LIVE")
+        which = partitioned_index === peek_fragment_index(spec_lib.presearch_partitioned_index) ? "presearch" :
+                partitioned_index === peek_fragment_index(spec_lib.partitioned_index) ? "main" : "other"
+        @user_print string("[INDEX] ", nameof(typeof(params)), " file=", ms_file_idx,
+                           " irt_tol=", irt_tol, " index=", which)
     end
     qtm = getQuadTransmissionModel(search_context, ms_file_idx)
     # Scanning-quad (ZT) files: a narrow candidacy box and a meta-scan-wide deconvolution box
@@ -198,6 +204,17 @@ function library_search(
 
     # --- 2c. Build precursor index ---
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, precursors_passed)
+    if haskey(ENV, "PIONEER_DIAG_LIVE") && params isa MainSearchParameters
+        scratch = getFragIndexScratch(search_context)
+        @user_print string("[SIZES] frag-index: candidates=", length(precursors_passed),
+            " precursors_passed=", round(Base.summarysize(precursors_passed) / 1e9, digits=3), " GB",
+            " scan_to_prec_idx=", round(Base.summarysize(scan_to_prec_idx) / 1e9, digits=3), " GB",
+            " scratch=", scratch === nothing ? "none" : string(round(Base.summarysize(scratch) / 1e9, digits=3), " GB"))
+        _diag_live("frag-index search done (scratch, candidates live)")
+    end
+    # The candidates are in `precursors_passed` now; the per-thread emit buffers they were gathered
+    # from are dead until the next search sizes them again (MainSearch: 5.6 GB on a 3.5M-scan file).
+    params isa MainSearchParameters && release_emit_buffers!(getFragIndexScratch(search_context))
 
     # --- 3. Threaded scan processing, once per NCE model ---
     # All search methods use the fused per-precursor scan loop. The classic
@@ -207,8 +224,11 @@ function library_search(
     t_deconv_start = time()
     _deconv_body = (tt) -> map(nce_entries) do (nce_model, nce_tag)
         intensity_model = prepare_fragment_intensity_model(ion_list, nce_model)
+        # Each task scores its scans into its thread's scored-PSM buffer and returns the row count;
+        # the rows are then gathered into one table (gather_scored_psms) in task order, which is
+        # the order the per-task tables used to be concatenated in.
         tasks = map(tt) do thread_task
-            Threads.@spawn process_scans_fused!(
+            Threads.@spawn fuse_scans_count!(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
@@ -216,7 +236,7 @@ function library_search(
         end
         # Unwrap TaskFailedException so the real error surfaces instead of
         # being buried inside a Task wrapper.
-        fetched = map(tasks) do t
+        counts = map(tasks) do t
             try
                 fetch(t)
             catch e
@@ -226,7 +246,17 @@ function library_search(
                 rethrow(e)
             end
         end
-        result = vcat(fetched...)
+        if haskey(ENV, "PIONEER_DIAG_LIVE")
+            n_buf = sum(length(getMainSearchScoredPsms(sd)) for sd in search_data; init = 0)
+            @user_print string("[LIVE] per-thread scored-PSM buffers: ", n_buf, " slots x ",
+                               sizeof(eltype(getMainSearchScoredPsms(first(search_data)))), " B = ",
+                               round(n_buf * sizeof(eltype(getMainSearchScoredPsms(first(search_data)))) / 1e9, digits=2),
+                               " GB; rows scored: ", sum(counts; init = 0))
+        end
+        _diag_live("deconv: scored, before gather")
+        result = scored_psm_table([get_scored_psms(search_data[first(t)], params) for t in tt],
+                                  Vector{Int}(counts), ms_file_idx, spectra)
+        _diag_live("deconv: after gather")
         if nce_tag !== nothing && !isempty(result)
             result[!, :nce] .= nce_tag
         end
@@ -236,8 +266,20 @@ function library_search(
     # (ZT/chunked_main_search.jl); `nothing` everywhere else.
     zt_psms = zt_chunked_deconvolution(zt_geom, params, _deconv_body, spectra, search_context,
                                        ms_file_idx, scan_to_prec_idx)
-    zt_psms === nothing || return zt_psms
+    if zt_psms !== nothing
+        release_scored_psm_buffers!(search_data, params)
+        return zt_psms
+    end
+    # Other MainSearch files with many candidates: deconvolve in chunks of scans and keep the PSMs
+    # on disk (ZT/chunked_main_search.jl); `nothing` for a file searched in memory.
+    chunked = chunked_main_deconvolution(params, _deconv_body, spectra, search_context, ms_file_idx,
+                                         scan_to_prec_idx, thread_tasks, length(precursors_passed))
+    if chunked !== nothing
+        release_scored_psm_buffers!(search_data, params)
+        return chunked
+    end
     all_results = _deconv_body(thread_tasks)
+    release_scored_psm_buffers!(search_data, params)
     t_deconv = time() - t_deconv_start
 
     t_post_start = time()
@@ -256,6 +298,58 @@ function library_search(
     end
 
     return result
+end
+
+"""
+Rows a thread's MainSearch scored-PSM buffer is returned to after each file: its initial size
+(`initSimpleSearchContext`). The buffer grows to hold every row a thread scores in one file.
+"""
+const MAIN_SCORED_PSMS_RETAINED = 5000
+
+"""
+    release_scored_psm_buffers!(search_data, params)
+
+After a MainSearch file's rows are gathered into its PSM table, return each thread's scored-PSM
+buffer to its initial size. The buffer only ever grew (to every row the thread scored in the file,
+e.g. ~4M rows / 0.6 GB per thread on a 65M-PSM file), and nothing reads it after the gather; the
+next file regrows it as the first one did. Tuning stages keep theirs (they are small and reused).
+"""
+release_scored_psm_buffers!(search_data, ::FragmentIndexSearchParameters) = nothing
+function release_scored_psm_buffers!(search_data::AbstractVector, params::MainSearchParameters)
+    for sd in search_data
+        buf = get_scored_psms(sd, params)
+        length(buf) > MAIN_SCORED_PSMS_RETAINED || continue
+        resize!(buf, MAIN_SCORED_PSMS_RETAINED)
+        sizehint!(buf, MAIN_SCORED_PSMS_RETAINED)
+    end
+    return nothing
+end
+
+"""
+    _diag_live(label)
+
+Diagnostic: when `PIONEER_DIAG_LIVE` is set, run a full GC and report the bytes still live
+(what the GC cannot free) next to the process's resident and peak memory. Off by default;
+it only costs time, never changes results.
+"""
+function _diag_live(label::AbstractString)
+    haskey(ENV, "PIONEER_DIAG_LIVE") || return nothing
+    GC.gc(true)
+    @user_print string("[LIVE] ", label, ": live=", round(Base.gc_live_bytes() / 1e9, digits=2),
+                       " GB  rss=", round(Sys.maxrss() / 1e9, digits=2), " GB(peak)")
+    return nothing
+end
+
+"""Diagnostic (PIONEER_DIAG_LIVE): live heap plus the rows and bytes of `df`."""
+function _diag_table(label::AbstractString, df)
+    haskey(ENV, "PIONEER_DIAG_LIVE") || return nothing
+    GC.gc(true)
+    nb = df === nothing ? 0 : sum(c -> isbitstype(eltype(c)) ? length(c) * sizeof(eltype(c)) : Base.summarysize(c), eachcol(df); init = 0)
+    nr = df === nothing ? 0 : nrow(df)
+    @user_print string("[LIVE] ", label, ": live=", round(Base.gc_live_bytes() / 1e9, digits=2),
+                       " GB  rss=", round(Sys.maxrss() / 1e9, digits=2), " GB(peak)  table rows=", nr,
+                       " bytes=", round(nb / 1e9, digits=2), " GB cols=", df === nothing ? 0 : ncol(df))
+    return nothing
 end
 
 """

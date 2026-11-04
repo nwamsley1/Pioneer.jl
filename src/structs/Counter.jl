@@ -171,6 +171,25 @@ function prepare!(s::FragIndexScratch;
     return s
 end
 
+"""
+    release_emit_buffers!(s::FragIndexScratch)
+
+Free the per-thread candidate emit buffers (`si`, `pid`). They are presized to
+`n_scans * EMIT_CANDIDATES_PER_SCAN / n_threads` entries per thread (and double when full) and only
+hold candidates until `_collect_frag_index_results!` has gathered them into `precursors_passed`;
+`prepare!` sizes them again for the next search.
+"""
+function release_emit_buffers!(s::FragIndexScratch)
+    for v in s.si
+        empty!(v); sizehint!(v, 0)
+    end
+    for v in s.pid
+        empty!(v); sizehint!(v, 0)
+    end
+    return s
+end
+release_emit_buffers!(::Nothing) = nothing
+
 "Per-thread counters of `s` for local IDs of type UInt16 / UInt32."
 scratch_counters(s::FragIndexScratch, ::Type{UInt16}) = s.counters
 scratch_counters(s::FragIndexScratch, ::Type{UInt32}) = s.counters32

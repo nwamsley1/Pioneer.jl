@@ -753,7 +753,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             (:pg_qval, q_value_threshold),
             (:global_pg_qval, q_value_threshold)
         ]) |>
-        filter_rows(row -> row.use_for_protein_quant; desc="filter_for_protein_quant")
+        filter_rows(:use_for_protein_quant => identity; desc="filter_for_protein_quant")
     
     # Main processing logic (inlined from original LFQ function)
     batch_start_idx, batch_end_idx = 1, min(batch_size, size(prot, 1))

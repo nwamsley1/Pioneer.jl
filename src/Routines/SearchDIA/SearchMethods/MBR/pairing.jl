@@ -34,6 +34,60 @@ end
     return clamp(searchsortedlast(edges, mz), 1, 10)
 end
 
+# Per-row body of build_mbr_partner_pools behind a function barrier (the Arrow columns are untyped).
+function _add_mbr_partner_pool_rows!(fold_mz_pairs, fold_pairs, global_pairs, file_pairs,
+                                     precursor_idxs, file_idxs, cv_folds, irt_col,
+                                     irt_by_pid, fold_by_pid, mz_bin_by_pid, charge_by_pid, length_by_pid)
+    @inbounds for row in eachindex(precursor_idxs)
+        pid = UInt32(precursor_idxs[row])
+        pid_int = Int(pid)
+        file_idx = UInt32(file_idxs[row])
+        irt = irt_col === nothing ?
+            irt_by_pid[pid_int] :
+            Float32(irt_col[row])
+        isfinite(irt) || (irt = irt_by_pid[pid_int])
+        fold = Int(UInt8(cv_folds[row]))
+        fold_by_pid[pid_int] = UInt8(fold)
+        mz_bin = Int(mz_bin_by_pid[pid_int])
+        charge = Int(charge_by_pid[pid_int])
+        sequence_length = Int(length_by_pid[pid_int])
+        pair = (irt, pid)
+        push!(
+            get!(
+                () -> Tuple{Float32, UInt32}[],
+                fold_mz_pairs,
+                (fold, mz_bin, charge, sequence_length),
+            ),
+            pair,
+        )
+        push!(
+            get!(
+                () -> Tuple{Float32, UInt32}[],
+                fold_pairs,
+                (fold, charge, sequence_length),
+            ),
+            pair,
+        )
+        push!(
+            get!(
+                () -> Tuple{Float32, UInt32}[],
+                global_pairs,
+                (charge, sequence_length),
+            ),
+            pair,
+        )
+        push!(
+            get!(
+                () -> Tuple{Float32, UInt32}[],
+                file_pairs,
+                (file_idx, charge, sequence_length),
+            ),
+            pair,
+        )
+    end
+    return nothing
+end
+
 """
     build_mbr_partner_pools(file_paths, precursors)
 
@@ -85,53 +139,9 @@ function build_mbr_partner_pools(
                 error("MBR counterfactual pools require column $col in $path")
         end
         irt_col = hasproperty(tbl, :irt_pred) ? tbl.irt_pred : nothing
-        @inbounds for row in eachindex(tbl.precursor_idx)
-            pid = UInt32(tbl.precursor_idx[row])
-            pid_int = Int(pid)
-            file_idx = UInt32(tbl.ms_file_idx[row])
-            irt = irt_col === nothing ?
-                irt_by_pid[pid_int] :
-                Float32(irt_col[row])
-            isfinite(irt) || (irt = irt_by_pid[pid_int])
-            fold = Int(UInt8(tbl.cv_fold[row]))
-            fold_by_pid[pid_int] = UInt8(fold)
-            mz_bin = Int(mz_bin_by_pid[pid_int])
-            charge = Int(charge_by_pid[pid_int])
-            sequence_length = Int(length_by_pid[pid_int])
-            pair = (irt, pid)
-            push!(
-                get!(
-                    () -> Tuple{Float32, UInt32}[],
-                    fold_mz_pairs,
-                    (fold, mz_bin, charge, sequence_length),
-                ),
-                pair,
-            )
-            push!(
-                get!(
-                    () -> Tuple{Float32, UInt32}[],
-                    fold_pairs,
-                    (fold, charge, sequence_length),
-                ),
-                pair,
-            )
-            push!(
-                get!(
-                    () -> Tuple{Float32, UInt32}[],
-                    global_pairs,
-                    (charge, sequence_length),
-                ),
-                pair,
-            )
-            push!(
-                get!(
-                    () -> Tuple{Float32, UInt32}[],
-                    file_pairs,
-                    (file_idx, charge, sequence_length),
-                ),
-                pair,
-            )
-        end
+        _add_mbr_partner_pool_rows!(fold_mz_pairs, fold_pairs, global_pairs, file_pairs,
+            tbl.precursor_idx, tbl.ms_file_idx, tbl.cv_fold, irt_col,
+            irt_by_pid, fold_by_pid, mz_bin_by_pid, charge_by_pid, length_by_pid)
     end
 
     fold_mz_charge_length_pool = Dict{
@@ -167,6 +177,17 @@ function build_mbr_partner_pools(
     )
 end
 
+# Precursors passing the experiment-wide gate (a function barrier: the Arrow columns are untyped).
+function _add_globally_passed!(global_passed::BitSet, precursor_idxs, global_qvals, q_value_threshold)
+    @inbounds for row in eachindex(precursor_idxs)
+        global_qval = Float32(global_qvals[row])
+        if isfinite(global_qval) && global_qval <= q_value_threshold
+            push!(global_passed, Int(precursor_idxs[row]))
+        end
+    end
+    return global_passed
+end
+
 """
     build_mbr_counterfactual_eligibility(file_paths; q_value_threshold)
 
@@ -186,12 +207,7 @@ function build_mbr_counterfactual_eligibility(
             hasproperty(tbl, col) ||
                 error("MBR eligibility requires column $col in $path")
         end
-        @inbounds for row in eachindex(tbl.precursor_idx)
-            global_qval = Float32(tbl.global_qval[row])
-            if isfinite(global_qval) && global_qval <= q_value_threshold
-                push!(global_passed, Int(tbl.precursor_idx[row]))
-            end
-        end
+        _add_globally_passed!(global_passed, tbl.precursor_idx, tbl.global_qval, q_value_threshold)
     end
     # The run-level half is per receiver file; see `_MBRCounterfactualEligibility`.
     return _MBRCounterfactualEligibility(global_passed)
