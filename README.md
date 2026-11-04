@@ -15,14 +15,6 @@ Pioneer is a fast and scalable solution for the analysis of protein mass spectro
 
 **[Documentation](https://nwamsley1.github.io/Pioneer.jl/docs/stable/)** &bull; **[Regression Reports](https://nwamsley1.github.io/Pioneer.jl/reports/)** &bull; **[Landing Page](https://nwamsley1.github.io/Pioneer.jl/)**
 
-## Paper
-
-The latest Pioneer manuscript is available on bioRxiv:
-
-*Pioneer and Altimeter: Fast Analysis of DIA Proteomics Data Optimized for Narrow Isolation Windows*. bioRxiv (2026).
-
-[https://www.biorxiv.org/content/10.64898/2026.02.16.706201](https://www.biorxiv.org/content/10.64898/2026.02.16.706201)
-
 ## Features
 
 - **Cross-Platform:** Pioneer and the file conversion tool run on Linux, macOS, and Windows.
@@ -32,6 +24,14 @@ The latest Pioneer manuscript is available on bioRxiv:
 - **Scalable:** Pioneer may process experiments with hundreds to thousands of runs using standard desktop hardware (32-64GB RAM). Search time grows linearly with the number of MS data files. 
 - **Deep Proteome Coverage:** Pioneer achieves high sensitivity and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.
 - **FDR Control and Regression Testing:** Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers end-to-end searches on the benchmark datasets, and entrapment analyses check that the reported false discovery rate (FDR) holds. **[Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/)**.
+
+## Paper
+
+The latest Pioneer manuscript is available on bioRxiv:
+
+*Pioneer and Altimeter: Fast Analysis of DIA Proteomics Data Optimized for Narrow Isolation Windows*. bioRxiv (2026).
+
+[https://www.biorxiv.org/content/10.64898/2026.02.16.706201](https://www.biorxiv.org/content/10.64898/2026.02.16.706201)
 
 ## License
 
