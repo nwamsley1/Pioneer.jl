@@ -164,6 +164,13 @@ both necessary and safe for peak memory.
 Establishes the sorted-by-precursor invariant that downstream passes
 (`_build_precursor_groups`, feature passes, `select_best_per_precursor`)
 can take advantage of to skip their own sortperm.
+
+Rows are ordered by (`precursor_idx`, `scan_idx`), a pair that is unique per row, so the order is
+fully determined by the data. Sorting by precursor alone kept each precursor's rows in deconvolution
+emit order, which depends on how scans were dealt to threads (and so on the thread count); row
+order reaches the results through LightGBM's positional training sample and best-scan tie-breaks.
+This is also the order the scanning-quad (ZT) path already produces, and the order an on-disk merge
+of per-thread runs can reproduce.
 """
 
 function permute_psms_by_precursor_idx!(
@@ -172,10 +179,14 @@ function permute_psms_by_precursor_idx!(
 )
     n = nrow(psms)
     n == 0 && return psms
-    perm = parallel_sortperm_int32!(
-        sortperm_workspace,
-        psms[!, :precursor_idx]::Vector{UInt32},
-    )
+    pid = psms[!, :precursor_idx]::Vector{UInt32}
+    scan = psms[!, :scan_idx]::Vector{UInt32}
+    keys = Vector{UInt64}(undef, n)
+    Threads.@threads for i in 1:n
+        @inbounds keys[i] = (UInt64(pid[i]) << 32) | UInt64(scan[i])
+    end
+    perm = parallel_sortperm_int32!(sortperm_workspace, keys)
+    keys = nothing
     # NOT `Base.permute!`. Its docstring contract changed: it no longer destroys the permutation
     # argument (nor does `permute!!`) -- it allocates a *data*-sized temporary instead, measured at
     # exactly `sizeof(col)` per call. So the old code's defensive `copyto!(p_scratch, perm)` guarded a
@@ -231,6 +242,7 @@ macro alloc_bucket(label, ex)
             @user_print string("[ALLOC] ", $(esc(label)), ": ",
                                round((Base.gc_bytes() - _b0) / 1e9, digits=3), " GB")
         end
+        _diag_live(string("after ", $(esc(label))))
         _r
     end
 end
@@ -274,11 +286,17 @@ function process_file!(
 
     t_file_start = time()
     file_name = getParsedFileName(search_context, ms_file_idx)
+    _diag_live("MainSearch file $ms_file_idx start")
 
     psms = @alloc_bucket "library_search (deconv)" library_search(spectra, search_context, params, ms_file_idx)
     # Scanning-quad (ZT): library_search already ran the two per-scan passes below on each chunk's
     # raw per-bin rows, then collapsed them to meta-PSMs (ZT/chunked_main_search.jl).
-    zt_collapsed = zt_collapsed_in_search(getZTGeometry(search_context, ms_file_idx))
+    # A file whose PSMs library_search wrote to disk in chunks (ZT, or chunked_main_deconvolution)
+    # already has the two per-scan passes below, run per chunk.
+    # A table library_search built in memory from rounds is also already sorted.
+    in_memory_rounds = main_per_scan_done(search_context, ms_file_idx)
+    zt_collapsed = zt_collapsed_in_search(getZTGeometry(search_context, ms_file_idx)) ||
+                   getZTPsmPartitions(search_context, ms_file_idx) !== nothing || in_memory_rounds
     t_lib_search = time() - t_file_start
 
     # IMPORTANT: the next two steps depend on the deconv output being
@@ -314,12 +332,21 @@ function process_file!(
     # for any per-precursor parallelism. We use a hand-rolled in-place
     # column permute rather than `sort!(df, :col)` because DataFrames.sort!
     # is ~4× slower on this shape (measured 2026-05-19).
-    t_sort = @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(
+    t_sort = in_memory_rounds ? 0.0 : @elapsed @alloc_bucket "permute_by_precursor" permute_psms_by_precursor_idx!(
         psms,
         results.sortperm_workspace,
     )
 
     results.psms[] = psms
+
+    if haskey(ENV, "PIONEER_DIAG_LIVE") && nrow(psms) > 0
+        # Is (precursor_idx, scan_idx) unique per row? (Decides whether a sort key can rebuild row order.)
+        keys = sort!(UInt64.(psms[!, :precursor_idx]) .<< 32 .| UInt64.(psms[!, :scan_idx]))
+        n_dup = count(i -> keys[i] == keys[i - 1], 2:length(keys))
+        keys = nothing
+        @user_print string("[ORDER] file=", ms_file_idx, " rows=", nrow(psms),
+                           " duplicate (precursor_idx, scan_idx) rows=", n_dup)
+    end
 
     _log_psm_table_footprint(psms, "post-deconv (before best-per-precursor)", ms_file_idx)
 
@@ -445,6 +472,7 @@ function _mainsearch_best_in_memory!(
                    "high-confidence target precursors; need $(irt_refinement.min_precursors))"
     end
     best_psms[!, :lgbm_prob] = copy(best_psms[!, :lgbm_score])
+    _diag_live("after reapply + best-per-precursor ($(nrow(best_psms)) best PSMs)")
 
     return (
         best_psms = best_psms,

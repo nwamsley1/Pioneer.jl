@@ -1,6 +1,6 @@
 <img src="figures/PIONEER_LOGO.svg" align="right" width="200px"/>
 
-# Pioneer: Fast and Open-Source Analysis of Data-Independent Acquisition Proteomics Experiments
+# Pioneer: Fast and Scalable Analysis of Data-Independent Acquisition Proteomics Experiments
 
 [![License: WashU non-commercial](https://img.shields.io/badge/License-WashU%20non--commercial-blue)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-stable-blue)](https://nwamsley1.github.io/Pioneer.jl/docs/stable/)
@@ -9,9 +9,9 @@
 [![Main branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=main&label=Main%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Amain)
 [![Develop branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=develop&label=Develop%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Adevelop)
 [![Coverage](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/develop/graph/badge.svg)](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/develop)
-[![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.02.16.706201v2-B31B1B)](https://www.biorxiv.org/content/10.64898/2026.02.16.706201v2)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.02.16.706201v3-B31B1B)](https://www.biorxiv.org/content/10.64898/2026.02.16.706201v3)
 
-Pioneer is an open-source and performant solution for the analysis of protein mass spectrometry data. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data.
+Pioneer is a fast and scalable solution for the analysis of protein mass spectrometry data. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo Fisher, Sciex, and Bruker instruments and for building in silico spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data.
 
 **[Documentation](https://nwamsley1.github.io/Pioneer.jl/docs/stable/)** &bull; **[Regression Reports](https://nwamsley1.github.io/Pioneer.jl/reports/)** &bull; **[Landing Page](https://nwamsley1.github.io/Pioneer.jl/)**
 
@@ -26,9 +26,11 @@ The Pioneer manuscript is available on bioRxiv:
 ## Features
 
 - **Cross-Platform:** Pioneer and the file conversion tool run on Linux, macOS, and Windows.
-- **GUI:** The latest release (v0.8.0 and later) ships with a fully functioning graphical user interface.
-- **Fast:** Pioneer searches large datasets much faster than they can be acquired and several faster than state-of-the-art search tools.
-- **Deep Proteome Coverage:** Pioneer achieves high-sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters. 
+- **Multi-Vendor:** Supports Thermo Fisher, Sciex, and Bruker instruments.
+- **GUI:** Includes a graphical user interface.
+- **Fast:** Pioneer searches files many times faster than data acquisition with whole-proteome in silico libraries. 
+- **Scalable:** Pioneer handles experiments with hundreds to thousands of runs with standard desktop hardware.
+- **Deep Proteome Coverage:** Pioneer achieves high sensitivity, FDR control, and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.
 
 ## Installation
 

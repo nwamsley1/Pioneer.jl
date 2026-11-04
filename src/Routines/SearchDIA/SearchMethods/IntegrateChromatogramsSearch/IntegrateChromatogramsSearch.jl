@@ -303,7 +303,9 @@ function process_file!(
     # for protein-level FDR / PEP calibration. Final decoy suppression for
     # output happens later in ProteinQuantificationSearch when output.write_decoys=false.
     # With MBR the input is a staged row selection of the scored table (load_staged_psms).
+    _diag_table("integration file $ms_file_idx: rt_index built", nothing)
     passing_psms = load_staged_psms(passing_psms_path)
+    _diag_table("integration file $ms_file_idx: passing_psms loaded", passing_psms)
 
     # Initialize the integration schema before the empty-file check so an
     # empty staged MBR file remains consumable by the post-integration pass.
@@ -357,6 +359,7 @@ function process_file!(
         MS2CHROM();
         rhs_extended = results.rhs_extended,
     )
+    _diag_table("integration file $ms_file_idx: chromatograms extracted", chromatograms)
     # MS1 chromatogram extraction is currently unwired; the MS1
     # build_chromatograms body is block-commented in utils.jl pending a
     # fused port. The ms1_quant knob has been removed from the public
@@ -403,7 +406,9 @@ function process_file!(
             end
         end
     end
+    _diag_table("integration file $ms_file_idx: isotopes + IM columns added", chromatograms)
     sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
+    _diag_table("integration file $ms_file_idx: chromatograms sorted", chromatograms)
 
     # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)
     if nrow(chromatograms) > 0
@@ -437,6 +442,7 @@ function process_file!(
             λ = params.wh_smoothing_strength,
             im_half_scans = im_half_scans,
         )
+        _diag_table("integration file $ms_file_idx: integrated (psms)", passing_psms)
         if params.match_between_runs &&
            isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
             # OFFLINE-PROFILING HOOK (PIONEER_MBR_ARG_DUMP=<path>): serialise the exact argument
@@ -463,6 +469,7 @@ function process_file!(
                     getBitVecExcessRanks(search_context, ms_file_idx),
                 scan_tic = scan_tic,
             )
+            _diag_table("integration file $ms_file_idx: MBR spectra features added (psms)", passing_psms)
             selected_rows = _select_postintegration_mbr_rows(
                 passing_psms,
                 params.q_value_threshold,
@@ -506,6 +513,7 @@ function process_file!(
     # MS1 integration disabled — see extract_chromatograms call above.
     # Clear chromatograms to free memory
     chromatograms = nothing
+    _diag_table("integration file $ms_file_idx: chromatograms released (psms)", passing_psms)
 
 
     # Store processed PSMs in results

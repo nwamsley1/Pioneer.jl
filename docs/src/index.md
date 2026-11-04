@@ -4,7 +4,7 @@ CurrentModule = Pioneer
 
 ## Introduction
 
-Pioneer and its companion tool Altimeter are an open-source and performant solution for analysis of protein MS data acquired by data-independent acquisition (DIA). Poineer includes routines for searching DIA experments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides from the library in the data.
+Pioneer and its companion tool Altimeter are a performant solution for analysis of protein MS data acquired by data-independent acquisition (DIA). Pioneer includes routines for searching DIA experiments from Thermo and Sciex instruments and for building spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides from the library in the data.
 
 ## Key Features
 
