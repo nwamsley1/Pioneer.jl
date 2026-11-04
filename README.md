@@ -35,11 +35,14 @@ Pioneer is a fast and scalable solution for the analysis of protein mass spectro
 
 - **Cross-Platform:** Pioneer and the file conversion tool run on Linux, macOS, and Windows.
 - **Multi-Vendor:** Supports Thermo Fisher, Sciex, and Bruker instruments.
-- **GUI:** Releases include a graphical user interface.
 - **Fast:** Pioneer searches files many times faster than data acquisition with whole-proteome, in silico libraries even with the latest, fast-scanning TOF instruments. 
 - **Scalable:** Pioneer may process experiments with hundreds to thousands of runs using standard desktop hardware (32-64GB RAM). Search time grows linearly with the number of MS data files. 
 - **Deep Proteome Coverage:** Pioneer achieves high sensitivity and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.
 - **FDR Control and Regression Testing:** Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers end-to-end searches on the benchmark datasets, and entrapment analyses check that the reported false discovery rate (FDR) holds. **[Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/)**.
+
+## Graphical User Interface
+
+Releases include a graphical user interface for converting raw files, building or downloading spectral libraries, and running searches.
 
 <p align="center">
   <img src="figures/gui_searchdia.png" alt="The Pioneer graphical interface, SearchDIA screen" width="800">
