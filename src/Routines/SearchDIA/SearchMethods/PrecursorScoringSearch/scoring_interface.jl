@@ -65,15 +65,8 @@ function _annotate_precursor_scores_via_sidecar!(
         global_pep = Vector{Union{Float32, Missing}}(undef, n)
         qvals = Vector{Float32}(undef, n)
         peps = Vector{Float32}(undef, n)
-        @inbounds for row in 1:n
-            pid = UInt32(pids[row])
-            global_prob[row] = get(global_prob_dict, pid, missing)
-            global_qval[row] = get(global_qval_dict, pid, missing)
-            global_pep[row] = get(global_pep_dict, pid, missing)
-            score = Float32(probs[row])
-            qvals[row] = Float32(qval_spline(score))
-            peps[row] = Float32(pep_interp(score))
-        end
+        _fill_precursor_scores!(global_prob, global_qval, global_pep, qvals, peps, pids, probs,
+            global_prob_dict, global_qval_dict, global_pep_dict, qval_spline, pep_interp)
 
         add_columns_via_sidecar!(
             ref,
@@ -251,4 +244,20 @@ function build_qvalue_spline_from_refs(
     end
     @debug_l1 "$context complete: files=$(length(refs)) rows=$rows elapsed=$(round(time()-started, digits=2))s"
     return result
+end
+
+# Per-row kernel of the precursor score annotation (a function barrier: the columns are untyped).
+function _fill_precursor_scores!(global_prob, global_qval, global_pep, qvals, peps, pids, probs,
+                                 global_prob_dict, global_qval_dict, global_pep_dict,
+                                 qval_spline, pep_interp)
+    @inbounds for row in eachindex(pids, probs)
+        pid = UInt32(pids[row])
+        global_prob[row] = get(global_prob_dict, pid, missing)
+        global_qval[row] = get(global_qval_dict, pid, missing)
+        global_pep[row] = get(global_pep_dict, pid, missing)
+        score = Float32(probs[row])
+        qvals[row] = Float32(qval_spline(score))
+        peps[row] = Float32(pep_interp(score))
+    end
+    return nothing
 end

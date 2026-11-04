@@ -190,16 +190,10 @@ function _count_protein_peptide_opportunities(
     return opportunities
 end
 
-function count_protein_peptide_opportunities(
-    precursors::LibraryPrecursors,
-    final_groups::Set{PGKey},
-    protein_group_members::Vector{Vector{UInt32}}
-)
-    missed_cleavages = getMissedCleavages(precursors)
-    num_enzymatic_termini = getNumEnzymaticTermini(precursors)
-    num_variable_modifications = getNumVariableModifications(precursors)
-    structural_mods = getStructuralMods(precursors)
-    common_precursor_mask = BitVector(undef, length(precursors))
+# Library-wide mask of common peptides (a function barrier: the library columns are untyped).
+function _common_precursor_mask(missed_cleavages, num_enzymatic_termini, num_variable_modifications,
+                                structural_mods)
+    common_precursor_mask = BitVector(undef, length(missed_cleavages))
     @inbounds for precursor_idx in eachindex(common_precursor_mask)
         common_precursor_mask[precursor_idx] = _is_common_peptide(
             missed_cleavages[precursor_idx],
@@ -211,6 +205,20 @@ function count_protein_peptide_opportunities(
             )
         )
     end
+    return common_precursor_mask
+end
+
+function count_protein_peptide_opportunities(
+    precursors::LibraryPrecursors,
+    final_groups::Set{PGKey},
+    protein_group_members::Vector{Vector{UInt32}}
+)
+    common_precursor_mask = _common_precursor_mask(
+        getMissedCleavages(precursors),
+        getNumEnzymaticTermini(precursors),
+        getNumVariableModifications(precursors),
+        getStructuralMods(precursors),
+    )
     # Integer keys: library accession sets and sequences by ID, groups by their member accessions.
     text_ids = getPrecursorTextIds(precursors)
     return _count_protein_peptide_opportunities(
@@ -533,10 +541,7 @@ function run_protein_inference!(
         # Only keys are kept, so the file is unmapped afterwards.
         with_arrow_table(file_path(psm_ref)) do table
             :precursor_idx in Tables.columnnames(table) || return nothing
-            pidx = Tables.getcolumn(table, :precursor_idx)
-            @inbounds for i in eachindex(pidx)
-                push!(unique_set, _inference_key(inputs, pidx[i]))
-            end
+            _push_inference_keys!(unique_set, inputs, Tables.getcolumn(table, :precursor_idx))
         end
     end
 
@@ -570,25 +575,8 @@ function run_protein_inference!(
         use_for_quant = Vector{Bool}(undef, n)
         ambiguity_ids = zeros(UInt32, n)
 
-        @inbounds for i in 1:n
-            p = pidx[i]
-            seq, _, dec, ent = _inference_key(inputs, p)
-            entrap_ids[i]   = ent
-            base_pep_ids[i] = all_base_pep_ids[p]
-            pep_key = PeptideKey(seq, !dec, ent)
-            if haskey(inference_result.peptide_to_protein, pep_key)
-                inferred[i]       = inference_result.peptide_to_protein[pep_key].name
-                use_for_quant[i]  = true
-            else
-                inferred[i]       = missing
-                use_for_quant[i]  = false
-                ambiguity_ids[i]  = get(
-                    peptide_to_ambiguity_id,
-                    pep_key,
-                    zero(UInt32)
-                )
-            end
-        end
+        _fill_inference_columns!(entrap_ids, base_pep_ids, inferred, use_for_quant, ambiguity_ids,
+            pidx, inputs, all_base_pep_ids, inference_result, peptide_to_ambiguity_id)
 
         # :is_decoy is deliberately NOT emitted: it equals `decoy`, itself exactly `!target`, so it
         # was the third output column encoding one bit (0 mismatches across 235,194 rows). Nothing in
@@ -610,4 +598,37 @@ function run_protein_inference!(
         ),
         protein_group_names = pg_names
     )
+end
+
+# Per-row kernels of global protein inference (function barriers: the columns are untyped).
+function _push_inference_keys!(unique_set, inputs, pidx)
+    @inbounds for i in eachindex(pidx)
+        push!(unique_set, _inference_key(inputs, pidx[i]))
+    end
+    return unique_set
+end
+
+function _fill_inference_columns!(entrap_ids, base_pep_ids, inferred, use_for_quant, ambiguity_ids,
+                                  pidx, inputs, all_base_pep_ids, inference_result,
+                                  peptide_to_ambiguity_id)
+    @inbounds for i in eachindex(pidx)
+        p = pidx[i]
+        seq, _, dec, ent = _inference_key(inputs, p)
+        entrap_ids[i]   = ent
+        base_pep_ids[i] = all_base_pep_ids[p]
+        pep_key = PeptideKey(seq, !dec, ent)
+        if haskey(inference_result.peptide_to_protein, pep_key)
+            inferred[i]       = inference_result.peptide_to_protein[pep_key].name
+            use_for_quant[i]  = true
+        else
+            inferred[i]       = missing
+            use_for_quant[i]  = false
+            ambiguity_ids[i]  = get(
+                peptide_to_ambiguity_id,
+                pep_key,
+                zero(UInt32)
+            )
+        end
+    end
+    return nothing
 end

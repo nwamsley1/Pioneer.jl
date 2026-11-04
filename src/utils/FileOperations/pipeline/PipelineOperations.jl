@@ -99,6 +99,15 @@ function filter_rows(predicate::Function; desc::String="filter")
     return desc => op
 end
 
+# `column => predicate` form: the predicate sees the typed column's values, not a DataFrameRow.
+function filter_rows(column_predicate::Pair{Symbol, <:Function}; desc::String="filter")
+    op = function(df)
+        filter!(column_predicate, df)
+        return df
+    end
+    return desc => op
+end
+
 """
     sort_by(cols::Vector{Symbol}; rev::Vector{Bool}=fill(false, length(cols)))
 
@@ -216,16 +225,7 @@ function add_dict_column_composite_key(new_col::Symbol, key_cols::Vector{Symbol}
             end
         end
 
-        # Pre-allocate result vector
-        result = Vector{Union{V, Missing}}(undef, nrow(df))
-
-        # Look up each composite key in dictionary
-        for i in 1:nrow(df)
-            key = (df.protein_name[i], df.target[i], df.entrap_id[i])
-            result[i] = get(lookup_dict, key, missing)
-        end
-
-        df[!, new_col] = result
+        df[!, new_col] = _lookup_composite_keys(lookup_dict, V, df.protein_name, df.target, df.entrap_id)
         return df
     end
     return desc => op
@@ -274,10 +274,8 @@ function filter_by_threshold(col::Symbol, threshold::Real; comparison::Symbol = 
             keep_mask[i] = comp_fn(col_data[i])
         end
         
-        # Filter using the mask (more efficient than row-by-row)
-        df_filtered = df[keep_mask, :]
-        empty!(df)
-        append!(df, df_filtered)
+        # Filter in place (no copy of the kept rows)
+        keepat!(df, keep_mask)
         return df
     end
     
@@ -427,13 +425,21 @@ function filter_by_multiple_thresholds(conditions::Vector{<:Tuple{Symbol, <:Any}
             end
         end
         
-        # Apply mask efficiently
-        df_filtered = df[keep_mask, :]
-        empty!(df)
-        append!(df, df_filtered)
-        
+        # Filter in place (no copy of the kept rows)
+        keepat!(df, keep_mask)
+
         return df
     end
     
     return desc => op
+end
+
+# Look up each row's (protein_name, target, entrap_id) key (a function barrier: the columns are untyped).
+function _lookup_composite_keys(lookup_dict, ::Type{V}, names::AbstractVector, targets::AbstractVector,
+                                entrap_ids::AbstractVector) where {V}
+    result = Vector{Union{V, Missing}}(undef, length(names))
+    for i in eachindex(names, targets, entrap_ids)
+        result[i] = get(lookup_dict, (names[i], targets[i], entrap_ids[i]), missing)
+    end
+    return result
 end

@@ -1052,6 +1052,13 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
     vw_scratch   = [Float32[] for _ in 1:nthr]
     virt_scratch = [Float32[] for _ in 1:nthr]
 
+    # Output columns as typed locals, bound once: `psms.col` is type-unstable, so writing
+    # through it boxes a value per row.
+    out_wm0  = psms.ms1_corr_weight_m0::Vector{Float32}
+    out_m01  = psms.ms1_corr_m0_m1::Vector{Float32}
+    out_aoff = psms.ms1_apex_offset_irt::Vector{Float32}
+    out_w2m0 = psms.ms1_weight_apex_to_m0_apex_irt::Vector{Float32}
+
     Threads.@threads :static for p in 1:n_prec
         @inbounds begin
             i_start = Int(starts[p])
@@ -1092,13 +1099,7 @@ function _add_ms1_chromatogram_features!(psms::DataFrame;
             irt_apex_w  = v_irt[ai_w]
             weight_apex_to_m0 = abs(irt_apex_w - irt_apex_m0)
 
-            # Scatter outputs back to original row indices. Bind the columns to
-            # typed locals first — `psms.col` is type-unstable, so writing through
-            # it boxes a value per row.
-            out_wm0  = psms.ms1_corr_weight_m0::Vector{Float32}
-            out_m01  = psms.ms1_corr_m0_m1::Vector{Float32}
-            out_aoff = psms.ms1_apex_offset_irt::Vector{Float32}
-            out_w2m0 = psms.ms1_weight_apex_to_m0_apex_irt::Vector{Float32}
+            # Scatter outputs back to original row indices.
             for k in 1:npts
                 i_orig = perm[i_start + k - 1]
                 out_wm0[i_orig]  = c_wm0
@@ -1247,6 +1248,10 @@ function _build_precursor_window_groups(
     sizehint!(starts, length(base_starts))
     sizehint!(ends, length(base_starts))
 
+    # Scratch for precursors spanning several windows, reused across precursors.
+    window_to_group = Dict{Tuple{Float32, Float32}, Int}()
+    window_rows = Vector{Vector{Int}}()
+
     out_pos = 1
     @inbounds for group_idx in eachindex(base_starts)
         group_start = Int(base_starts[group_idx])
@@ -1271,21 +1276,23 @@ function _build_precursor_window_groups(
             push!(starts, UInt32(start_out))
             push!(ends, UInt32(out_pos - 1))
         else
-            window_to_group = Dict{Tuple{Float32, Float32}, Int}()
-            window_rows = Vector{Vector{Int}}()
+            empty!(window_to_group)
+            n_windows = 0
             for i in group_start:group_stop
                 row = base_perm[i]
                 key = _scan_window_key(scan_col[row], center_mzs, isolation_widths)
                 local_group = get(window_to_group, key, 0)
                 if local_group == 0
-                    push!(window_rows, Int[])
-                    local_group = length(window_rows)
+                    n_windows += 1
+                    n_windows > length(window_rows) ? push!(window_rows, Int[]) : empty!(window_rows[n_windows])
+                    local_group = n_windows
                     window_to_group[key] = local_group
                 end
                 push!(window_rows[local_group], row)
             end
 
-            for rows in window_rows
+            for g in 1:n_windows
+                rows = window_rows[g]
                 start_out = out_pos
                 for row in rows
                     perm[out_pos] = row
@@ -1398,7 +1405,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     n_scans_win_col = psms.n_scans_in_window::Vector{UInt32}
     wfrac_col = psms.weight_frac_in_cycle::Vector{Float32}
     has_cycle = hasproperty(psms, :cycle_idx)
-    cyc_col = has_cycle ? Int32[Int32(c) for c in psms.cycle_idx] : Int32[]
+    cyc_col = has_cycle ? Vector{Int32}(psms.cycle_idx) : Int32[]
 
     # Reuse the shared precursor grouping (perm + starts/ends) if the caller
     # has already computed it; otherwise build it locally. Per-precursor row
@@ -1425,6 +1432,16 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
     apex_scratch = [Float32[] for _ in 1:nthr]
     cyc_scratch  = [Int32[] for _ in 1:nthr]
     cw_scratch   = [Float32[] for _ in 1:nthr]
+
+    # Output columns as typed locals, bound once: `psms.col` is type-unstable, so writing
+    # through it boxes a value per row.
+    out_disp   = psms.frag_apex_dispersion_irt::Vector{Float32}
+    out_ncorr  = psms.n_correlated_fragments::Vector{UInt8}
+    out_rank   = psms.n_correlated_fragments_bitvec_rank::Vector{UInt16}
+    out_str    = psms.frag_corr_strength::Vector{Float32}
+    out_effn   = psms.frag_corr_effective_n::Vector{Float32}
+    out_bestm0 = psms.frag_corr_best_m0::Vector{Float32}
+    out_dframe = psms.delta_frame_peak_center::Vector{Float32}
 
     # Parallel per-precursor walk. Each precursor writes to disjoint row indices
     # in the output columns; all input arrays are read-only.
@@ -1504,7 +1521,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
             # E14: median fragment apex iRT − midpoint of precursor scan-window
             delta_frame = 0f0
             if !isempty(apex_irts)
-                sorted_apex = sort(apex_irts)
+                sorted_apex = sort!(apex_irts)   # per-thread scratch; std was taken above
                 m = length(sorted_apex)
                 median_apex = isodd(m) ?
                     sorted_apex[(m + 1) ÷ 2] :
@@ -1567,16 +1584,7 @@ function _add_fragment_chromatogram_features!(psms::DataFrame;
                 end
             end
 
-            # Scatter outputs to original row indices. Bind the columns to typed
-            # locals first — `psms.col` is type-unstable, so writing through it
-            # boxes a value per row.
-            out_disp   = psms.frag_apex_dispersion_irt::Vector{Float32}
-            out_ncorr  = psms.n_correlated_fragments::Vector{UInt8}
-            out_rank   = psms.n_correlated_fragments_bitvec_rank::Vector{UInt16}
-            out_str    = psms.frag_corr_strength::Vector{Float32}
-            out_effn   = psms.frag_corr_effective_n::Vector{Float32}
-            out_bestm0 = psms.frag_corr_best_m0::Vector{Float32}
-            out_dframe = psms.delta_frame_peak_center::Vector{Float32}
+            # Scatter outputs to original row indices.
             for k in 1:npts
                 i_orig = perm[i_start + k - 1]
                 out_disp[i_orig]   = apex_disp

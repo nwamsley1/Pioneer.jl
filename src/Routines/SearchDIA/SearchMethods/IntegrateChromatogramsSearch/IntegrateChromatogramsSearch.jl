@@ -276,6 +276,9 @@ The integration input is the passing PSM table from `MainSearch`; no main-search
 intervals are passed to the bound picker. Chromatograms are extracted,
 transmission-annotated, sorted for the configured trace mode, then integrated.
 """
+# values[i] for each i in idxs, converted to T (a function barrier: the columns are untyped).
+_gather_as(::Type{T}, values, idxs) where {T} = T[T(values[i]) for i in idxs]
+
 function process_file!(
     results::IntegrateChromatogramSearchResults,
     params::P, 
@@ -398,8 +401,8 @@ function process_file!(
             if im_half_scans > 0
                 cyc_v = getCycleIdxs(spectra)
                 sidx = chromatograms[!, :scan_idx]
-                chromatograms[!, :cycle_idx] = UInt32[UInt32(cyc_v[s]) for s in sidx]
-                chromatograms[!, :im_scan] = UInt16[UInt16(im_scans_v[s]) for s in sidx]
+                chromatograms[!, :cycle_idx] = _gather_as(UInt32, cyc_v, sidx)
+                chromatograms[!, :im_scan] = _gather_as(UInt16, im_scans_v, sidx)
                 @user_info "2D chromatogram integration: mobility band ±$(CHROM_IM_BAND_K0) 1/K0 = ±$(im_half_scans) IM scans"
             else
                 @user_warn "Ion-mobility data but no usable IM calibration line; falling back to 1D integration"

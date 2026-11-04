@@ -143,17 +143,23 @@ function _finish_summary_records!(stats, records, n_peptides)
         end
         s = stats[records[first].run]
         s.peptides_identified = count(seen)
-        s.medians = ntuple(7) do metric
-            empty!(values)
-            for i in first:last
-                r = records[i]
-                r.valid & (UInt32(1) << (metric-1)) == 0 || push!(values, r.values[metric])
-            end
-            isempty(values) ? missing : median!(values)
-        end
+        s.medians = _summary_medians!(values, records, first, last)
         first = last + 1
     end
     return nothing
+end
+
+# Per-metric medians of records[lo:hi]. A separate function so the closure captures arguments,
+# not the caller's reassigned loop variables (which would be boxed).
+function _summary_medians!(values::Vector{Float32}, records::Vector{RunSummaryRecord}, lo::Int, hi::Int)
+    return ntuple(7) do metric
+        empty!(values)
+        for i in lo:hi
+            r = records[i]
+            r.valid & (UInt32(1) << (metric-1)) == 0 || push!(values, r.values[metric])
+        end
+        isempty(values) ? missing : median!(values)
+    end
 end
 
 function _finish_summary_partition!(stats, path, depth, n_peptides, budget)
