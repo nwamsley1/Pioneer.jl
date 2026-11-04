@@ -1,6 +1,6 @@
 <img src="figures/PIONEER_LOGO.svg" align="right" width="200px"/>
 
-# Pioneer: Fast and Scalable Analysis of Bottom-up Protein Mass Spectrometry Data
+# Pioneer: Fast and Scalable Analysis of Protein Mass Spectrometry Data
 
 [![License: WashU non-commercial](https://img.shields.io/badge/License-WashU%20non--commercial-blue)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-stable-blue)](https://nwamsley1.github.io/Pioneer.jl/docs/stable/)
