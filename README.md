@@ -9,7 +9,7 @@
 [![Main branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=main&label=Main%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Amain)
 [![Develop branch tests](https://img.shields.io/github/actions/workflow/status/nwamsley1/Pioneer.jl/tests.yml?branch=develop&label=Develop%20tests)](https://github.com/nwamsley1/Pioneer.jl/actions/workflows/tests.yml?query=branch%3Adevelop)
 [![Coverage](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/develop/graph/badge.svg)](https://codecov.io/gh/nwamsley1/Pioneer.jl/branch/develop)
-[![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.02.16.706201v3-B31B1B)](https://www.biorxiv.org/content/10.64898/2026.02.16.706201v3)
+[![bioRxiv](https://img.shields.io/badge/bioRxiv-2026.02.16.706201-B31B1B)](https://www.biorxiv.org/content/10.64898/2026.02.16.706201)
 
 Pioneer is a fast and scalable solution for the analysis of protein mass spectrometry data. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo Fisher, Sciex, and Bruker instruments and for building in silico spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Pre-built libraries for several proteomes are downloadable through Pioneer. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data. 
 
@@ -21,7 +21,7 @@ The latest Pioneer manuscript is available on bioRxiv:
 
 *Pioneer and Altimeter: Fast Analysis of DIA Proteomics Data Optimized for Narrow Isolation Windows*. bioRxiv (2026).
 
-[https://www.biorxiv.org/content/10.64898/2026.02.16.706201v3](https://www.biorxiv.org/content/10.64898/2026.02.16.706201v3)
+[https://www.biorxiv.org/content/10.64898/2026.02.16.706201](https://www.biorxiv.org/content/10.64898/2026.02.16.706201)
 
 ## Features
 
@@ -54,12 +54,6 @@ pioneer --help
 ```
 
 See the [Installation Guide](https://nwamsley1.github.io/Pioneer.jl/docs/stable/user_guide/installation/) for Docker, development setup, and more details.
-
-## Regression Tests
-
-Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers end-to-end searches on real datasets and the results are published as browsable reports.
-
-**[Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/)**
 
 ## Labs
 Pioneer is developed in the [Major Lab](https://majorlab.wustl.edu/) and [Goldfarb Lab](https://goldfarblab.wustl.edu/) at Washington University in St. Louis.
