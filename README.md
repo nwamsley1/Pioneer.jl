@@ -41,6 +41,10 @@ Pioneer is a fast and scalable solution for the analysis of protein mass spectro
 - **Deep Proteome Coverage:** Pioneer achieves high sensitivity and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.
 - **FDR Control and Regression Testing:** Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers end-to-end searches on the benchmark datasets, and entrapment analyses check that the reported false discovery rate (FDR) holds. **[Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/)**.
 
+<p align="center">
+  <img src="figures/gui_searchdia.png" alt="The Pioneer graphical interface, SearchDIA screen" width="800">
+</p>
+
 ## Paper
 
 The latest Pioneer manuscript is available on bioRxiv:
