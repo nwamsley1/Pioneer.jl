@@ -42,8 +42,6 @@ Pioneer is a fast and scalable solution for the analysis of protein mass spectro
 
 ## Graphical User Interface
 
-Releases include a graphical user interface for converting raw files, building or downloading spectral libraries, and running searches.
-
 <p align="center">
   <img src="figures/gui_searchdia.png" alt="The Pioneer graphical interface, SearchDIA screen" width="800">
 </p>
