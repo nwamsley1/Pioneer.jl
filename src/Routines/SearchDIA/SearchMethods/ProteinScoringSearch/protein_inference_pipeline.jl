@@ -1535,9 +1535,7 @@ function group_psms_by_protein(
         common_peptides = sort!(unique!(UInt32.(gdf.sequence_id[common_mask])))
         n_common_peptides = length(common_peptides)
 
-        # One row per group as a NamedTuple (a one-row DataFrame per group costs ~10x more);
-        # the two list cells are wrapped in Ref here and unwrapped after combine.
-        (
+        DataFrame(
             species = species,
             n_peptides = n_peptides,
             n_common_peptides = n_common_peptides,
@@ -1547,8 +1545,8 @@ function group_psms_by_protein(
                 mbr_summary.non_mbr_peptides == 1 ?
                 precursor_consensus_prefix_shape :
                 0.0f0,
-            peptide_list = Ref(rollup.peptide_list),
-            common_peptide_list = Ref(common_peptides),
+            peptide_list = [rollup.peptide_list],
+            common_peptide_list = [common_peptides],
             pg_score = pg_score,
             any_common_peps = n_common_peptides > 0,
             top_pep_peak_area = top_pep_peak_area,
@@ -1557,9 +1555,6 @@ function group_psms_by_protein(
             mbr_only_protein = mbr_summary.only_protein
         )
     end
-
-    protein_groups.peptide_list = [r[] for r in protein_groups.peptide_list]
-    protein_groups.common_peptide_list = [r[] for r in protein_groups.common_peptide_list]
 
     # Rename the grouping column
     rename!(protein_groups, :inferred_protein_group => :protein_name)

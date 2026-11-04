@@ -163,46 +163,46 @@ function _normalize_reverse_spec(reverse::Union{Bool,Vector{Bool}}, n_keys::Int)
 end
 
 """
-Compare two heap entries `(key1, ..., keyN, table_idx)` with a per-key direction (`rev[i]`):
-true when `a` sorts first. Recursion over the tuples keeps every comparison type-stable.
+Compare two tuples with mixed reverse directions for each key.
 """
-@inline _mixed_reverse_lt(a::Tuple, b::Tuple, rev::NTuple{N, Bool}) where {N} =
-    _mixed_reverse_lt_keys(Base.front(a), Base.front(b), rev, a[end] < b[end])
+function _mixed_reverse_compare(a, b, reverse_vec::Vector{Bool})
+    # Compare each sort key according to its reverse setting
+    for i in 1:(length(a)-1)  # -1 to skip table_idx (last element)
+        val_a, val_b = a[i], b[i]
+        isequal(val_a, val_b) && continue
 
-@inline _mixed_reverse_lt_keys(::Tuple{}, ::Tuple{}, ::Tuple{}, tie::Bool) = tie
-@inline function _mixed_reverse_lt_keys(a::Tuple, b::Tuple, rev::Tuple, tie::Bool)
-    x, y = first(a), first(b)
-    # `isless` provides a total order for `missing`, unlike `<`/`>`, which
-    # return `missing`. This keeps mixed-direction merges consistent with
-    # Julia/DataFrames sorting: missing values are last for ascending keys
-    # and first for descending keys.
-    isequal(x, y) || return first(rev) ? isless(y, x) : isless(x, y)
-    # All earlier keys equal: compare the next one; all equal: table_idx (always ascending)
-    return _mixed_reverse_lt_keys(Base.tail(a), Base.tail(b), Base.tail(rev), tie)
+        # `isless` provides a total order for `missing`, unlike `<`/`>`, which
+        # return `missing`. This keeps mixed-direction merges consistent with
+        # Julia/DataFrames sorting: missing values are last for ascending keys
+        # and first for descending keys.
+        return reverse_vec[i] ? isless(val_b, val_a) : isless(val_a, val_b)
+    end
+    # All sort keys are equal, use table_idx as tiebreaker (always ascending)
+    return a[end] < b[end]
 end
 
 """
 Generate heap type dynamically based on sort types and reverse specification.
 Supports mixed reverse directions for different keys.
 """
-function _create_typed_heap(::Type{SortTypes}, rev::NTuple{N, Bool}) where {SortTypes, N}
-    if N == 1
+function _create_typed_heap(::Type{SortTypes}, reverse_vec::Vector{Bool}) where SortTypes
+    if length(reverse_vec) == 1
         # Single key - use simple min/max heap
-        if rev[1]
+        if reverse_vec[1]
             return BinaryMaxHeap{SortTypes}()
         else
             return BinaryMinHeap{SortTypes}()
         end
-    elseif all(rev)
+    elseif all(reverse_vec)
         # All keys reversed - use max heap
         return BinaryMaxHeap{SortTypes}()
-    elseif !any(rev)
+    elseif !any(reverse_vec)
         # No keys reversed - use min heap
         return BinaryMinHeap{SortTypes}()
     else
         # Mixed reverse directions - use custom comparison with BinaryHeap
         # Create comparison function that returns true if a < b in our desired order
-        comp_func = (a, b) -> _mixed_reverse_lt(a, b, rev)
+        comp_func = (a, b) -> _mixed_reverse_compare(a, b, reverse_vec)
         ordering = Lt(comp_func)
         return BinaryHeap(ordering, SortTypes[])
     end
@@ -479,7 +479,7 @@ function stream_sorted_merge(
     # written, so callers can delete or replace them straight away.
     return with_arrow_tables() do open_table
         _stream_sorted_merge_nkey_impl(
-            refs, output_path, sort_keys_tuple, Tuple{sort_types..., Int64}, reverse_vec, batch_size, open_table
+            refs, output_path, sort_keys_tuple, sort_types, reverse_vec, batch_size, open_table
         )
     end
 end
@@ -491,11 +491,11 @@ function _stream_sorted_merge_nkey_impl(
     refs::Vector{<:FileReference},
     output_path::String,
     sort_keys::NTuple{N,Symbol},
-    ::Type{HT},           # heap entry type: Tuple{key types..., Int64} (a type parameter, so the heap is inferred)
+    sort_types::NTuple{M,Type},
     reverse_vec::Vector{Bool},
     batch_size::Int,
     open_table = Arrow.Table
-) where {N, HT}
+) where {N, M}
     started = last_progress = time()
     # Validate all files exist and have compatible schemas
     for ref in refs
@@ -531,7 +531,8 @@ function _stream_sorted_merge_nkey_impl(
     sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, batch_size)
     
     # Create heap with full type information
-    heap = _create_typed_heap(HT, ntuple(i -> reverse_vec[i], Val(N)))
+    heap_tuple_type = Tuple{sort_types..., Int64}
+    heap = _create_typed_heap(heap_tuple_type, reverse_vec)
     
     # Initialize heap with first row from each table
     for (i, table) in enumerate(tables)
@@ -650,7 +651,7 @@ function stream_sorted_merge_chunked(
     # The sources are unmapped once every chunk is written.
     return with_arrow_tables() do open_table
         _stream_sorted_merge_chunked_impl(
-            refs, output_dir, group_key, sort_keys_tuple, Tuple{sort_types..., Int64},
+            refs, output_dir, group_key, sort_keys_tuple, sort_types,
             reverse_vec, batch_size, max_chunk_bytes, open_table
         )
     end
@@ -661,12 +662,12 @@ function _stream_sorted_merge_chunked_impl(
     output_dir::String,
     group_key::Symbol,
     sort_keys::NTuple{N,Symbol},
-    ::Type{HT},           # heap entry type: Tuple{key types..., Int64} (a type parameter, so the heap is inferred)
+    sort_types::NTuple{M,Type},
     reverse_vec::Vector{Bool},
     batch_size::Int,
     max_chunk_bytes::Int,
     open_table = Arrow.Table
-) where {N, HT}
+) where {N, M}
     # Validate
     for ref in refs
         validate_exists(ref)
@@ -695,7 +696,8 @@ function _stream_sorted_merge_chunked_impl(
     batch_df = create_typed_dataframe(first(tables), batch_size)
     sorted_tuples = Vector{Tuple{Int64, Int64}}(undef, batch_size)
 
-    heap = _create_typed_heap(HT, ntuple(i -> reverse_vec[i], Val(N)))
+    heap_tuple_type = Tuple{sort_types..., Int64}
+    heap = _create_typed_heap(heap_tuple_type, reverse_vec)
 
     for (i, table) in enumerate(tables)
         if table_sizes[i] > 0

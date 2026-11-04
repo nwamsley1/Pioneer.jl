@@ -133,24 +133,21 @@ function with_sorted_score_groups(consume, produce;
             empty!(scores); empty!(labels)
             stage(path)
         end
-        # Refs, not reassigned locals: the closure below runs once per score, and a captured
-        # variable it reassigns would be boxed.
-        rows = Ref(0)
-        started = time()
-        last_log = Ref(started)
+        rows = 0
+        started = last_log = time()
         produce() do score, target
             push!(scores, _score_key(score)); push!(labels, Bool(target))
-            rows[] += 1
+            rows += 1
             if length(scores) == capacity
                 flush_chunk()
-                if time() - last_log[] >= 60
-                    @debug_l1 "Score grouping: rows=$(rows[]) chunks=$counter elapsed=$(round(time()-started, digits=2))s"
-                    last_log[] = time()
+                if time() - last_log >= 60
+                    @debug_l1 "Score grouping: rows=$rows chunks=$counter elapsed=$(round(time()-started, digits=2))s"
+                    last_log = time()
                 end
             end
         end
         if isempty(levels)
-            @debug_l1 "Score grouping in memory: rows=$(rows[]) budget_bytes=$memory_budget_bytes"
+            @debug_l1 "Score grouping in memory: rows=$rows budget_bytes=$memory_budget_bytes"
             return consume(visit -> _visit_sorted_groups(visit, scores, labels))
         end
         !isempty(scores) && flush_chunk()

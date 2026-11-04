@@ -416,8 +416,22 @@ function build_mbr_receiver_run_clusters(
                 )
             end
         end
-        _add_mbr_intensity_postings!(intensity_postings, tbl.precursor_idx, tbl.ms_file_idx,
-                                     tbl.qval, tbl.weight, q_value_threshold)
+        @inbounds for row in eachindex(tbl.precursor_idx)
+            file_idx = UInt32(tbl.ms_file_idx[row])
+            qval = Float32(tbl.qval[row])
+            isfinite(qval) && qval <= q_value_threshold || continue
+            precursor_idx = UInt32(tbl.precursor_idx[row])
+            weight = Float32(tbl.weight[row])
+            isfinite(weight) && weight > 0.0f0 || continue
+            push!(
+                get!(
+                    () -> _MBRIntensityPosting[],
+                    intensity_postings,
+                    precursor_idx,
+                ),
+                _MBRIntensityPosting(file_idx, log2(weight)),
+            )
+        end
     end
 
     file_ids = sort!(collect(file_ids))
@@ -484,27 +498,4 @@ end
         peer_count = Float32(peer_count),
         support_fraction = Float32(support_count) / Float32(peer_count),
     )
-end
-
-# Per-row body of the receiver-cluster intensity postings (a function barrier: the Arrow columns
-# are untyped).
-function _add_mbr_intensity_postings!(intensity_postings, precursor_idxs, file_idxs, qvals, weights,
-                                      q_value_threshold)
-    @inbounds for row in eachindex(precursor_idxs)
-        file_idx = UInt32(file_idxs[row])
-        qval = Float32(qvals[row])
-        isfinite(qval) && qval <= q_value_threshold || continue
-        precursor_idx = UInt32(precursor_idxs[row])
-        weight = Float32(weights[row])
-        isfinite(weight) && weight > 0.0f0 || continue
-        push!(
-            get!(
-                () -> _MBRIntensityPosting[],
-                intensity_postings,
-                precursor_idx,
-            ),
-            _MBRIntensityPosting(file_idx, log2(weight)),
-        )
-    end
-    return nothing
 end
