@@ -35,7 +35,7 @@ The latest Pioneer manuscript is available on bioRxiv:
 
 ## License 
 
-Licenses for commercial, human subjects, or clinical use are freely available upon request. Please contact Washington University's Office of Technology Management to request a license agreement: otm@wustl.edu. 
+Licenses for commercial, human subjects, or clinical use are available upon request. Please contact Washington University's Office of Technology Management to request a license agreement: otm@wustl.edu. 
 
 ## Installation
 
