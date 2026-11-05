@@ -368,12 +368,10 @@ function summarize_results!(
     if params.delete_temp
         @user_info "Removing temporary data..."
         temp_path = joinpath(getDataOutDir(search_context), "temp_data")
-        GC.gc()
-        try
-            isdir(temp_path) && rm(temp_path; recursive=true, force=true)
-        catch e
-            @debug_l1 "Could not fully remove temp_data (likely lingering file handles): $e"
-        end
+        failed = remove_temp_data(temp_path)
+        isempty(failed) || @user_warn "Could not remove $(length(failed)) item(s) in $temp_path " *
+            "(still open?): $(join(basename.(first(failed, 5)), ", "))$(length(failed) > 5 ? ", ..." : ""). " *
+            "They are not needed; delete the folder after Pioneer exits."
     end
 
     return nothing
