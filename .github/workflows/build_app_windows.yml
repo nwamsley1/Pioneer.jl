@@ -217,11 +217,13 @@ jobs:
         run: |
           Copy-Item src\build\CLI\pioneer.bat build\Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
 
-      - name: Write bundled version
+      - name: Write bundled version and license
         shell: pwsh
         run: |
           Set-Content -Path "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\VERSION" `
                       -Value "${{ steps.get_version.outputs.version }}"
+          # The license must ship with every copy; `pioneer --license` prints this file.
+          Copy-Item LICENSE "build\Pioneer_${{ matrix.identifier }}\Applications\Pioneer\LICENSE"
 
       - name: Pre-download artifacts
         shell: pwsh

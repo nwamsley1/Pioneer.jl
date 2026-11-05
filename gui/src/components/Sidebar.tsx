@@ -13,6 +13,7 @@ import {
   type UninstallInfo,
 } from '../lib/backend'
 import { InfoDot } from './InfoDot'
+import { LicenseModal } from './LicenseModal'
 import { TITLEBAR_H } from '../lib/styles'
 import { THEMES, type ThemeId } from '../lib/theme'
 import type { CommandId, Job } from '../lib/types'
@@ -174,6 +175,7 @@ function SettingsPanel({
   onUninstall: () => void
 }) {
   const [dir, setDir] = useState(defaultDir())
+  const [showLicense, setShowLicense] = useState(false)
   const heading: React.CSSProperties = {
     fontSize: 10,
     fontWeight: 700,
@@ -275,6 +277,21 @@ function SettingsPanel({
           )
         })}
       </div>
+
+      <div style={{ ...heading, marginTop: 15 }}>License</div>
+      <div style={{ fontSize: 11.5, color: 'var(--pio-nav-fg-dim)', lineHeight: 1.45 }}>
+        &copy;2026 Washington University. Licensed for non-commercial, non-clinical research use not
+        involving human subjects.
+      </div>
+      <button
+        type="button"
+        className="pio-ghost"
+        onClick={() => setShowLicense(true)}
+        style={{ ...panelBtn, marginTop: 8 }}
+      >
+        View license
+      </button>
+      {showLicense && <LicenseModal onClose={() => setShowLicense(false)} />}
 
       {uninstall?.available && (
         <div

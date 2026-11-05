@@ -171,11 +171,13 @@ jobs:
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/
           chmod +x build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/pioneer
 
-      - name: Write bundled version
+      - name: Write bundled version and license
         shell: bash
         run: |
           echo "${{ steps.get_version.outputs.version }}" > \
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
+          # The license must ship with every copy; `pioneer --license` prints this file.
+          cp LICENSE build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/LICENSE
 
       - name: Pre-download artifacts
         shell: bash
@@ -296,6 +298,9 @@ jobs:
           DESCRIPTION=$(jq -r '.description' $info)
           DEB_VERSION='${{ steps.norm.outputs.deb }}'
           ALT_PRIORITY='${{ steps.norm.outputs.alt_priority }}'
+
+          # Debian's standard place for a package's license terms.
+          install -Dm644 LICENSE "deb/usr/share/doc/$PACKAGE/copyright"
 
           mkdir -p deb/DEBIAN
           cat <<EOF > deb/DEBIAN/control
