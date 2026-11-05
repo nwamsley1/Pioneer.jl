@@ -8,6 +8,8 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // The license text is imported from the repository root (../LICENSE).
+    fs: { allow: ['..'] },
   },
   build: {
     target: 'safari14',

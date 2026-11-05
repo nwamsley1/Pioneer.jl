@@ -40,6 +40,7 @@ if "%~1"=="--threads" (
 )
 for %%H in (--help -h -help /?) do if /I "%~1"=="%%H" goto handle_help
 for %%V in (--version -V) do if /I "%~1"=="%%V" goto handle_version
+if /I "%~1"=="--license" goto handle_license
 
 rem Check for --threads=value format
 echo %~1 | findstr /C:"--threads=" >nul
@@ -116,6 +117,7 @@ echo   --threads N        Set number of Julia threads (default: auto)
 echo   --threads=N        Alternative syntax for setting threads
 echo   --help, -h         Show this help message
 echo   --version, -V      Show Pioneer version
+echo   --license          Show the license
 echo.
 echo Subcommands:
 echo   search ^<params.json^>                       Perform DIA search analysis
@@ -149,6 +151,8 @@ echo   pioneer --threads=8 search search_params.json        # Use 8 threads
 echo.
 echo For subcommand-specific help:
 echo   pioneer ^<subcommand^> --help
+echo.
+call :license_notice
 exit /b 0
 
 :handle_version
@@ -166,6 +170,39 @@ if "%SUBCOMMAND%"=="" (
 
 :show_version
 echo Pioneer version: %PIONEER_VERSION%
+call :license_notice
+exit /b 0
+
+:handle_license
+if "%SUBCOMMAND%"=="" (
+    goto show_license
+) else (
+    if "%SUBCOMMAND_ARGS%"=="" (
+        set SUBCOMMAND_ARGS=%~1
+    ) else (
+        set SUBCOMMAND_ARGS=%SUBCOMMAND_ARGS% %~1
+    )
+    shift
+    goto parse_args
+)
+
+:show_license
+rem Installed builds ship LICENSE next to this script; a source checkout has it at the repo root.
+if exist "%SCRIPT_DIR%LICENSE" (
+    type "%SCRIPT_DIR%LICENSE"
+    exit /b 0
+)
+if exist "%SCRIPT_DIR%..\..\..\LICENSE" (
+    type "%SCRIPT_DIR%..\..\..\LICENSE"
+    exit /b 0
+)
+call :license_notice
+echo The LICENSE file was not found next to this installation.
+exit /b 1
+
+:license_notice
+echo Copyright 2026 Washington University. Licensed for non-commercial, non-clinical research
+echo use not involving human subjects. Run 'pioneer --license' for the full terms.
 exit /b 0
 
 :check_subcommand

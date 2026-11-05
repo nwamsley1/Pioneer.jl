@@ -43,6 +43,9 @@ get_pioneer_version() {
 SCRIPT_DIR="$(resolve_script_dir "$0")"
 PIONEER_VERSION="$(get_pioneer_version)"
 
+LICENSE_NOTICE="Copyright 2026 Washington University. Licensed for non-commercial, non-clinical research
+use not involving human subjects. Run 'pioneer --license' for the full terms."
+
 # Set default threads to auto if not specified
 if [ -z "$JULIA_NUM_THREADS" ]; then
     export JULIA_NUM_THREADS=auto
@@ -63,6 +66,7 @@ show_help() {
     echo "  --threads=N        Alternative syntax for setting threads"
     echo "  --help, -h         Show this help message"
     echo "  --version, -V      Show Pioneer version"
+    echo "  --license          Show the license"
     echo ""
     echo "Subcommands:"
     echo "  search <params.json>                        Perform DIA search analysis"
@@ -97,10 +101,27 @@ show_help() {
     echo ""
     echo "For subcommand-specific help:"
     echo "  pioneer <subcommand> --help"
+    echo ""
+    echo "$LICENSE_NOTICE"
 }
 
 show_version() {
     echo "Pioneer version: $PIONEER_VERSION"
+    echo "$LICENSE_NOTICE"
+}
+
+show_license() {
+    # Installed builds ship LICENSE next to this script; a source checkout has it at the repo root.
+    local candidate
+    for candidate in "$SCRIPT_DIR/LICENSE" "$SCRIPT_DIR/../../../LICENSE"; do
+        if [ -f "$candidate" ]; then
+            cat "$candidate"
+            return 0
+        fi
+    done
+    echo "$LICENSE_NOTICE"
+    echo "The LICENSE file was not found next to this installation."
+    return 1
 }
 # Parse command line arguments for thread override
 SUBCOMMAND=""
@@ -125,6 +146,15 @@ while [[ $# -gt 0 ]]; do
             if [[ -z "$SUBCOMMAND" ]]; then
                 show_help
                 exit 0
+            else
+                SUBCOMMAND_ARGS+=("$1")
+                shift
+            fi
+            ;;
+        --license)
+            if [[ -z "$SUBCOMMAND" ]]; then
+                show_license
+                exit $?
             else
                 SUBCOMMAND_ARGS+=("$1")
                 shift

@@ -264,11 +264,13 @@ jobs:
           mkdir -p "$DIST/data"
           cp -R assets/* "$DIST/data/" || true
 
-      - name: Write bundled version
+      - name: Write bundled version and license
         shell: bash
         run: |
           echo "${{ steps.get_version.outputs.version }}" > \
             build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/VERSION
+          # The license must ship with every copy; `pioneer --license` prints this file.
+          cp LICENSE build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/LICENSE
 
       # ---- GUI (gui/) -------------------------------------------------
       # The desktop front end is a Tauri app built from source in this repo. It
@@ -426,7 +428,40 @@ jobs:
                   --identifier "$IDENTIFIER" \
                   --version "$VERSION" \
                   --scripts "$PKG_SCRIPTS" \
-                  --install-location / PioneerUnsigned.pkg
+                  --install-location / PioneerComponent.pkg
+
+          # Wrap the component in a distribution package so Installer shows the
+          # license and asks the user to agree before installing. The command-line
+          # `installer` used in CI accepts it without prompting. hostArchitectures
+          # lists both so neither build asks for Rosetta just to install.
+          rm -rf pkg-resources
+          mkdir -p pkg-resources
+          # Same RTF as the Windows installer: escaped, so the quotes and © render correctly.
+          cp src/build/windows/LICENSE.rtf pkg-resources/LICENSE.rtf
+          cat <<EOF > distribution.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <installer-gui-script minSpecVersion="2">
+            <title>Pioneer $RAW_VERSION</title>
+            <license file="LICENSE.rtf"/>
+            <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+            <domains enable_localSystem="true" enable_anywhere="false" enable_currentUserHome="false"/>
+            <choices-outline>
+              <line choice="default">
+                <line choice="$IDENTIFIER"/>
+              </line>
+            </choices-outline>
+            <choice id="default"/>
+            <choice id="$IDENTIFIER" visible="false">
+              <pkg-ref id="$IDENTIFIER"/>
+            </choice>
+            <pkg-ref id="$IDENTIFIER" version="$VERSION" onConclusion="none">PioneerComponent.pkg</pkg-ref>
+          </installer-gui-script>
+          EOF
+          productbuild --distribution distribution.xml \
+                       --resources pkg-resources \
+                       --package-path . \
+                       PioneerUnsigned.pkg
+          rm PioneerComponent.pkg
 
           productsign --sign "$PKG_SIGN_IDENTITY" \
                       PioneerUnsigned.pkg \
