@@ -46,6 +46,7 @@ include("./UnitTests/test_gc_sweep_check.jl")
 # FDR/q-value utilities
 include("./UnitTests/test_fdr_utilities.jl")
 include("./UnitTests/test_score_groups.jl")
+include("./UnitTests/test_remove_temp_data.jl")
 
 # Scanning-quad (ZT) meta-scan expansion + collapse
 include("./UnitTests/test_zt_expand_to_metascans.jl")
