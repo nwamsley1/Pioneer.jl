@@ -2,6 +2,7 @@ mod history;
 mod paths;
 mod pioneer;
 mod runner;
+mod storage;
 mod uninstall;
 
 use std::path::PathBuf;
@@ -98,6 +99,14 @@ async fn uninstall_this_version(app: AppHandle, state: State<'_, AppState>) -> R
 #[tauri::command]
 fn inspect_path(path: String) -> paths::PathInfo {
     paths::inspect(&path)
+}
+
+/// What kind of drive each path is on ("ssd", "hdd", "optical", "network", "unknown"),
+/// so a search can ask before reading MS data from a mechanical or optical drive.
+/// Off the main thread: the probe shells out (PowerShell on Windows can take a second).
+#[tauri::command]
+async fn storage_kinds(paths: Vec<String>) -> Vec<storage::StorageInfo> {
+    tauri::async_runtime::spawn_blocking(move || storage::kinds(&paths)).await.unwrap_or_default()
 }
 
 /// The `.arrow` files in a folder, for a search that fans out one run per file.
@@ -270,6 +279,7 @@ pub fn run() {
             uninstall_info,
             uninstall_this_version,
             inspect_path,
+            storage_kinds,
             list_arrow_files,
             stage_files,
             read_config,
