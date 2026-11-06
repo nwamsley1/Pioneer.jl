@@ -48,8 +48,8 @@ function storage_kind(path::AbstractString)::Symbol
     return :unknown
 end
 
-"Whether searching data on `kind` storage should be warned about (mechanical and optical drives)."
-storage_is_slow(kind::Symbol) = kind === :hdd || kind === :optical
+"Whether searching data on `kind` storage should be warned about (mechanical and optical drives, network shares)."
+storage_is_slow(kind::Symbol) = kind === :hdd || kind === :optical || kind === :network
 
 "Run `cmd` and return its stdout, or `nothing` if it fails or takes longer than `timeout` seconds."
 function _read_with_timeout(cmd::Cmd; timeout::Real = STORAGE_PROBE_TIMEOUT_S)
@@ -71,8 +71,16 @@ end
 
 # ── Linux ────────────────────────────────────────────────────────────────────
 
-const _LINUX_NETWORK_FS = ("nfs", "nfs4", "cifs", "smb3", "smbfs", "sshfs", "fuse.sshfs", "9p", "afs",
-                           "glusterfs", "fuse.glusterfs", "ceph", "lustre", "gpfs", "beegfs", "fuse.s3fs")
+const _LINUX_NETWORK_FS = ("nfs", "nfs4", "cifs", "smb3", "smbfs", "sshfs", "fuse.sshfs", "9p", "afs", "fuse.s3fs")
+# Cluster filesystems are fast enough for searching (RIS runs on GPFS), so they are not judged.
+const _LINUX_CLUSTER_FS = ("glusterfs", "fuse.glusterfs", "ceph", "lustre", "gpfs", "beegfs")
+
+"Kind of a Linux mount from its filesystem type and source, or `nothing` when the block device decides."
+function _linux_fs_kind(fstype::AbstractString, source::AbstractString)
+    fstype in _LINUX_CLUSTER_FS && return :unknown
+    (fstype in _LINUX_NETWORK_FS || startswith(source, "//")) && return :network
+    return nothing
+end
 
 "Unescape a mountinfo field (`\\040` for a space and the like)."
 _unescape_mountinfo(s::AbstractString) = replace(s, r"\\([0-7]{3})" => m -> string(Char(parse(Int, m[2:end]; base = 8))))
@@ -136,8 +144,8 @@ _linux_minor(dev::UInt64) = Int((dev & 0xff) | ((dev >> 12) & ~UInt64(0xff)))
 function _storage_kind_linux(p::String)::Symbol
     mount = isfile("/proc/self/mountinfo") ? _linux_mount_for(p, read("/proc/self/mountinfo", String)) : nothing
     if mount !== nothing
-        fstype, source = mount
-        (fstype in _LINUX_NETWORK_FS || startswith(source, "//")) && return :network
+        kind = _linux_fs_kind(mount...)
+        kind === nothing || return kind
     end
     dev = UInt64(stat(p).device)
     major, minor = _linux_major(dev), _linux_minor(dev)
@@ -233,7 +241,7 @@ end
     slow_storage_paths(paths) -> Vector{Tuple{String, Symbol}}
 
 `(path, kind)` for one representative path per volume among `paths` whose volume is a mechanical or optical
-drive. Symlinks are resolved first, so a folder of links is judged by where the files really are.
+drive or a network share. Symlinks are resolved first, so a folder of links is judged by where the files really are.
 """
 function slow_storage_paths(paths::AbstractVector{<:AbstractString})
     seen = Dict{Any, Symbol}()
@@ -256,7 +264,7 @@ end
     warn_slow_storage(ms_paths, library_dir, results_dir)
 
 Warn (never fail) when the MS data files, the spectral library or the output folder are on a mechanical or
-optical drive. The output folder matters as much as the inputs: a search writes and re-reads large temporary
+optical drive or a network share. The output folder matters as much as the inputs: a search writes and re-reads large temporary
 files there.
 """
 function warn_slow_storage(ms_paths::AbstractVector{<:AbstractString}, library_dir::AbstractString,

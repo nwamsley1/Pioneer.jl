@@ -122,10 +122,24 @@ fn macos_plist_kind(plist: &str) -> &'static str {
 // ── Linux ──────────────────────────────────────────────────────────────────
 
 #[allow(dead_code)]
-const LINUX_NETWORK_FS: &[&str] = &[
-    "nfs", "nfs4", "cifs", "smb3", "smbfs", "sshfs", "fuse.sshfs", "9p", "afs", "glusterfs",
-    "fuse.glusterfs", "ceph", "lustre", "gpfs", "beegfs", "fuse.s3fs",
-];
+const LINUX_NETWORK_FS: &[&str] =
+    &["nfs", "nfs4", "cifs", "smb3", "smbfs", "sshfs", "fuse.sshfs", "9p", "afs", "fuse.s3fs"];
+
+/// Cluster filesystems are fast enough for searching (RIS runs on GPFS), so they are not judged.
+#[allow(dead_code)]
+const LINUX_CLUSTER_FS: &[&str] = &["glusterfs", "fuse.glusterfs", "ceph", "lustre", "gpfs", "beegfs"];
+
+/// Kind of a Linux mount from its filesystem type and source, or None when the block device decides.
+#[allow(dead_code)]
+fn linux_fs_kind(fs: &str, src: &str) -> Option<&'static str> {
+    if LINUX_CLUSTER_FS.contains(&fs) {
+        return Some("unknown");
+    }
+    if LINUX_NETWORK_FS.contains(&fs) || src.starts_with("//") {
+        return Some("network");
+    }
+    None
+}
 
 /// Undo mountinfo's octal escapes (`\040` for a space).
 #[allow(dead_code)]
@@ -206,10 +220,8 @@ fn kind_of(p: &Path) -> &'static str {
     use std::os::unix::fs::MetadataExt;
     let path = p.to_string_lossy();
     let mount = std::fs::read_to_string("/proc/self/mountinfo").ok().and_then(|mi| linux_mount_for(&path, &mi));
-    if let Some((fs, src)) = &mount {
-        if LINUX_NETWORK_FS.contains(&fs.as_str()) || src.starts_with("//") {
-            return "network";
-        }
+    if let Some(kind) = mount.as_ref().and_then(|(fs, src)| linux_fs_kind(fs, src)) {
+        return kind;
     }
     let major_minor = |dev: u64| (((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff), (dev & 0xff) | ((dev >> 12) & !0xff));
     let Ok(meta) = std::fs::metadata(p) else { return "unknown" };
@@ -281,6 +293,10 @@ mod tests {
         assert_eq!(windows_probe_kind("SSD"), "ssd");
         assert_eq!(windows_probe_kind("OPTICAL"), "optical");
         assert_eq!(windows_probe_kind("NETWORK"), "network");
+        assert_eq!(linux_fs_kind("nfs4", "server:/export"), Some("network"));
+        assert_eq!(linux_fs_kind("cifs", "//server/share"), Some("network"));
+        assert_eq!(linux_fs_kind("gpfs", "storage3"), Some("unknown"));
+        assert_eq!(linux_fs_kind("ext4", "/dev/sda1"), None);
         assert_eq!(windows_probe_kind("Unspecified"), "unknown");
     }
 

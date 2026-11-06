@@ -1793,7 +1793,7 @@ export default function App() {
     if (isSearch && !skipStorageCheck) {
       const msPaths = search.msDataMode === 'files' ? search.msDataFiles : [search.msData]
       void backend.storageKinds([...msPaths, search.library, search.results].filter((p) => p.trim())).then((infos) => {
-        const slow = infos.filter((i) => i.kind === 'hdd' || i.kind === 'optical')
+        const slow = infos.filter((i) => i.kind === 'hdd' || i.kind === 'optical' || i.kind === 'network')
         if (slow.length > 0) setSlowStorage(slow)
         else run(true, true)
       })

@@ -4,8 +4,13 @@ using Test
     # Live probe on whatever this machine is: must return a known symbol and never throw.
     @test Pioneer.storage_kind(@__DIR__) in Pioneer.STORAGE_KINDS
     @test Pioneer.storage_kind(joinpath(@__DIR__, "does_not_exist_$(rand(UInt32))")) === :unknown
-    @test !Pioneer.storage_is_slow(:ssd) && !Pioneer.storage_is_slow(:network) && !Pioneer.storage_is_slow(:unknown)
-    @test Pioneer.storage_is_slow(:hdd) && Pioneer.storage_is_slow(:optical)
+    @test !Pioneer.storage_is_slow(:ssd) && !Pioneer.storage_is_slow(:unknown)
+    @test Pioneer.storage_is_slow(:hdd) && Pioneer.storage_is_slow(:optical) && Pioneer.storage_is_slow(:network)
+    @test Pioneer._linux_fs_kind("nfs4", "server:/export") === :network
+    @test Pioneer._linux_fs_kind("cifs", "//server/share") === :network
+    @test Pioneer._linux_fs_kind("gpfs", "storage3") === :unknown
+    @test Pioneer._linux_fs_kind("lustre", "10.0.0.1@tcp:/fs") === :unknown
+    @test Pioneer._linux_fs_kind("ext4", "/dev/sda1") === nothing
 
     @testset "macOS diskutil plist" begin
         @test Pioneer._macos_plist_kind("<key>SolidState</key>\n\t<true/>") === :ssd
