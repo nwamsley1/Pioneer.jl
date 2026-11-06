@@ -216,7 +216,7 @@ function check_params_bsp(json_string::String)
     end
 
     # Check required top-level parameters
-    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "match_lib_build_batch", "fasta_paths", "fasta_names", "library_path", "predict_fragments", "include_contaminants"]
+    required_params = ["fasta_digest_params", "library_params", "variable_mods", "fixed_mods", "isotope_mod_groups", "fasta_paths", "fasta_names", "library_path", "predict_fragments", "include_contaminants"]
     for param in required_params
         check_param(params, param, param in ["predict_fragments", "include_contaminants"] ? Bool : Any)
     end

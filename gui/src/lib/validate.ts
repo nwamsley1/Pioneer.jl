@@ -44,14 +44,6 @@ export const NUM_SPECS: Record<string, NumSpec> = {
     int: true,
     info: 'How many isotope peaks of each fragment are considered when matching. Fragment, not precursor: the parameter is search.n_isotopes, flattened from search.fragment_settings. More costs time; 2 suits most data.',
   },
-  nce: {
-    label: 'Initial NCE',
-    min: 0,
-    max: 100,
-    step: 1,
-    int: false,
-    info: 'The starting guess for normalized collision energy. Pioneer refines it during the parameter tuning search, so it does not have to be exact — it only has to be close enough for tuning to converge.',
-  },
   minPeptides: {
     label: 'Min peptides',
     min: 1,
@@ -380,7 +372,6 @@ export function validateSearchRun(
     results: string
     qValue: string
     nIsotopes: string
-    nce: string
     minPeptides: string
   },
   notes: { msData: Note; library: Note; results: Note },
@@ -437,7 +428,7 @@ export function validateSearchRun(
   }
   if (notes.results.level === 'error') return { key: 'results', msg: notes.results.msg }
 
-  for (const key of ['qValue', 'nIsotopes', 'nce', 'minPeptides'] as const) {
+  for (const key of ['qValue', 'nIsotopes', 'minPeptides'] as const) {
     const err = numError(key, values[key])
     if (err) return { key, msg: `${NUM_SPECS[key].label}: ${err}.` }
   }

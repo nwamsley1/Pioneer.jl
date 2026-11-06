@@ -7,9 +7,6 @@
     },
 
     "_comment_acquisition": "Override per-instrument; nce is collision energy.",
-    "acquisition": {
-        "nce": 26
-    },
 
     "_comment_global": "match_between_runs toggles MBR features. q_value_threshold is the cutoff for the final FDR.",
     "global": {

@@ -88,8 +88,6 @@
         "prediction_model": "altimeter"
     },
     "comment_processing": "=== Processing settings ===",
-    "match_lib_build_batch": 100000,
     "include_contaminants": false,
-    "predict_fragments": true,
-    "max_koina_batch": 200
+    "predict_fragments": true
 }

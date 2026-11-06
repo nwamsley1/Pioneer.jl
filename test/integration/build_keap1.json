@@ -57,9 +57,6 @@
     "include_p_index": false,
     "include_p": false
   },
-  "max_koina_requests": 4,
-  "max_koina_batch": 1000,
-  "match_lib_build_batch": 100000,
   "library_path": "./test/integration/keap1_lib",
   "out_dir": "./test/integration",
   "lib_name": "keap1_lib",

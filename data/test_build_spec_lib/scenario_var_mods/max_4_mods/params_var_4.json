@@ -81,9 +81,6 @@
         "length_to_frag_count_multiple": 2.0
     },
     "comment_processing": "=== Processing settings ===",
-    "match_lib_build_batch": 100000,
     "include_contaminants": false,
-    "predict_fragments": true,
-    "max_koina_requests": 12,
-    "max_koina_batch": 50
+    "predict_fragments": true
 }
