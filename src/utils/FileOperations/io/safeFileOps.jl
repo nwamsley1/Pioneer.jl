@@ -158,3 +158,51 @@ _windows_name_gone(path::String) =
     end
 
 _windows_error_message(code::UInt32) = "DeleteFileW error $code: $(rstrip(strip(Libc.FormatMessage(code)), '.'))"
+
+const TEMP_DATA_RETRY_SECONDS = 1.0
+
+"""
+    remove_temp_data(temp_path; rm_entry) -> Vector{String}
+
+Delete a search's `temp_data` folder and return the paths that could not be removed
+(empty when it is gone).
+
+A single `rm(temp_path; recursive=true)` stops at the first entry it cannot delete.
+On NFS a file that is still open is renamed to `.nfsXXXX` instead of deleted, so its
+directory stays non-empty; the score calibrations' workspace (`jl_*`) sorts before
+`main_search_psms`, so every PSM table behind it was left on disk. Open calibrations
+are therefore closed first, each entry is removed on its own, and entries that still
+fail are retried once after garbage collection. `rm_entry` exists for tests.
+"""
+function remove_temp_data(temp_path::AbstractString;
+                          rm_entry = p -> rm(p; recursive=true, force=true))
+    isdir(temp_path) || return String[]
+    close_open_score_calibrations!()
+    GC.gc()
+    failed = String[]
+    for attempt in 1:2
+        empty!(failed)
+        for entry in readdir(temp_path; join=true)
+            try
+                rm_entry(entry)
+            catch e
+                @debug_l1 "temp_data: could not remove $entry (attempt $attempt): $e"
+                push!(failed, entry)
+            end
+        end
+        isempty(failed) && break
+        if attempt == 1
+            GC.gc(true)
+            sleep(TEMP_DATA_RETRY_SECONDS)
+        end
+    end
+    if isempty(failed)
+        try
+            rm_entry(temp_path)
+        catch e
+            @debug_l1 "temp_data: could not remove $temp_path: $e"
+            push!(failed, temp_path)
+        end
+    end
+    return failed
+end
