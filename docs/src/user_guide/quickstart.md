@@ -1,92 +1,125 @@
 # Quick Start Tutorial
 
-## Basic Workflow
-Pioneer performs three major steps:
-1. Convert vendor MS files into the Arrow format using [PioneerConverter](https://github.com/nwamsley1/PioneerConverter).
-2. Build in silico spectral libraries using FASTA files and the [Koina](https://koina.wilhelmlab.org/) server.
-3. Search DIA experiments using a spectral library and the MS data files.
+A Pioneer analysis has three steps: convert the raw files, get a spectral library, and search. Each step is a screen in the Pioneer app.
 
-## Pioneer Converter
-Pioneer operates on MS/MS data stored in the [Apache Arrow IPC format](https://arrow.apache.org/docs/python/ipc.html).
-Use the bundled [PioneerConverter](https://github.com/nwamsley1/PioneerConverter) via the CLI to convert Thermo RAW files:
+Open the app from Applications (macOS), the Start Menu (Windows), or the applications menu (Linux). The sidebar lists the screens:
 
-```bash
-pioneer convert-raw /path/to/raw/or/folder --output-dir /path/to/arrow --skip-existing
-```
+* **ConvertRAW:** convert vendor raw files (Thermo `.raw`, Bruker `.d`, SCIEX `.wiff`) or `.mzML` files into the format Pioneer searches.
+* **BuildSpecLib:** predict a spectral library from FASTA files.
+* **DownloadSpecLib:** download a prebuilt spectral library.
+* **SearchDIA:** identify and quantify peptides and proteins.
 
-This subcommand accepts either a single `.raw` file or a directory of files. Common options are `--output-dir`, `--skip-existing`, and `--threads-per-file`. For all options, run `pioneer convert-raw --help`.
+Started jobs appear under **Queue** while they run and under **History** when they finish. The version of Pioneer the app is using is shown at the bottom of the sidebar.
 
-## MzML to Arrow IPC (Sciex)
-For mzML-formatted data, use:
+## 1. Convert Raw Files
 
-```bash
-pioneer convert-mzml /path/to/mzml/or/folder
-```
+Pioneer searches converted files rather than the vendor formats. Open **ConvertRAW**:
 
-## Starting Pioneer
-After installation, Pioneer is accessed from the command line. Running `pioneer --help` displays available subcommands:
+![The ConvertRAW screen](../assets/gui/convertraw.png)
 
-```bash
-pioneer [options] <subcommand> [subcommand-args...]
-```
+1. Under **Format**, choose the data type: Thermo `.raw`, `.mzML`, Bruker `.d`, or SCIEX `.wiff`.
+2. Under **Input**, choose a folder of raw files, or individual files.
+3. Optionally choose an **Output folder**. By default the converted files go into an `arrow_out` folder inside the input folder.
+4. Click **Run ConvertRAW**.
 
-Subcommands include `search`, `predict`, `params-search`, `params-predict`, `convert-raw`, and `convert-mzml`. On the first launch macOS performs a one-time Gatekeeper check.
+Thermo and mzML files become `.arrow` files, Bruker runs become `.tdfs` files, and SCIEX runs become `.scxs` files. Turn on **Skip existing** to resume a conversion without redoing finished files.
 
-A minimal end-to-end workflow is:
+## 2. Get a Spectral Library
 
-```bash
-# Generate library build parameters (library name derived from output path)
-pioneer params-predict lib_dir fasta_dir --params-path=predict_params.json
+A spectral library holds the predicted fragment spectra and retention times of every peptide Pioneer searches for. Download a prebuilt library, or build one from FASTA files.
 
-# Edit predict_params.json to customize:
-# - Digestion parameters (missed cleavages, modifications, etc.)
-# - For multiple FASTA sources, edit fasta_paths array to include directories and/or files
-# - Set calibration file if available for automatic m/z range detection
+### Download a Prebuilt Library
 
-pioneer predict predict_params.json
-pioneer convert-raw raw_dir --output-dir arrow_dir --skip-existing
-pioneer params-search library.poin ms_data_dir results_dir --params-path=search_params.json
-pioneer search search_params.json
-```
+Open **DownloadSpecLib**:
 
-This sequence builds a predicted spectral library, converts vendor files to Arrow, generates search parameters, and searches the experiment.
+![The DownloadSpecLib screen](../assets/gui/downloadspeclib.png)
 
-!!! tip "Advanced FASTA Input"
-    The CLI takes a single path (file or directory). For multiple FASTA sources (directories and/or files),
-    edit the `fasta_paths` array in the generated JSON parameter file.
+1. Pick a library from **Available libraries**. Prebuilt libraries cover several model organisms and a human, yeast, and *E. coli* mix.
+2. Choose the folder to **Download into**.
+3. Click **Run DownloadSpecLib**.
 
-    When using the Julia API directly, you can specify mixed sources at creation:
-    ```julia
-    params = GetBuildLibParams(out_dir, lib_name,
-        ["/path/to/uniprot/", "/custom/proteins.fasta"])
-    ```
-    Note: CLI users don't specify `lib_name` - it's automatically derived from `out_dir`.
+### Build a Library from FASTA Files
 
-`params-predict` and `params-search` create template JSON files. Edit these
-configurations to suit your experiment before running `predict` or `search`.
-See [Parameter Configuration](parameters.md) for a description of each option.
+Open **BuildSpecLib**:
 
-## Per-run summary (`run_summary.tsv`)
+![The BuildSpecLib screen](../assets/gui/buildspeclib.png)
 
-Every search writes `run_summary.tsv` next to the result tables: one row per
-raw file with QC metrics in the spirit of DIA-NN's `report.stats.tsv`.
-*Identified* counts target IDs regardless of abundance, including missing values.
-*Quantified* counts the subset with positive abundance. Missed cleavages are
-reported as 100 × their mean over identified target precursors.
+1. Click **Add FASTA file** for each protein database to include.
+2. Under **Reference MS file**, choose one converted run from the experiment. Pioneer reads the m/z ranges from it; without one, default ranges are used.
+3. Under **Library output**, choose where to write the library.
+4. Keep **Altimeter** as the fragment prediction model; it is the recommended default. For Bruker timsTOF data, turn on **Bruker timsTOF library** so the library includes ion mobility.
+5. Click **Run BuildSpecLib**.
 
-| Column | Description |
+Predictions are made by the [Koina](https://koina.wilhelmlab.org/) server, so building a library needs an internet connection.
+
+## 3. Search
+
+Open **SearchDIA**:
+
+![The SearchDIA screen](../assets/gui/searchdia.png)
+
+1. Under **MS data**, choose the folder of converted files (or individual files).
+2. Under **Spectral library**, choose the `.poin` library from step 2.
+3. Under **Results folder**, choose where to write the results.
+4. Check the common parameters. The defaults suit most experiments, including the 1% FDR (q-value 0.01) threshold.
+5. Click **Run SearchDIA**.
+
+All files in the folder are searched together, sharing false discovery rate control and match-between-runs. Turn on **Search each file separately** to run each file as its own search instead.
+
+## 4. Results
+
+The results folder contains:
+
+| File | Contents |
 |---|---|
-| `file_name` | Run name (raw file name without extension) |
-| `precursors_identified` / `precursors_quantified` | Target precursors passing FDR / with a positive `peak_area` |
-| `precursors_mbr` | Identified precursors recovered by match-between-runs |
-| `peptides_identified` | Distinct stripped sequences among identified precursors |
-| `protein_groups_identified` / `protein_groups_quantified` | Target protein groups for the run / with a positive abundance |
-| `total_peak_area`, `median_peak_area` | Sum and median of quantified precursor areas |
-| `median_normalization_factor` | Median `peak_area_normalized / peak_area` (empty when normalization is off) |
-| `median_irt_error` | Median absolute iRT prediction error |
-| `median_rt_fwhm` | Median RT span (min) of the scans at or above half the apex intensity; 0 when only the apex scan qualifies (fast gradients / few points per peak) |
-| `median_points_integrated` | Median number of scans integrated per peak |
-| `median_peptide_length`, `median_charge` | Peptide-property medians |
-| `missed_cleavage_percentage` | 100 × mean missed cleavages among identified target precursors; can exceed 100 |
-| `ms2_mass_tol_low/high/unit`, `ms1_mass_tol_low/high/unit` | Fragment / precursor mass tolerance the search settled on (`ppm` or `Da` depending on the fitted model; MS1 empty when no MS1 model was fit) |
-| `gradient_length_min`, `n_ms1_scans`, `n_ms2_scans` | Run length (last retention time, minutes) and scan counts |
+| `precursors_long.tsv` / `.arrow`, `precursors_wide.tsv` / `.arrow` | Identified precursors and their quantities, one row per precursor and run (long) or one row per precursor with a column per run (wide) |
+| `protein_groups_long.tsv` / `.arrow`, `protein_groups_wide.tsv` / `.arrow` | The same for protein groups |
+| `run_summary.tsv` | One row of quality-control metrics per run |
+| `qc_plots/` | Quality-control plots: retention time alignment, mass errors, collision energy, and quadrupole transmission |
+| `pioneer_search_report.txt`, `pioneer_search_log.log` | A summary of the search and its full log |
+| `config.json` | The parameters used, including defaults |
+
+[Search Results](@ref) describes every column of these tables, the long and wide layouts, and the difference between the `.tsv` and `.arrow` files.
+
+## Command Line
+
+Every step in the app is also a `pioneer` subcommand:
+
+```bash
+pioneer --help
+```
+
+| Subcommand | What it does |
+|---|---|
+| `convert-raw` | Convert Thermo `.raw` files |
+| `convert-mzml` | Convert `.mzML` files |
+| `convert-bruker` | Convert Bruker timsTOF `.d` folders |
+| `convert-sciex` | Convert SCIEX `.wiff` runs |
+| `download` | Download a prebuilt spectral library (`--list` shows what is available) |
+| `params-predict`, `predict` | Write a library-building parameter file, then build the library |
+| `params-search`, `search` | Write a search parameter file, then run the search |
+
+Run `pioneer <subcommand> --help` for the options of each subcommand.
+
+The same analysis from the command line:
+
+```bash
+pioneer convert-raw raw_dir --output-dir arrow_dir
+pioneer download --list
+pioneer download <library> --dest lib_dir
+pioneer params-search lib_dir/<library> arrow_dir results_dir --params-path search_params.json
+pioneer --threads=8 search search_params.json
+```
+
+`--threads` sets the number of threads. To build a library instead of downloading one, use `pioneer params-predict` and `pioneer predict`. [Parameter Configuration](@ref) describes the settings in the parameter files.
+
+## Docker
+
+Pioneer is also published as a Docker image. Mount the data folder (here the current folder, as `/work`) and run any subcommand:
+
+```bash
+docker pull dennisgoldfarb/pioneer:latest
+docker run --rm -it -v $(pwd):/work -w /work dennisgoldfarb/pioneer:latest pioneer --help
+```
+
+Images are tagged by release (for example `dennisgoldfarb/pioneer:v0.12.0`).

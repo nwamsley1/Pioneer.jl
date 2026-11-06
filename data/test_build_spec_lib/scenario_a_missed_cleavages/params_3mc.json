@@ -84,10 +84,7 @@
         "prediction_model": "altimeter"
     },
     "comment_koina": "=== Koina API settings ===",
-    "max_koina_requests": 12,
-    "max_koina_batch": 10,
     "comment_processing": "=== Processing settings ===",
-    "match_lib_build_batch": 100000,
     "include_contaminants": false,
     "predict_fragments": true
 }

@@ -75,7 +75,6 @@ export interface SearchParams {
   deleteTemp: boolean
   qValue: string
   nIsotopes: string
-  nce: string
   minPeptides: string
   runToRunNorm: boolean
   /** global.match_between_runs. Pioneer falls back to true when the key is
@@ -98,7 +97,6 @@ export const SEARCH_DEFAULTS: SearchParams = {
   deleteTemp: true,
   qValue: '0.01',
   nIsotopes: '2',
-  nce: '26',
   minPeptides: '1',
   runToRunNorm: true,
   matchBetweenRuns: true,

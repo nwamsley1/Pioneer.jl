@@ -9,9 +9,6 @@
     "search": {
         "n_isotopes": 2
     },
-    "acquisition": {
-        "nce": 26
-    },
     "optimization": {
         "chromatogram_integration": {
             "trace_mode": "combined",

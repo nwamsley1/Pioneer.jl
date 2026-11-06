@@ -51,7 +51,7 @@ Main function to build a spectral library from parameters. Executes a series of 
 5. Library index building
 
 Parameters:
-- params_path: Path to JSON configuration file containing library building parameters
+- `params_path`: Path to JSON configuration file containing library building parameters
 
 Output:
 - Generates a spectral library in the specified output directory

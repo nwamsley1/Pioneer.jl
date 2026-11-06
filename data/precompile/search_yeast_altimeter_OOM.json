@@ -1,12 +1,4 @@
 {
-    "acquisition": {
-        "nce": 26,
-        "quad_transmission": {
-            "fit_from_data": false,
-            "smoothness": 5.0,
-            "overhang": 0.25
-        }
-    },
     "global": {
         "huber_override": {
             "override_huber_delta_fit": false,

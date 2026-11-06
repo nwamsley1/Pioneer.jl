@@ -61,9 +61,6 @@
         ]
     },
     "isotope_mod_groups": [],
-    "max_koina_requests": 12,
-    "max_koina_batch": 10,
-    "match_lib_build_batch": 100000,
     "include_contaminants": true,
     "fasta_paths": [
         "/Users/nathanwamsley/Projects/Pioneer.jl/test/Routines/BuildSpecLib/../../../data/test_fasta_files/minimal_protein.fasta"
