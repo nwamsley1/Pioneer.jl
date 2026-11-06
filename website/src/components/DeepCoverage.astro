@@ -1,0 +1,65 @@
+---
+// Hero figure 5: identification depth on the Astral three-proteome benchmark.
+//
+// Data: src/data/olsen-astral-ids.json, counted from the paper's Pioneer
+// search (PIONEER_RUNS_2026-08/RESULTS/OlsenAstral200ng__std, 18 runs, all
+// rows are targets at 1% FDR). Per-run means reproduce
+// SCRIPTS/pioneer_vs_diann.tsv exactly (219,896 precursors, 14,010 protein
+// groups); this figure shows the median per run and the unique total.
+import data from "../data/olsen-astral-ids.json";
+
+const n = (v: number) => Math.round(v).toLocaleString("en-US");
+
+const metrics = [
+  { label: "Precursors", ...data.precursors },
+  { label: "Protein groups", ...data.proteinGroups },
+].map((m) => {
+  const lo = Math.min(...m.perRun);
+  const hi = Math.max(...m.perRun);
+  const pct = (v: number) => (v / m.unique) * 100;
+  return { ...m, lo, hi, medianPct: pct(m.median), loPct: pct(lo), hiPct: pct(hi) };
+});
+---
+<figure class="coverage">
+  <p class="font-[600] text-ink">Thermo Orbitrap Astral, 30-minute gradient, 200 ng</p>
+
+  <div class="mt-6 grid gap-9">
+    {
+      metrics.map((m) => (
+        <div>
+          <p class="text-sm font-[600] text-muted">{m.label}</p>
+          <div class="mt-2 flex flex-wrap items-end gap-x-10 gap-y-2">
+            <div>
+              <p class="text-[2rem] font-[680] leading-none tracking-tight text-action">{n(m.median)}</p>
+              <p class="mt-1 text-sm text-muted">median per run</p>
+            </div>
+            <div>
+              <p class="text-[2rem] font-[680] leading-none tracking-tight text-ink">{n(m.unique)}</p>
+              <p class="mt-1 text-sm text-muted">unique across {data.runs} runs</p>
+            </div>
+          </div>
+          <div
+            class="track relative mt-4 h-7 rounded-md border border-line"
+            role="img"
+            aria-label={`${m.label}: ${n(m.median)} per run (median of ${data.runs} runs, range ${n(m.lo)} to ${n(m.hi)}); ${n(m.unique)} unique.`}
+          >
+            <div class="fill absolute inset-y-0 left-0 rounded-l-md bg-action/80" style={`width:${m.medianPct}%`}></div>
+            <span
+              class="range absolute top-1/2 h-3.5 -translate-y-1/2 border-x-2 border-ink"
+              style={`left:${m.loPct}%;width:${m.hiPct - m.loPct}%`}
+            >
+              <span class="absolute inset-x-0 top-1/2 h-0.5 -translate-y-1/2 bg-ink"></span>
+            </span>
+          </div>
+        </div>
+      ))
+    }
+  </div>
+
+  <figcaption class="mt-7 text-sm leading-relaxed text-muted">
+    Precursors and protein groups at 1% FDR. Three-proteome benchmark from
+    <a class="underline hover:text-ink" href="https://doi.org/10.1038/s41587-023-02099-7">Guzman et al., <i>Nat. Biotechnol.</i> 2024</a>
+    (PXD046444).
+  </figcaption>
+</figure>
+

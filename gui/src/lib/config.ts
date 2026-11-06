@@ -39,7 +39,6 @@ export const SEARCH_OWNED_PATHS = [
   'global.q_value_threshold',
   'global.match_between_runs',
   'search.n_isotopes',
-  'acquisition.nce',
   'optimization.chromatogram_integration.trace_mode',
   'proteinScoring.min_peptides',
   'maxLFQ.run_to_run_normalization',
@@ -66,7 +65,6 @@ export function buildSearchJsonBase(s: SearchParams): Json {
       match_between_runs: s.matchBetweenRuns,
     },
     search: { n_isotopes: num(s.nIsotopes, 2) },
-    acquisition: { nce: num(s.nce, 26) },
     // Always combined. The GUI no longer offers a choice, and the value it
     // used to send for the other option -- "separated" -- was not one Pioneer
     // accepts. It expects "combined" or "separate", so choosing it failed the
@@ -433,9 +431,6 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
   }
   if (isObj(obj.search) && obj.search.n_isotopes != null) {
     set.nIsotopes = String(obj.search.n_isotopes)
-  }
-  if (isObj(obj.acquisition) && obj.acquisition.nce != null) {
-    set.nce = String(obj.acquisition.nce)
   }
   if (isObj(obj.proteinScoring) && obj.proteinScoring.min_peptides != null) {
     set.minPeptides = String(obj.proteinScoring.min_peptides)

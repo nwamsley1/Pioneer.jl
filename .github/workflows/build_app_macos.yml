@@ -121,7 +121,7 @@ jobs:
           restore-keys: julia-macos-${{ matrix.identifier }}-
 
       - name: Install the Apple certificate and provisioning profile
-        if: github.event_name != 'pull_request' && env.MACOS_CERT_P12 != ''
+        if: env.MACOS_CERT_P12 != ''
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERT_P12 }}
           P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}

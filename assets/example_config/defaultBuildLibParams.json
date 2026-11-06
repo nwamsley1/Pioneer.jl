@@ -70,7 +70,6 @@
     },
 
     "comment_processing": "=== Processing settings ===",
-    "match_lib_build_batch": 100000,
     "include_contaminants": true,
     "predict_fragments": true
 }

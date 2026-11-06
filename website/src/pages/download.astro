@@ -1,0 +1,190 @@
+---
+import Base from "../layouts/Base.astro";
+import LicenseText from "../components/LicenseText.astro";
+import { site } from "../site.config";
+import {
+  getReleases,
+  formatDate,
+  formatSize,
+  platformLabels,
+  platformOrder,
+  type Asset,
+} from "../lib/releases";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const { latest, previous, isSample } = await getReleases();
+
+const byPlatform = new Map<string, Asset[]>();
+for (const a of latest?.assets ?? []) {
+  byPlatform.set(a.platform, [...(byPlatform.get(a.platform) ?? []), a]);
+}
+const platforms = platformOrder.filter((p) => byPlatform.has(p));
+---
+<Base
+  title={latest ? `Download Pioneer ${latest.version}` : "Download Pioneer"}
+  description="Installers for Pioneer on macOS, Windows and Linux, with release notes and earlier versions."
+>
+  <div class="mx-auto max-w-6xl px-4 pt-14 sm:px-6">
+    {
+      isSample && (
+        <p class="mb-8 rounded-lg border border-[var(--interferer)] px-4 py-3 text-sm">
+          The GitHub API couldn't be reached during this build, so this page shows sample release
+          data. Deployed builds always use the real releases.
+        </p>
+      )
+    }
+
+    {
+      latest ? (
+        <>
+          <h1 class="text-[2.25rem] font-[680] leading-tight tracking-[-0.02em] sm:text-5xl">
+            Download Pioneer {latest.version}
+          </h1>
+          <p class="mt-3 text-muted">
+            Released {formatDate(latest.date)}.{" "}
+            <a class="text-action underline" href={latest.htmlUrl}>View this release on GitHub</a>
+          </p>
+
+          <div class="mt-10 grid gap-10 lg:grid-cols-[1.25fr_0.75fr]">
+            <div>
+              <ul class="overflow-hidden rounded-xl border border-line bg-surface" id="installers">
+                {platforms.map((p, i) => (
+                  <li
+                    data-platform={p}
+                    class:list={[
+                      "installer flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-5 py-5",
+                      i > 0 && "border-t border-line",
+                    ]}
+                  >
+                    <div class="min-w-0">
+                      <p class="flex items-center gap-2 font-[620] text-ink">
+                        {platformLabels[p]}
+                        <span class="detected hidden rounded-full bg-action px-2 py-0.5 text-xs font-[600] text-action-ink">
+                          Your system
+                        </span>
+                      </p>
+                      {byPlatform.get(p)!.map((a) => (
+                        <p class="mt-1 break-all font-mono text-[0.8rem] text-muted">
+                          {a.name} ({formatSize(a.size)})
+                        </p>
+                      ))}
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                      {byPlatform.get(p)!.map((a, j) => (
+                        <a
+                          href={a.url}
+                          class:list={[
+                            "rounded-lg px-4 py-2.5 text-[0.95rem] font-[600] no-underline",
+                            j === 0
+                              ? "bg-action text-action-ink hover:brightness-110"
+                              : "text-ink shadow-[inset_0_0_0_1.5px_var(--line)]",
+                          ]}
+                        >
+                          Download .{a.name.split(".").pop()}
+                        </a>
+                      ))}
+                    </div>
+                  </li>
+                ))}
+                <li class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-line px-5 py-5">
+                  <div class="min-w-0">
+                    <p class="font-[620] text-ink">Source code</p>
+                    <p class="mt-1 text-sm text-muted">
+                      Pioneer {latest.version} source.{" "}
+                      <a class="underline hover:text-ink" href={latest.sourceTree}>Browse on GitHub</a>
+                    </p>
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <a href={latest.sourceZip} class="rounded-lg px-4 py-2.5 text-[0.95rem] font-[600] text-ink no-underline shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]">Download .zip</a>
+                    <a href={latest.sourceTarGz} class="rounded-lg px-4 py-2.5 text-[0.95rem] font-[600] text-ink no-underline shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]">Download .tar.gz</a>
+                  </div>
+                </li>
+              </ul>
+              <div class="mt-8">
+                <h2 class="text-lg font-[650]">License</h2>
+                <p class="mt-1 text-sm text-muted">By downloading Pioneer you agree to these terms.</p>
+                <LicenseText tag={latest.tag} maxHeight="max-h-[15rem]" class="mt-3" />
+              </div>
+            </div>
+
+            <aside class="space-y-8">
+              <div>
+                <h2 class="text-lg font-[650]">After installing</h2>
+                <p class="mt-2 text-muted">
+                  Open a terminal and check that the command is on your path. On macOS the first
+                  run includes a one-time security check.
+                </p>
+                <pre class="mt-3 overflow-x-auto rounded-lg border border-line bg-surface px-4 py-3 font-mono text-sm">pioneer --help</pre>
+                <p class="mt-3">
+                  <a class="text-action underline" href={site.installGuideUrl}>Installation guide</a>
+                </p>
+              </div>
+              <div>
+                <h2 class="text-lg font-[650]">Docker</h2>
+                <p class="mt-2 text-muted">For servers and clusters, use the container image.</p>
+                <pre class="mt-3 overflow-x-auto rounded-lg border border-line bg-surface px-4 py-3 font-mono text-sm">docker pull {site.dockerImage}:latest</pre>
+              </div>
+            </aside>
+          </div>
+
+          <section class="mt-16 grid gap-10 lg:grid-cols-[1.25fr_0.75fr]">
+            <div>
+              <h2 class="text-2xl font-[650] tracking-tight">What's new in {latest.version}</h2>
+              <div class="prose-notes mt-5" set:html={latest.notesHtml} />
+            </div>
+            {previous.length > 0 && (
+              <div>
+                <h2 class="text-lg font-[650]">Earlier versions</h2>
+                <ul class="mt-3 divide-y divide-line border-y border-line">
+                  {previous.slice(0, 12).map((r) => (
+                    <li class="flex items-baseline justify-between gap-4 py-2.5">
+                      <a class="font-[560] text-ink underline" href={r.htmlUrl}>{r.version}</a>
+                      <span class="text-sm text-muted">{formatDate(r.date)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p class="mt-3 text-sm">
+                  <a class="text-action underline" href={`https://github.com/${site.repo}/releases`}>All releases on GitHub</a>
+                </p>
+              </div>
+            )}
+          </section>
+        </>
+      ) : (
+        <>
+          <h1 class="text-4xl font-[680] tracking-tight">Download Pioneer</h1>
+          <p class="mt-4 max-w-[60ch] text-muted">
+            No published releases were found. Installers are listed on{" "}
+            <a class="text-action underline" href={`https://github.com/${site.repo}/releases`}>GitHub</a>.
+          </p>
+        </>
+      )
+    }
+  </div>
+</Base>
+
+<script>
+  // Marks the installer that matches the visitor's operating system.
+  const ua = navigator.userAgent;
+  let platform: string | null = null;
+  if (/Windows/i.test(ua)) platform = "windows";
+  else if (/Macintosh|Mac OS X/i.test(ua)) platform = "macos-arm64";
+  else if (/Linux/i.test(ua) && !/Android/i.test(ua)) platform = "linux";
+
+  const uaData = (navigator as Navigator & { userAgentData?: { getHighEntropyValues?: (h: string[]) => Promise<{ architecture?: string }> } }).userAgentData;
+
+  function mark(p: string | null) {
+    if (!p) return;
+    const row = document.querySelector<HTMLElement>(`.installer[data-platform="${p}"]`);
+    row?.querySelector(".detected")?.classList.remove("hidden");
+  }
+
+  if (platform === "macos-arm64" && uaData?.getHighEntropyValues) {
+    uaData
+      .getHighEntropyValues(["architecture"])
+      .then((v) => mark(v.architecture === "x86" ? "macos-x64" : "macos-arm64"))
+      .catch(() => mark(platform));
+  } else {
+    mark(platform);
+  }
+</script>

@@ -243,11 +243,7 @@ function _score_global_features_oof(
 
         for test_fold in cv_folds
             test_indices = findall(==(test_fold), table.cv_fold)
-            train_indices = Int[
-                row for row in axes(table, 1)
-                if table.cv_fold[row] != test_fold &&
-                   (training_mask === nothing || training_mask[row])
-            ]
+            train_indices = _oof_train_indices(table.cv_fold, test_fold, training_mask)
 
             if length(train_indices) > max_train
                 rng = Random.MersenneTwister(1776 + 1000 * iteration + Int(test_fold))
@@ -336,4 +332,11 @@ function _score_global_features_oof(
 
     _log_global_feature_importances(best_state.models, features, scoring_name)
     return best_state
+end
+
+# Rows outside `test_fold` that pass `training_mask` (all rows when it is nothing), ascending.
+# A function barrier: the column is untyped and `training_mask` is reassigned by the caller.
+function _oof_train_indices(cv_fold::AbstractVector, test_fold, training_mask)
+    return Int[row for row in eachindex(cv_fold)
+               if cv_fold[row] != test_fold && (training_mask === nothing || training_mask[row])]
 end

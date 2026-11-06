@@ -466,6 +466,31 @@ function close_mbr_donor_store!(index::_MBRDonorIndex{<:_MBRDonorStore})
     return nothing
 end
 
+# Per-row body of _mbr_lod_thresholds behind a function barrier (the Arrow columns are untyped).
+function _collect_mbr_lod_samples!(samples_by_file, global_samples, precursor_idxs, targets, qvals,
+                                   global_qvals, trace_probs, weights, file_idxs,
+                                   q_value_threshold, score_floor)
+    @inbounds for row in eachindex(precursor_idxs)
+        Bool(targets[row]) || continue
+        _mbr_initial_pass(
+            qvals[row],
+            global_qvals[row],
+            q_value_threshold,
+        ) || continue
+        Float32(trace_probs[row]) >= score_floor || continue
+        weight = Float32(weights[row])
+        isfinite(weight) && weight > 0.0f0 || continue
+        log_weight = log2(weight)
+        file_idx = UInt32(file_idxs[row])
+        push!(
+            get!(() -> Float32[], samples_by_file, file_idx),
+            log_weight,
+        )
+        push!(global_samples, log_weight)
+    end
+    return nothing
+end
+
 function _mbr_lod_thresholds(
     file_paths::Vector{String},
     score_floor::Float32;
@@ -476,24 +501,9 @@ function _mbr_lod_thresholds(
     for path in file_paths
         tbl = Arrow.Table(path)
         weight_column = getproperty(tbl, MBR_INTEGRATED_WEIGHT_COLUMN)
-        @inbounds for row in eachindex(tbl.precursor_idx)
-            Bool(tbl.target[row]) || continue
-            _mbr_initial_pass(
-                tbl.qval[row],
-                tbl.global_qval[row],
-                q_value_threshold,
-            ) || continue
-            Float32(tbl.trace_prob_prepass[row]) >= score_floor || continue
-            weight = Float32(weight_column[row])
-            isfinite(weight) && weight > 0.0f0 || continue
-            log_weight = log2(weight)
-            file_idx = UInt32(tbl.ms_file_idx[row])
-            push!(
-                get!(() -> Float32[], samples_by_file, file_idx),
-                log_weight,
-            )
-            push!(global_samples, log_weight)
-        end
+        _collect_mbr_lod_samples!(samples_by_file, global_samples, tbl.precursor_idx, tbl.target,
+            tbl.qval, tbl.global_qval, tbl.trace_prob_prepass, weight_column, tbl.ms_file_idx,
+            q_value_threshold, score_floor)
     end
 
     quantile_index(samples) = clamp(

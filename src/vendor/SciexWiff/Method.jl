@@ -78,3 +78,36 @@ function read_method_name(cf::CFB.CompoundFile)
     name = split(name, ',')[1]
     replace(name, r"\d?(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday).*$" => "")
 end
+
+"""
+    read_tof_calibration(cf, sample) -> Vector{NTuple{2,Float64}}
+
+Per-scan TOF calibration `(a, b)` from `SampleSubtree/Sample{N}/TOFCalibrationData`: a 52-byte header, a u32 record
+count at byte 52, then 20-byte records `{f64 a, f64 b, u32}`, one per Idx record. Blocks whose `.wiff.scan` metadata
+carries no calibration (TripleTOF) use it; on ZenoTOF it equals the per-block calibration. Empty if the stream is absent.
+"""
+function read_tof_calibration(cf::CFB.CompoundFile, sample::Integer)
+    p = "SampleSubtree/Sample$sample/TOFCalibrationData"
+    CFB.has_stream(cf, p) || return NTuple{2,Float64}[]
+    s = CFB.read_stream(cf, p)
+    length(s) >= 56 || throw(ArgumentError("$p has $(length(s)) bytes"))
+    n = Int(_rd(UInt32, s, 52))
+    length(s) == 56 + 20n || throw(ArgumentError("$p has $(length(s)) bytes, not 56 + 20·$n"))
+    [(_rd(Float64, s, 56 + 20k), _rd(Float64, s, 64 + 20k)) for k in 0:n-1]
+end
+
+"""
+    read_instrument_model(cf, sample) -> String
+
+The model the run log names (`Mass Spectrometer:TripleTOF 5600:…` in `SampleSubtree/Sample{N}/Log`), e.g.
+`"TripleTOF 5600"`, `"TripleTOF 6600"`; a 5600+ logs itself as 5600. "" if absent (ZenoTOF logs carry no such line).
+"""
+function read_instrument_model(cf::CFB.CompoundFile, sample::Integer)
+    p = "SampleSubtree/Sample$sample/Log"
+    CFB.has_stream(cf, p) || return ""
+    for s in _utf16_strings(CFB.read_stream(cf, p))
+        m = match(r"Mass Spectrometer:([^:,]+)", s)
+        m === nothing || return String(strip(m[1]))
+    end
+    ""
+end

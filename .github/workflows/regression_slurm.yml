@@ -4,9 +4,10 @@ on:
   push:
     branches:
       - develop
-    # Markdown-only commits (README, notes) cannot change search results.
+    # Markdown-only commits (README, notes) and website changes cannot change search results.
     paths-ignore:
       - '**.md'
+      - 'website/**'
   # Human-published releases start this workflow directly. The automated release
   # workflow dispatches it after publication so the release exists before reporting.
   release:
@@ -15,6 +16,7 @@ on:
     types: [opened, synchronize, reopened]
     paths-ignore:
       - '**.md'
+      - 'website/**'
   workflow_dispatch:
     inputs:
       regression_set:

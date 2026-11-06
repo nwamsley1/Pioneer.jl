@@ -46,6 +46,7 @@ include("./UnitTests/test_gc_sweep_check.jl")
 # FDR/q-value utilities
 include("./UnitTests/test_fdr_utilities.jl")
 include("./UnitTests/test_score_groups.jl")
+include("./UnitTests/test_remove_temp_data.jl")
 
 # Scanning-quad (ZT) meta-scan expansion + collapse
 include("./UnitTests/test_zt_expand_to_metascans.jl")
@@ -78,6 +79,7 @@ include("./utils/FileOperations/streaming/test_merge_column_gather.jl")
 include("./utils/FileOperations/streaming/test_parallel_stage_merge.jl")
 include("./UnitTests/test_mbr_staged_selection.jl")
 include("./UnitTests/test_mbr_passed_sets.jl")
+include("./UnitTests/test_storage_type.jl")
 
 # Partitioned fragment index tests
 include("./UnitTests/partitionedFragmentIndex.jl")

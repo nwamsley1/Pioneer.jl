@@ -133,21 +133,24 @@ function with_sorted_score_groups(consume, produce;
             empty!(scores); empty!(labels)
             stage(path)
         end
-        rows = 0
-        started = last_log = time()
+        # Refs, not reassigned locals: the closure below runs once per score, and a captured
+        # variable it reassigns would be boxed.
+        rows = Ref(0)
+        started = time()
+        last_log = Ref(started)
         produce() do score, target
             push!(scores, _score_key(score)); push!(labels, Bool(target))
-            rows += 1
+            rows[] += 1
             if length(scores) == capacity
                 flush_chunk()
-                if time() - last_log >= 60
-                    @debug_l1 "Score grouping: rows=$rows chunks=$counter elapsed=$(round(time()-started, digits=2))s"
-                    last_log = time()
+                if time() - last_log[] >= 60
+                    @debug_l1 "Score grouping: rows=$(rows[]) chunks=$counter elapsed=$(round(time()-started, digits=2))s"
+                    last_log[] = time()
                 end
             end
         end
         if isempty(levels)
-            @debug_l1 "Score grouping in memory: rows=$rows budget_bytes=$memory_budget_bytes"
+            @debug_l1 "Score grouping in memory: rows=$(rows[]) budget_bytes=$memory_budget_bytes"
             return consume(visit -> _visit_sorted_groups(visit, scores, labels))
         end
         !isempty(scores) && flush_chunk()
@@ -257,6 +260,31 @@ end
 struct ScoreCalibration
     store::ScoreCalibrationStore
     column::Symbol
+end
+# Calibrations whose workspace file is still open. The search context keeps the
+# precursor and protein-group mappings until the search ends, so their finalizers
+# have not run when temp_data is removed; on NFS the open file then survives as
+# `.nfsXXXX` and its directory cannot be deleted. Weak keys: tracking a store does
+# not keep it alive.
+const OPEN_SCORE_CALIBRATIONS = WeakKeyDict{ScoreCalibrationStore, Nothing}()
+
+function _close_score_store!(store::ScoreCalibrationStore)
+    isopen(store.io) && close(store.io)
+    empty!(store.cache)
+    rm(dirname(store.path); recursive=true, force=true)
+    delete!(OPEN_SCORE_CALIBRATIONS, store)
+    return nothing
+end
+
+"""
+    close_open_score_calibrations!()
+
+Close every score calibration still open and delete its workspace. For the end of
+a search only: the closed mappings can no longer be evaluated.
+"""
+function close_open_score_calibrations!()
+    foreach(_close_score_store!, collect(keys(OPEN_SCORE_CALIBRATIONS)))
+    return nothing
 end
 function _fit_record(store, index)
     page = (index - 1) ÷ store.page_size
@@ -382,9 +410,10 @@ function build_score_calibration(produce; compute_pep=true, fdr_scale_factor=1.0
             Dict{Int,Vector{ScoreFitRecord}}(), ReentrantLock(), page_size,
             max(1, memory_budget_bytes ÷ (4 * page_size * sizeof(ScoreFitRecord))))
         finalizer(store) do s
-            close(s.io)
+            isopen(s.io) && close(s.io)
             rm(dirname(s.path); recursive=true, force=true)
         end
+        OPEN_SCORE_CALIBRATIONS[store] = nothing
         return (qval_spline=ScoreCalibration(store, :qvalue),
                 pep_interp=compute_pep ? ScoreCalibration(store, :pep) : nothing)
     catch
@@ -421,12 +450,7 @@ function _compact_score_calibration(path, destination)
     return n
 end
 
-function _close_score_calibration(fit)
-    store = fit.qval_spline.store
-    close(store.io)
-    empty!(store.cache)
-    rm(dirname(store.path); recursive=true, force=true)
-end
+_close_score_calibration(fit) = _close_score_store!(fit.qval_spline.store)
 
 # Sequentially cached permutation for bulk calibration. The caller owns scores
 # and output arrays; only the sort/merge buffers and PAVA stack use workspace.

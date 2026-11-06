@@ -7,7 +7,7 @@
 """
 Serialization utilities for Pioneer spectral library data.
 
-Uses Julia's base Serialization with Zlib compression (via CodecZlib).
+Uses Julia's base Serialization with Zlib compression (written via CodecZlib, read via CodecZlibNG).
 Files use the `.jls` extension.
 """
 
@@ -58,7 +58,8 @@ fragments = deserialize_from_jls("fragments.jls")
 """
 function deserialize_from_jls(filepath::String)
     open(filepath, "r") do file_io
-        stream = ZlibDecompressorStream(file_io)
+        # zlib-ng reads the same zlib stream ~1.5x faster than system zlib (CodecZlib).
+        stream = CodecZlibNG.ZlibDecompressorStream(file_io)
         try
             return deserialize(stream)
         finally

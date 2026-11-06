@@ -720,7 +720,7 @@ convertMzML("path/to/mzml/files", skip_scan_header=false)
 ```
 # Notes
 
-Each mzML file is converted to a corresponding Arrow IPC (.arrow) file in the output directory. This is particularly useful for Sciex data where direct .wiff/.wiff2 conversion is not supported
+Each mzML file is converted to a corresponding Arrow IPC (.arrow) file in the output directory. Use it for SCIEX `.wiff2` runs (convert them to mzML with msConvert first); `.wiff` runs can be converted directly with `convertSciex`.
 """
 function convertMzML(
     mzml_path::String;

@@ -826,8 +826,6 @@ jobs:
 
             repo_dir="${RUN_DIR}/gh-pages-site"
             repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-            landing_source="${RUN_DIR}/pioneer/pages/index.html"
-            logo_source="${RUN_DIR}/pioneer/figures/PIONEER_LOGO.svg"
 
             if [ -d "${repo_dir}/.git" ]; then
               git -C "$repo_dir" fetch origin "$HISTORY_BRANCH" || true
@@ -855,20 +853,6 @@ jobs:
               mkdir -p "${repo_dir}/${REPORT_SUBDIR}/fdr_plots"
               rsync -a "${results_dir}/fdr_plots/" "${repo_dir}/${REPORT_SUBDIR}/fdr_plots/"
             fi
-
-            if [ ! -f "$landing_source" ]; then
-              echo "Missing landing page at $landing_source" >&2
-              exit 1
-            fi
-
-            if [ ! -f "$logo_source" ]; then
-              echo "Missing logo at $logo_source" >&2
-              exit 1
-            fi
-
-            mkdir -p "${repo_dir}/assets"
-            cp "$landing_source" "${repo_dir}/index.html"
-            cp "$logo_source" "${repo_dir}/assets/pioneer-logo.svg"
 
             mkdir -p "${repo_dir}/reports"
             {

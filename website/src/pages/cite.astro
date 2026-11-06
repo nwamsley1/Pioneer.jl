@@ -1,0 +1,60 @@
+---
+import Base from "../layouts/Base.astro";
+import { site } from "../site.config";
+
+const p = site.paper;
+const bibtex = `@article{wamsley${p.year}pioneer,
+  title   = {${p.title}},
+  author  = {${p.bibtexAuthors}},
+  journal = {${p.venue}},
+  year    = {${p.year}},
+  doi     = {${p.doi}},
+  url     = {${p.url}}
+}`;
+---
+<Base title="Cite Pioneer" description="How to cite Pioneer and Altimeter in your publications.">
+  <div class="mx-auto max-w-3xl px-4 pt-14 sm:px-6">
+    <h1 class="text-[2.25rem] font-[680] leading-tight tracking-[-0.02em] sm:text-5xl">Cite Pioneer</h1>
+    <p class="mt-5 max-w-[60ch] text-lg text-muted">
+      If Pioneer or Altimeter contributed to your work, please cite the paper below. Citations
+      are how we show funders that the software is used.
+    </p>
+
+    <section class="mt-10">
+      <h2 class="text-lg font-[650]">Reference</h2>
+      <p class="mt-3 max-w-[68ch] leading-relaxed">
+        {p.authors.join(", ")} "{p.title}." <em>{p.venue}</em> ({p.year}).{" "}
+        <a class="text-action underline" href={p.url}>doi:{p.doi}</a>
+      </p>
+    </section>
+
+    <section class="mt-10">
+      <div class="flex items-center justify-between gap-4">
+        <h2 class="text-lg font-[650]">BibTeX</h2>
+        <button
+          type="button"
+          id="copy-bibtex"
+          class="rounded-lg px-3.5 py-2 text-sm font-[600] text-ink shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]"
+        >
+          Copy BibTeX
+        </button>
+      </div>
+      <pre id="bibtex" class="mt-3 overflow-x-auto rounded-xl border border-line bg-surface px-5 py-4 font-mono text-[0.85rem] leading-relaxed">{bibtex}</pre>
+      <p id="copy-status" class="mt-2 h-5 text-sm text-muted" aria-live="polite"></p>
+    </section>
+  </div>
+</Base>
+
+<script>
+  const button = document.getElementById("copy-bibtex");
+  const status = document.getElementById("copy-status");
+  button?.addEventListener("click", async () => {
+    const text = document.getElementById("bibtex")?.textContent ?? "";
+    try {
+      await navigator.clipboard.writeText(text);
+      if (status) status.textContent = "BibTeX copied.";
+    } catch {
+      if (status) status.textContent = "Couldn't copy automatically. Select the text and copy it.";
+    }
+  });
+</script>

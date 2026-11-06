@@ -131,12 +131,12 @@ The function loads default parameters from either the simplified or full JSON te
 file paths. All other parameters retain their default values and can be modified later.
 
 Arguments:
-- lib_path: Path to the spectral library file (.poin)
-- ms_data_path: Path to the MS data directory  
-- results_path: Path where search results will be stored
-- params_path: Output path for the parameter file. Can be a directory (creates search_parameters.json) 
-  or full file path. Defaults to "search_parameters.json" in current directory.
-- simplified: If true (default), uses simplified template with essential parameters only. 
+- `lib_path`: Path to the spectral library file (.poin)
+- `ms_data_path`: Path to the MS data directory
+- `results_path`: Path where search results will be stored
+- `params_path`: Output path for the parameter file. Can be a directory (creates `search_parameters.json`)
+  or full file path. Defaults to `search_parameters.json` in the current directory.
+- `simplified`: If true (default), uses simplified template with essential parameters only.
   If false, uses full template with all advanced options.
 
 Returns:
@@ -226,19 +226,19 @@ paths and automatically discovered FASTA files. All other parameters retain thei
 default values and can be modified later.
 
 Arguments:
-- out_dir: Output directory path where the library will be built
-- lib_name: Name for the spectral library (used for directory and file naming)
-- fasta_inputs: FASTA file specification. Can be:
+- `out_dir`: Output directory path where the library will be built
+- `lib_name`: Name for the spectral library (used for directory and file naming)
+- `fasta_inputs`: FASTA file specification. Can be:
   - A single directory path (String) - searches for .fasta/.fasta.gz files
   - A single FASTA file path (String) 
   - An array of directories and/or FASTA file paths
-- params_path: Output path for the parameter file. Can be a directory (creates buildspeclib_params.json)
-  or full file path. Defaults to "buildspeclib_params.json" in current directory.
-- regex_codes: Optional FASTA header regex patterns for protein annotation extraction. Can be:
+- `params_path`: Output path for the parameter file. Can be a directory (creates `buildspeclib_params.json`)
+  or full file path. Defaults to `buildspeclib_params.json` in the current directory.
+- `regex_codes`: Optional FASTA header regex patterns for protein annotation extraction. Can be:
   - A single Dict with keys: "accessions", "genes", "proteins", "organisms" (applied to all FASTA files)
-  - A Vector of Dicts for positional mapping to fasta_inputs
+  - A Vector of Dicts for positional mapping to `fasta_inputs`
   - If missing, uses default patterns from the template
-- simplified: If true (default), uses simplified template with essential parameters only.
+- `simplified`: If true (default), uses simplified template with essential parameters only.
   If false, uses full template with all advanced library building options.
 
 Returns:
@@ -250,7 +250,7 @@ Templates used:
 
 The function automatically:
 - Discovers FASTA files in specified directories
-- Generates appropriate library names from FASTA filenames
+- Derives a proteome label for each FASTA file from its file name (`fasta_names`, reported as `species` in search results)
 - Expands regex patterns to match the number of FASTA files found
 - Validates that all specified paths exist and are accessible
 
@@ -269,7 +269,7 @@ output_path = GetBuildLibParams(
     "my_library", 
     ["/path/to/human.fasta", "/path/to/yeast.fasta"];
     params_path = "/custom/path/build_params.json",
-    regex_codes = Dict("accessions" => "^sp\\|(\\w+)\\|", "genes" => " GN=(\\S+)"),
+    regex_codes = Dict("accessions" => raw"^sp\\|(\\w+)\\|", "genes" => raw" GN=(\\S+)"),
     simplified = false
 )
 ```

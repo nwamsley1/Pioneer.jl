@@ -1,0 +1,25 @@
+---
+import Base from "../layouts/Base.astro";
+import { site } from "../site.config";
+import { getReleases } from "../lib/releases";
+import LicenseText from "../components/LicenseText.astro";
+
+// Shows the LICENSE file exactly as shipped with the latest release (fetched
+// from that tag at build time, falling back to src/data/LICENSE.fallback.txt).
+const { latest } = await getReleases();
+const fileUrl = `https://github.com/${site.repo}/blob/${latest?.tag ?? "main"}/LICENSE`;
+---
+<Base
+  title="License"
+  description="The license under which Washington University makes Pioneer available."
+>
+  <div class="mx-auto max-w-3xl px-4 pt-14 sm:px-6">
+    <h1 class="text-[2.25rem] font-[680] leading-tight tracking-[-0.02em] sm:text-5xl">License</h1>
+    <p class="mt-4 text-muted">
+      {latest ? `The license included with Pioneer ${latest.version}. ` : ""}
+      <a class="text-action underline" href={fileUrl}>View the LICENSE file on GitHub</a>
+    </p>
+
+    <LicenseText tag={latest?.tag} class="mt-8" />
+  </div>
+</Base>

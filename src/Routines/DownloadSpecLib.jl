@@ -57,7 +57,9 @@ end
 """
     ListSpecLibs(repo=HF_DEFAULT_REPO; as_json=false)
 
-Print the libraries available in `repo`.
+Print the libraries available in `repo`. The default, `HF_DEFAULT_REPO`, is the
+Hugging Face repository of prebuilt Pioneer libraries
+(`nwamsley/altimeter_spectral_libraries`).
 
 `as_json=true` emits the machine-readable catalog the GUI parses; the default is
 a table for terminal use. Returns the catalog either way.

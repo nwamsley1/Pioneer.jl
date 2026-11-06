@@ -1,0 +1,113 @@
+@import "tailwindcss";
+@import "@fontsource-variable/schibsted-grotesk";
+@import "@fontsource/jetbrains-mono/400.css";
+
+/*
+  Palette. The navy is the logo colour; teal is the action colour; the trace
+  colours are only used in the chromatogram.
+*/
+:root {
+  --paper: #f4f7f9;
+  --surface: #ffffff;
+  --ink: #10283a;
+  --muted: #4a6274;
+  --line: #d3dde5;
+  --navy: #193c55;
+  --action: #146b64;
+  --action-ink: #ffffff;
+  --trace-1: #193c55;
+  --trace-2: #2b5f80;
+  --trace-3: #3f84a3;
+  --trace-4: #146b64;
+  --trace-5: #3b9a8e;
+  --interferer: #b9822a;
+  color-scheme: light;
+}
+
+/* Light only: the site always renders in its light palette, whatever the
+   visitor's system or browser theme. */
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-navy: var(--navy);
+  --color-action: var(--action);
+  --color-action-ink: var(--action-ink);
+  --font-sans: "Schibsted Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--paper);
+  font-family: var(--font-sans);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+a {
+  text-underline-offset: 0.2em;
+}
+
+/* Long-form text: release notes and the license. */
+.prose-notes {
+  max-width: 68ch;
+}
+.prose-notes h1,
+.prose-notes h2,
+.prose-notes h3 {
+  font-weight: 650;
+  line-height: 1.25;
+  margin: 1.6em 0 0.5em;
+}
+.prose-notes h1 { font-size: 1.35rem; }
+.prose-notes h2 { font-size: 1.2rem; }
+.prose-notes h3 { font-size: 1.05rem; }
+.prose-notes p,
+.prose-notes ul,
+.prose-notes ol { margin: 0 0 1em; }
+.prose-notes ul { list-style: disc; padding-left: 1.25em; }
+.prose-notes ol { list-style: decimal; padding-left: 1.25em; }
+.prose-notes li { margin: 0.25em 0; }
+.prose-notes a { color: var(--action); text-decoration: underline; }
+.prose-notes code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: color-mix(in srgb, var(--line) 45%, transparent);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+.prose-notes pre {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.9em 1em;
+  margin: 0 0 1em;
+}
+.prose-notes pre code { background: none; padding: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -55,17 +55,8 @@ function update_psms_with_protein_scores_refs(
         pg_score_lookup = Dict{PGKey, Tuple{Float32, Float32}}()
         # Only scalars are kept, so the protein-group file is unmapped afterwards.
         with_arrow_table(file_path(pg_ref)) do pg_table
-            n_pg_rows = length(pg_table[:protein_name])
-
-            for i in 1:n_pg_rows
-                key = ProteinKey(
-                    pg_table[:protein_name][i],
-                    pg_table[:target][i],
-                    pg_table[:entrap_id][i]
-                )
-                pep_val = pg_table[:pg_pep][i]
-                pg_score_lookup[key] = (pg_table[:pg_score][i], pep_val)
-            end
+            _fill_pg_score_lookup!(pg_score_lookup, pg_table[:protein_name], pg_table[:target],
+                                   pg_table[:entrap_id], pg_table[:pg_score], pg_table[:pg_pep])
         end
 
         # Compute the 5 new score columns without rewriting the whole PSM file.
@@ -83,26 +74,10 @@ function update_psms_with_protein_scores_refs(
         global_pg_qvals = Vector{Union{Missing, Float32}}(missing, n_psms)
         pg_peps = Vector{Union{Missing, Float32}}(missing, n_psms)
 
-        ipg_col = needed[!, :inferred_protein_group]
-        uq_col  = needed[!, :use_for_protein_quant]
-        tgt_col = needed[!, :target]
-        ent_col = needed[!, :entrapment_group_id]
-
-        for i in 1:n_psms
-            ismissing(ipg_col[i]) && continue
-            uq_col[i] == false && continue
-            key = ProteinKey(ipg_col[i], tgt_col[i], ent_col[i])
-            haskey(pg_score_lookup, key) || continue
-            scores_tuple = pg_score_lookup[key]
-            protein_scores[i] = scores_tuple[1]
-            pg_peps[i] = scores_tuple[2]
-            haskey(pg_name_to_global_pg_score, key) ||
-                throw("Missing global pg score lookup key!!!")
-            global_pg_scores[i] = pg_name_to_global_pg_score[key]
-            pg_qvals[i] = pg_score_to_qval(protein_scores[i])
-            dict_key = (key.name, key.is_target, key.entrap_id)
-            global_pg_qvals[i] = get(global_pg_score_to_qval_dict, dict_key, missing)
-        end
+        _fill_psm_pg_scores!(protein_scores, global_pg_scores, pg_qvals, global_pg_qvals, pg_peps,
+            needed[!, :inferred_protein_group], needed[!, :use_for_protein_quant],
+            needed[!, :target], needed[!, :entrapment_group_id],
+            pg_score_lookup, pg_name_to_global_pg_score, pg_score_to_qval, global_pg_score_to_qval_dict)
 
         add_columns_via_sidecar!(psm_ref,
             :pg_score        => protein_scores,
@@ -132,4 +107,34 @@ function add_pep_column(new_col::Symbol, score_col::Symbol, target_col::Symbol;
         return df
     end
     return desc => op
+end
+
+# Column kernels for the protein-score annotation (function barriers: the columns are untyped).
+function _fill_pg_score_lookup!(pg_score_lookup, names, targets, entrap_ids, scores, peps)
+    for i in eachindex(names)
+        pg_score_lookup[ProteinKey(names[i], targets[i], entrap_ids[i])] = (scores[i], peps[i])
+    end
+    return pg_score_lookup
+end
+
+function _fill_psm_pg_scores!(protein_scores, global_pg_scores, pg_qvals, global_pg_qvals, pg_peps,
+                              ipg_col, uq_col, tgt_col, ent_col,
+                              pg_score_lookup, pg_name_to_global_pg_score, pg_score_to_qval,
+                              global_pg_score_to_qval_dict)
+    for i in eachindex(ipg_col)
+        ismissing(ipg_col[i]) && continue
+        uq_col[i] == false && continue
+        key = ProteinKey(ipg_col[i], tgt_col[i], ent_col[i])
+        haskey(pg_score_lookup, key) || continue
+        scores_tuple = pg_score_lookup[key]
+        protein_scores[i] = scores_tuple[1]
+        pg_peps[i] = scores_tuple[2]
+        haskey(pg_name_to_global_pg_score, key) ||
+            throw("Missing global pg score lookup key!!!")
+        global_pg_scores[i] = pg_name_to_global_pg_score[key]
+        pg_qvals[i] = pg_score_to_qval(protein_scores[i])
+        dict_key = (key.name, key.is_target, key.entrap_id)
+        global_pg_qvals[i] = get(global_pg_score_to_qval_dict, dict_key, missing)
+    end
+    return nothing
 end

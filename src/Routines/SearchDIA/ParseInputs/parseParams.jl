@@ -9,7 +9,6 @@
 struct PioneerParameters
     global_settings::NamedTuple
     search::NamedTuple
-    acquisition::NamedTuple
     optimization::NamedTuple
     protein_scoring::NamedTuple
     maxLFQ::NamedTuple
@@ -45,7 +44,6 @@ function params_to_dict(params::PioneerParameters)
     return Dict{String, Any}(
         "global" => namedtuple_to_dict(params.global_settings),
         "search" => namedtuple_to_dict(params.search),
-        "acquisition" => namedtuple_to_dict(params.acquisition),
         "optimization" => namedtuple_to_dict(params.optimization),
         "proteinScoring" => namedtuple_to_dict(params.protein_scoring),
         "maxLFQ" => namedtuple_to_dict(params.maxLFQ),
@@ -113,7 +111,6 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     # Parse each section
     global_settings = dict_to_namedtuple(params["global"])
     search = dict_to_namedtuple(params["search"])
-    acquisition = dict_to_namedtuple(params["acquisition"])
     optimization = dict_to_namedtuple(params["optimization"])
     protein_scoring = dict_to_namedtuple(params["proteinScoring"])
     maxLFQ = dict_to_namedtuple(params["maxLFQ"])
@@ -127,7 +124,6 @@ function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true
     return PioneerParameters(
         global_settings,
         search,
-        acquisition,
         optimization,
         protein_scoring,
         maxLFQ,

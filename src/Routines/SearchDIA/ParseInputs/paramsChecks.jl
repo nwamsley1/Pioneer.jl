@@ -32,7 +32,7 @@ function checkParams(json_path::String)
     # Check top-level sections
     required_sections = [
         "global", "search",
-        "acquisition", "optimization", "proteinScoring", "maxLFQ", "output", "paths"
+        "optimization", "proteinScoring", "maxLFQ", "output", "paths"
     ]
 
     for section in required_sections
@@ -64,10 +64,6 @@ function checkParams(json_path::String)
         throw(InvalidParametersError(
             "Missing parameter: search.n_isotopes", search_section))
     end
-
-    # Validate acquisition parameters
-    acq_params = params["acquisition"]
-    check_param(acq_params, "nce", Integer)
 
     # Validate optimization parameters
     opt_params = params["optimization"]

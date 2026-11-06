@@ -602,13 +602,12 @@ export function SearchDiaForm({
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '1fr 1fr 1fr',
+            gridTemplateColumns: '1fr 1fr',
             gap: 14,
             alignItems: 'stretch',
           }}
         >
           <NumField fieldKey="nIsotopes" value={params.nIsotopes} onChange={onParam} />
-          <NumField fieldKey="nce" value={params.nce} onChange={onParam} />
           <NumField fieldKey="minPeptides" value={params.minPeptides} onChange={onParam} />
         </div>
       </section>
