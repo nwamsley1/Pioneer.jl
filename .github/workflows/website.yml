@@ -86,10 +86,10 @@ jobs:
                   ;;
               esac
               rm -f -- "$path"
+              # Remove the folders this left empty; rmdir stops at the first non-empty one.
+              dir=$(dirname -- "$path")
+              [ "$dir" = "." ] || rmdir -p -- "$dir" 2>/dev/null || true
             done < "$manifest"
-            find . -mindepth 1 \
-              \( -path ./.git -o -path ./docs -o -path ./dev -o -path ./reports \) -prune \
-              -o -type d -empty -print -delete
           fi
 
           cp -R "${dist}/." .
