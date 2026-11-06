@@ -48,13 +48,6 @@ function storage_kind(path::AbstractString)::Symbol
     return :unknown
 end
 
-"Human-readable name of a storage kind, for messages."
-storage_kind_label(kind::Symbol) =
-    kind === :hdd ? "a mechanical hard drive" :
-    kind === :optical ? "an optical drive" :
-    kind === :ssd ? "an SSD" :
-    kind === :network ? "a network share" : "an unknown drive"
-
 "Whether searching data on `kind` storage should be warned about (mechanical and optical drives)."
 storage_is_slow(kind::Symbol) = kind === :hdd || kind === :optical
 
@@ -269,16 +262,16 @@ files there.
 function warn_slow_storage(ms_paths::AbstractVector{<:AbstractString}, library_dir::AbstractString,
                            results_dir::AbstractString)
     try
-        for (path, kind) in slow_storage_paths(ms_paths)
-            @user_warn "The MS data ($(dirname(path))) are on $(storage_kind_label(kind)). " *
+        for (path, _) in slow_storage_paths(ms_paths)
+            @user_warn "The MS data ($(dirname(path))) are on a slow drive. " *
                        "This may result in substantially longer search times."
         end
-        for (path, kind) in slow_storage_paths([library_dir])
-            @user_warn "The spectral library ($path) is on $(storage_kind_label(kind)). " *
+        for (path, _) in slow_storage_paths([library_dir])
+            @user_warn "The spectral library ($path) is on a slow drive. " *
                        "This may result in substantially longer search times."
         end
-        for (path, kind) in slow_storage_paths([results_dir])
-            @user_warn "The output folder ($path) is on $(storage_kind_label(kind)). " *
+        for (path, _) in slow_storage_paths([results_dir])
+            @user_warn "The output folder ($path) is on a slow drive. " *
                        "This may result in substantially longer search times."
         end
     catch

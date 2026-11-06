@@ -2311,12 +2311,12 @@ export default function App() {
               ].filter(Boolean) as string[]
               const list = what.length > 1 ? `${what.slice(0, -1).join(', ')} and ${what[what.length - 1]}` : what[0]
               const verb = what.length > 1 || what[0] === 'MS data' ? 'are' : 'is'
-              return `The ${list} ${verb} on a mechanical or optical drive. This may result in substantially longer search times.`
+              return `The ${list} ${verb} on a slow drive. This may result in substantially longer search times.`
             })()}
             detail={slowStorage
               .map((s) => {
                 const role = s.path === search.library ? 'library' : s.path === search.results ? 'output folder' : 'MS data'
-                return `${s.path}  (${role}, ${s.kind === 'optical' ? 'optical drive' : 'mechanical hard drive'})`
+                return `${s.path}  (${role})`
               })
               .join('\n')}
             dismissLabel="Cancel"
