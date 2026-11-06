@@ -1,0 +1,15 @@
+---
+import Base from "../layouts/Base.astro";
+import { site } from "../site.config";
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<Base title="Page not found">
+  <div class="mx-auto max-w-3xl px-4 pt-20 sm:px-6">
+    <h1 class="text-4xl font-[680] tracking-tight">This page doesn't exist</h1>
+    <p class="mt-4 max-w-[60ch] text-muted">
+      The link may be out of date. Go to the <a class="text-action underline" href={`${base}/`}>home page</a>,
+      the <a class="text-action underline" href={`${base}/download/`}>downloads</a>, or the
+      <a class="text-action underline" href={site.docsUrl}>documentation</a>.
+    </p>
+  </div>
+</Base>

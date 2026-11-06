@@ -1,0 +1,29 @@
+---
+// Inlines the Pioneer logo so it takes the current text colour and works in
+// dark mode. `mark` crops off the wordmark and keeps only the symbol.
+import raw from "../../public/pioneer-logo.svg?raw";
+
+interface Props {
+  mark?: boolean;
+  class?: string;
+  title?: string;
+}
+const { mark = false, class: className = "", title = "Pioneer" } = Astro.props;
+
+const inner = raw
+  .replace(/<\?xml[^>]*>/, "")
+  .replace(/<!--[\s\S]*?-->/g, "")
+  .replace(/^[\s\S]*?<svg[^>]*>/, "")
+  .replace(/<\/svg>\s*$/, "")
+  .replace(/fill="#[0-9A-Fa-f]{6}"/g, 'fill="currentColor"');
+
+const viewBox = mark ? "0 8 242.77 140" : "0 0 242.77 204.31";
+---
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox={viewBox}
+  role="img"
+  aria-label={title}
+  class={className}
+  set:html={inner}
+/>

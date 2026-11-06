@@ -1,0 +1,196 @@
+---
+// Hero: acquisition time vs Pioneer processing time as an experiment grows.
+// Used for two figures (see HeroCarousel): the OSCC timsTOF series (default
+// props) and the yeast knockout Astral series up to 9,984 runs.
+//
+// The SVG is drawn in its final state, so it reads correctly without
+// JavaScript and with reduced motion. The script only animates the sweep.
+
+interface Point {
+  runs: number;
+  hours: number;
+}
+interface Props {
+  id?: string;
+  title?: string;
+  measured?: Point[];
+  minutesPerRun?: number;
+  unit?: "h" | "days";
+  xMax?: number;
+  xTicks?: number[];
+  yMax?: number;
+  yTicks?: number[];
+  // Which measured points get a "N×" label (crowded points can be left out).
+  ratioAt?: number[];
+}
+
+// Default: PXD069877 (Klingeberg et al., MCP 2026), oral squamous cell
+// carcinoma, timsTOF Ultra AIP, 120 SPD. Pioneer wall time = .d -> .tdfs
+// conversion + search, one 16-core / 64 GB node. 340 and 680 runs reuse the
+// 170 files 2x and 4x. Acquisition = 12 min per run.
+const {
+  id = "rt",
+  title = "Bruker timsTOF Ultra AIP, 120 SPD",
+  measured = [
+    { runs: 170, hours: 5.7 },
+    { runs: 340, hours: 10.2 },
+    { runs: 680, hours: 20.6 },
+  ],
+  minutesPerRun = 12,
+  unit = "h",
+  xMax = 700,
+  xTicks = [0, 170, 340, 680],
+  yMax = 140,
+  yTicks = [0, 40, 80, 120],
+  ratioAt,
+} = Astro.props;
+
+const scale = unit === "days" ? 24 : 1;
+const fmt = (hours: number) => {
+  const v = hours / scale;
+  return v >= 100 ? Math.round(v).toLocaleString("en-US") : v >= 10 ? v.toFixed(1).replace(/\.0$/, "") : v.toFixed(1);
+};
+const unitLabel = unit === "days" ? " days" : " h";
+const tickLabel = unit === "days" ? " d" : " h";
+
+const maxRuns = measured[measured.length - 1].runs;
+const acqHours = (n: number) => (n * minutesPerRun) / 60;
+
+const W = 600;
+const H = 380;
+const m = { l: 52, r: 132, t: 30, b: 50 };
+const pw = W - m.l - m.r;
+const ph = H - m.t - m.b;
+const x = (n: number) => m.l + (n / xMax) * pw;
+const y = (h: number) => m.t + ph - (h / scale / yMax) * ph;
+
+const acqPath = `M${x(0)},${y(0)} L${x(maxRuns)},${y(acqHours(maxRuns))}`;
+const pioPath = measured
+  .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.runs).toFixed(1)},${y(p.hours).toFixed(1)}`)
+  .join(" ");
+
+const pairs = measured.map((p) => {
+  const acq = acqHours(p.runs);
+  const r = acq / p.hours;
+  return { ...p, acq, ratio: r >= 20 ? Math.round(r).toString() : r.toFixed(1), label: !ratioAt || ratioAt.includes(p.runs) };
+});
+
+const last = measured[measured.length - 1];
+// Keep the Pioneer end label clear of the x-axis labels when the point sits
+// near the baseline.
+const lift = Math.max(0, y(last.hours) + 35 - (y(0) - 4));
+const n = (v: number) => v.toLocaleString("en-US");
+---
+<figure class="runtime" data-max-runs={maxRuns} data-x-max={xMax} data-plot-left={m.l} data-plot-right={m.l + pw}>
+  <p class="font-[600] text-ink">{title}</p>
+
+  <svg
+    viewBox={`0 0 ${W} ${H}`}
+    class="mt-3 block h-auto w-full"
+    role="img"
+    aria-labelledby={`${id}-title ${id}-desc`}
+  >
+    <title id={`${id}-title`}>Processing time compared with acquisition time</title>
+    <desc id={`${id}-desc`}>
+      {pairs.map((p) => `${n(p.runs)} runs: ${fmt(p.acq)}${unitLabel} to acquire, ${fmt(p.hours)}${unitLabel} to process with Pioneer. `).join("")}
+    </desc>
+
+    <defs>
+      <clipPath id={`${id}-sweep`}>
+        <rect class="sweep" x="0" y="0" width={W} height={H} />
+      </clipPath>
+    </defs>
+
+    {
+      yTicks.map((t) => (
+        <g>
+          <line x1={m.l - 5} x2={m.l} y1={y(t * scale)} y2={y(t * scale)} stroke="var(--ink)" stroke-width="1.25" />
+          <text x={m.l - 9} y={y(t * scale) + 4} text-anchor="end" class="axis">{t}{tickLabel}</text>
+        </g>
+      ))
+    }
+    {
+      xTicks.map((t) => (
+        <g>
+          <line x1={x(t)} x2={x(t)} y1={y(0)} y2={y(0) + 5} stroke="var(--ink)" stroke-width="1.25" />
+          <text x={x(t)} y={y(0) + 20} text-anchor="middle" class="axis">{n(t)}</text>
+        </g>
+      ))
+    }
+    <path d={`M${m.l},${y(yMax * scale)} V${y(0)} H${m.l + pw}`} fill="none" stroke="var(--ink)" stroke-width="1.25" />
+    <text x={m.l + pw} y={H - 6} text-anchor="end" class="axis">Runs</text>
+
+    <g clip-path={`url(#${id}-sweep)`}>
+      <path d={acqPath} fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" />
+      <path d={pioPath} fill="none" stroke="var(--action)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      {
+        pairs.filter((p) => p.label).map((p) => (
+          <line
+            x1={x(p.runs)} x2={x(p.runs)}
+            y1={y(p.hours) - 7} y2={y(p.acq) + 7}
+            stroke="var(--muted)" stroke-width="1.25" stroke-dasharray="3 4"
+          />
+        ))
+      }
+      {
+        pairs.map((p) => (
+          <>
+            <circle cx={x(p.runs)} cy={y(p.acq)} r="4.5" fill="var(--surface)" stroke="var(--muted)" stroke-width="2.5" />
+            <circle cx={x(p.runs)} cy={y(p.hours)} r="4.5" fill="var(--surface)" stroke="var(--action)" stroke-width="2.5" />
+          </>
+        ))
+      }
+    </g>
+
+    {
+      pairs.filter((p) => p.label).map((p) => (
+        <text
+          x={x(p.runs) + (p.runs === maxRuns ? 12 : 8)}
+          y={y((p.acq + p.hours) / 2) + 6}
+          class="ratio reveal"
+          data-runs={p.runs}
+        >{p.ratio}×</text>
+      ))
+    }
+
+    <g class="end-labels">
+      <text x={x(maxRuns) + 12} y={y(acqHours(maxRuns)) + 5} class="value" fill="var(--muted)">
+        {fmt(acqHours(maxRuns))}{unitLabel}
+      </text>
+      <text x={x(maxRuns) + 12} y={y(acqHours(maxRuns)) + 25} class="label">to acquire</text>
+      <text x={x(maxRuns) + 12} y={y(last.hours) - 1 - lift} class="value" fill="var(--action)">
+        {fmt(last.hours)}{unitLabel}
+      </text>
+      <text x={x(maxRuns) + 12} y={y(last.hours) + 19 - lift} class="label">to process</text>
+      <text x={x(maxRuns) + 12} y={y(last.hours) + 35 - lift} class="label">with Pioneer</text>
+    </g>
+  </svg>
+
+  <figcaption class="mt-3 text-sm leading-relaxed text-muted">
+    <slot>
+      170 runs of oral squamous cell carcinoma tissue from
+      <a class="underline hover:text-ink" href="https://doi.org/10.1016/j.mcpro.2025.101489">Klingeberg et al., <i>Mol. Cell. Proteomics</i> 2026</a>
+      (PXD069877). To test scaling, the 340- and 680-run searches include each of the 170 files
+      two and four times. Pioneer times include file conversion on one 16-core, 64 GB node.
+    </slot>
+  </figcaption>
+</figure>
+
+<style>
+  .axis {
+    font: 400 12px var(--font-mono);
+    fill: var(--muted);
+  }
+  .value {
+    font: 650 20px var(--font-sans);
+  }
+  .label {
+    font: 400 13px var(--font-sans);
+    fill: var(--muted);
+  }
+  .ratio {
+    font: 650 17px var(--font-sans);
+    fill: var(--ink);
+  }
+  </style>
+

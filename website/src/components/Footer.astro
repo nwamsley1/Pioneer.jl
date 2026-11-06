@@ -1,0 +1,25 @@
+---
+import { site } from "../site.config";
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<footer class="mt-24 border-t border-line">
+  <div class="mx-auto grid max-w-6xl gap-8 px-4 py-10 text-[0.95rem] text-muted sm:grid-cols-[1fr_auto] sm:px-6">
+    <div class="max-w-xl space-y-2">
+      <p>
+        Pioneer is developed in the Goldfarb and Major labs at Washington University in St. Louis.
+        The software is © 2026 Washington University and provided under a
+        <a class="text-ink underline" href={`${base}/license/`}>non-commercial research license</a>.
+      </p>
+      <p>
+        Questions about the software:
+        {site.contactEmails.map((e, i) => <>{i > 0 && " or "}<a class="text-ink underline" href={`mailto:${e}`}>{e}</a></>)}.<br />
+        Commercial licensing: <a class="text-ink underline" href={`mailto:${site.commercialContact}`}>{site.commercialContact}</a>.
+      </p>
+    </div>
+    <ul class="flex flex-wrap gap-x-5 gap-y-1 sm:flex-col sm:items-end">
+      <li><a class="hover:text-ink" href={`https://github.com/${site.repo}`}>Source on GitHub</a></li>
+      <li><a class="hover:text-ink" href={`https://github.com/${site.repo}/issues`}>Report an issue</a></li>
+      <li><a class="hover:text-ink" href={`${base}/license/`}>License</a></li>
+    </ul>
+  </div>
+</footer>
