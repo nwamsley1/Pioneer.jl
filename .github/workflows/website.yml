@@ -1,0 +1,117 @@
+name: Website
+
+# Builds the Astro site in website/ and publishes it to the root of gh-pages
+# (https://nwamsley1.github.io/Pioneer.jl/). Documenter's docs/ and dev/ and
+# the regression reports/ share that branch and are never touched here.
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - 'website/**'
+      - '.github/workflows/website.yml'
+  # Also started by release.yml after a release is published.
+  workflow_dispatch:
+  # Fallback for picking up new releases.
+  schedule:
+    - cron: '17 9 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: website-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy website
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: develop
+          path: source
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: source/website/package-lock.json
+
+      - name: Build
+        working-directory: source/website
+        env:
+          # Authenticated requests avoid the API's anonymous rate limit.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fail instead of publishing sample release data.
+          REQUIRE_RELEASES: "true"
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+          path: site
+          fetch-depth: 1
+
+      - name: Publish to gh-pages
+        working-directory: site
+        shell: bash
+        run: |
+          set -euo pipefail
+          dist="${GITHUB_WORKSPACE}/source/website/dist"
+          manifest=".website-manifest"
+
+          # The build must not produce anything that would land in the
+          # directories owned by the docs and regression workflows.
+          for dir in docs dev reports; do
+            if [ -e "${dist}/${dir}" ]; then
+              echo "Build output contains ${dir}/, which belongs to another workflow" >&2
+              exit 1
+            fi
+          done
+
+          # Remove what the previous deploy wrote. On the first deploy there is
+          # no manifest, and only the files in the new build are overwritten.
+          if [ -f "$manifest" ]; then
+            while IFS= read -r path; do
+              [ -n "$path" ] || continue
+              case "$path" in
+                docs|docs/*|dev|dev/*|reports|reports/*|.git|.git/*|/*|*..*)
+                  echo "Skipping protected or invalid manifest entry: $path" >&2
+                  continue
+                  ;;
+              esac
+              rm -f -- "$path"
+            done < "$manifest"
+            find . -mindepth 1 \
+              \( -path ./.git -o -path ./docs -o -path ./dev -o -path ./reports \) -prune \
+              -o -type d -empty -print -delete
+          fi
+
+          cp -R "${dist}/." .
+          (cd "$dist" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) > "$manifest"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- . ':!docs' ':!dev' ':!reports'
+          if git diff --cached --quiet; then
+            echo "Website unchanged; nothing to deploy."
+            exit 0
+          fi
+          git commit -m "Deploy website from ${GITHUB_SHA::9}"
+
+          # The docs and regression workflows push to the same branch.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:gh-pages; then
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}); rebasing onto origin/gh-pages" >&2
+            git fetch origin gh-pages
+            git rebase origin/gh-pages
+          done
+          echo "Could not push to gh-pages after 3 attempts" >&2
+          exit 1

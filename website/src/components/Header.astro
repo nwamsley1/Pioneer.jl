@@ -1,0 +1,46 @@
+---
+import Logo from "./Logo.astro";
+import { site } from "../site.config";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const path = Astro.url.pathname.replace(base, "").replace(/\/$/, "") || "/";
+
+const links = [
+  { href: `${base}/`, label: "Home", match: "/", exact: true },
+  { href: `${base}/download/`, label: "Download", match: "/download" },
+  { href: site.docsUrl, label: "Documentation", external: true },
+  { href: site.reportsUrl, label: "Benchmarks", external: true },
+  { href: `${base}/cite/`, label: "Cite", match: "/cite" },
+  { href: `${base}/license/`, label: "License", match: "/license" },
+];
+---
+<header class="border-b border-line bg-paper">
+  <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-x-8 gap-y-3 px-4 py-4 sm:px-6">
+    <a href={`${base}/`} class="flex items-center gap-2.5 text-navy no-underline">
+      <Logo mark class="h-9 w-auto" title="Pioneer home" />
+      <span class="text-xl font-[650] tracking-tight text-ink">Pioneer</span>
+    </a>
+    <nav aria-label="Main" class="-mx-1 flex flex-wrap items-center gap-x-1 gap-y-1 text-[0.95rem]">
+      {
+        links.map((l) => {
+          const current = l.match && (l.exact ? path === l.match : path.startsWith(l.match));
+          return (
+            <a
+              href={l.href}
+              target={l.external ? "_blank" : undefined}
+              rel={l.external ? "noopener" : undefined}
+              aria-current={current ? "page" : undefined}
+              class:list={[
+                "rounded-md px-2.5 py-1.5 no-underline transition-colors",
+                current ? "bg-surface text-ink shadow-[inset_0_0_0_1px_var(--line)]" : "text-muted hover:text-ink",
+              ]}
+            >
+              {l.label}
+              {l.external && <span class="sr-only"> (opens in a new tab)</span>}
+            </a>
+          );
+        })
+      }
+    </nav>
+  </div>
+</header>

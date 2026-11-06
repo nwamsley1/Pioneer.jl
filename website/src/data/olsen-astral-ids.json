@@ -1,0 +1,54 @@
+{
+ "source": "PIONEER_RUNS_2026-08/RESULTS/OlsenAstral200ng__std (Pioneer v0.9.0 paper search), precursors_long.tsv and protein_groups_long.tsv; all rows are targets passing 1% FDR. Means match SCRIPTS/pioneer_vs_diann.tsv (219,896 / 14,010).",
+ "runs": 18,
+ "precursors": {
+  "perRun": [
+   223755,
+   219863,
+   222437,
+   224132,
+   231286,
+   229874,
+   218086,
+   221232,
+   221255,
+   222981,
+   223319,
+   222261,
+   213038,
+   212062,
+   209562,
+   212695,
+   218864,
+   211431
+  ],
+  "median": 221243.5,
+  "mean": 219896.3,
+  "unique": 279686
+ },
+ "proteinGroups": {
+  "perRun": [
+   13836,
+   13745,
+   13791,
+   14122,
+   14289,
+   14235,
+   14359,
+   14373,
+   14359,
+   14351,
+   14364,
+   14352,
+   14019,
+   13957,
+   13917,
+   13307,
+   13471,
+   13337
+  ],
+  "median": 14070.5,
+  "mean": 14010.2,
+  "unique": 15351
+ }
+}

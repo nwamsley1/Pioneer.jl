@@ -1,0 +1,248 @@
+---
+// Hero figure 3: three-proteome ratio accuracy on a 5-minute gradient.
+//
+// Data: src/data/mtac-three-proteome.json, built from the paper's Perseus
+// input (PIONEER_RUNS_2026-08/PERSEUS_ANALYSIS/MtacThreeProteomeStandard/
+// INPUTS/annotated/mtac_pioneer_for_perseus.tsv, Pioneer v0.9.0 search) with
+// the per-species centring undone. Species medians reproduce
+// mtac_species_medians.tsv exactly; n = 10,236 matches Fig. 4I.
+//
+// The ~10k points are drawn on a canvas from a separate JSON file, fetched
+// when the hero comes into view, so they don't weigh down the page. The plot
+// is drawn all at once (no animation). Axes,
+// expected-ratio lines and box plots are SVG computed at build time.
+import data from "../data/mtac-three-proteome.json";
+import pointsUrl from "../data/mtac-three-proteome.json?url";
+
+type Species = "HUMAN" | "YEAST" | "ECOLI";
+const order: Species[] = ["HUMAN", "YEAST", "ECOLI"];
+const meta: Record<Species, { label: string; ratio: string; color: string }> = {
+  HUMAN: { label: "Human", ratio: "1:1", color: "var(--muted)" },
+  YEAST: { label: "Yeast", ratio: "2:1", color: "var(--interferer)" },
+  ECOLI: { label: "E. coli", ratio: "1:3", color: "var(--action)" },
+};
+
+const W = 600;
+const H = 380;
+const m = { l: 46, t: 22, b: 64 };
+const scatter = { x0: m.l, x1: 426 };
+const boxes = { x0: 446, x1: 590 };
+const ph = H - m.t - m.b;
+const yMin = -2.5;
+const yMax = 2.5;
+const xMin = 16;
+const xMax = 25;
+const sx = (v: number) => scatter.x0 + ((v - xMin) / (xMax - xMin)) * (scatter.x1 - scatter.x0);
+const sy = (v: number) => m.t + ((yMax - v) / (yMax - yMin)) * ph;
+
+const quantile = (sorted: number[], f: number) => {
+  const i = (sorted.length - 1) * f;
+  const lo = Math.floor(i);
+  const hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+};
+
+const points = data.points as Record<Species, [number, number][]>;
+const stats = order.map((s, i) => {
+  const ys = points[s].map((p) => p[1]).sort((a, b) => a - b);
+  const slot = (boxes.x1 - boxes.x0) / order.length;
+  return {
+    s,
+    ...meta[s],
+    n: ys.length,
+    cx: boxes.x0 + slot * (i + 0.5),
+    p05: quantile(ys, 0.05),
+    q1: quantile(ys, 0.25),
+    med: quantile(ys, 0.5),
+    q3: quantile(ys, 0.75),
+    p95: quantile(ys, 0.95),
+    expected: (data.expectedLog2BA as Record<Species, number>)[s],
+  };
+});
+const total = stats.reduce((a, b) => a + b.n, 0);
+const yTicks = [-2, -1, 0, 1, 2];
+const xTicks = [16, 18, 20, 22, 24];
+const plot = {
+  left: (scatter.x0 / W) * 100,
+  top: (m.t / H) * 100,
+  width: ((scatter.x1 - scatter.x0) / W) * 100,
+  height: (ph / H) * 100,
+};
+---
+<figure
+  class="three-proteome"
+  data-points-url={pointsUrl}
+  data-domain={JSON.stringify({ xMin, xMax, yMin, yMax })}
+>
+  <p class="font-[600] text-ink">Thermo Orbitrap Astral, 5-minute gradient, three-proteome</p>
+
+  <div class="relative mt-3">
+    <svg viewBox={`0 0 ${W} ${H}`} class="block h-auto w-full" role="img" aria-labelledby="tp-title tp-desc">
+      <title id="tp-title">Measured protein ratios in a three-species mixture</title>
+      <desc id="tp-desc">
+        {total.toLocaleString("en-US")} protein groups. Median log2 ratios: human {stats[0].med.toFixed(2)} (expected 0),
+        yeast {stats[1].med.toFixed(2)} (expected 1), E. coli {stats[2].med.toFixed(2)} (expected {stats[2].expected.toFixed(2)}).
+      </desc>
+
+      {
+        yTicks.map((t) => (
+          <g>
+            <line x1={scatter.x0 - 5} x2={scatter.x0} y1={sy(t)} y2={sy(t)} stroke="var(--ink)" stroke-width="1.25" />
+            <text x={scatter.x0 - 9} y={sy(t) + 4} text-anchor="end" class="axis">{t > 0 ? `+${t}` : t}</text>
+          </g>
+        ))
+      }
+      <path d={`M${scatter.x0},${sy(yMax)} V${sy(yMin)} H${scatter.x1}`} fill="none" stroke="var(--ink)" stroke-width="1.25" />
+      {xTicks.map((t) => (
+        <g>
+          <line x1={sx(t)} x2={sx(t)} y1={sy(yMin)} y2={sy(yMin) + 5} stroke="var(--ink)" stroke-width="1.25" />
+          <text x={sx(t)} y={sy(yMin) + 20} text-anchor="middle" class="axis">{t}</text>
+        </g>
+      ))}
+      <text x={scatter.x1} y={sy(yMin) + 38} text-anchor="end" class="axis">log2 abundance</text>
+      <text x={scatter.x0} y={m.t - 8} class="axis">log2 ratio B/A</text>
+
+      {
+        stats.map((b) => (
+          <line
+            x1={scatter.x0} x2={scatter.x1} y1={sy(b.expected)} y2={sy(b.expected)}
+            stroke={b.color} stroke-width="1.5" stroke-dasharray="6 5"
+          />
+        ))
+      }
+
+      <g class="boxes">
+        {
+          stats.map((b) => (
+            <g>
+              <line x1={b.cx} x2={b.cx} y1={sy(b.p95)} y2={sy(b.p05)} stroke={b.color} stroke-width="1.5" />
+              <rect
+                x={b.cx - 13} width="26" y={sy(b.q3)} height={sy(b.q1) - sy(b.q3)}
+                fill="var(--surface)" stroke={b.color} stroke-width="2" rx="3"
+              />
+              <line x1={b.cx - 13} x2={b.cx + 13} y1={sy(b.med)} y2={sy(b.med)} stroke={b.color} stroke-width="3" />
+              <text x={b.cx} y={sy(yMin) + 20} text-anchor="middle" class="species" fill={b.color}>{b.label}</text>
+              <text x={b.cx} y={sy(yMin) + 36} text-anchor="middle" class="axis">{b.ratio}</text>
+            </g>
+          ))
+        }
+      </g>
+    </svg>
+    <canvas
+      class="points pointer-events-none absolute"
+      style={`left:${plot.left}%;top:${plot.top}%;width:${plot.width}%;height:${plot.height}%`}
+      aria-hidden="true"
+    ></canvas>
+  </div>
+
+  <figcaption class="mt-3 text-sm leading-relaxed text-muted">
+    Protein groups from a human, yeast and E. coli mixture. Dashed lines mark the expected
+    ratios. Data from this work (PXD074310).
+  </figcaption>
+</figure>
+
+<style>
+  .axis {
+    font: 400 12px var(--font-mono);
+    fill: var(--muted);
+  }
+  .species {
+    font: 600 13px var(--font-sans);
+  }
+</style>
+
+<script>
+  type Pts = Record<"HUMAN" | "YEAST" | "ECOLI", [number, number][]>;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  for (const fig of document.querySelectorAll<HTMLElement>("figure.three-proteome")) {
+    const canvas = fig.querySelector<HTMLCanvasElement>("canvas.points");
+    if (!canvas) continue;
+    const domain = JSON.parse(fig.dataset.domain!);
+    const url = fig.dataset.pointsUrl!;
+    let points: Pts | null = null;
+    let loading: Promise<void> | null = null;
+    let timers: number[] = [];
+
+    const load = () =>
+      (loading ??= fetch(url)
+        .then((r) => r.json())
+        .then((d) => {
+          points = d.points as Pts;
+        }));
+
+    const colors = () => {
+      const cs = getComputedStyle(fig);
+      return {
+        HUMAN: cs.getPropertyValue("--muted").trim(),
+        YEAST: cs.getPropertyValue("--interferer").trim(),
+        ECOLI: cs.getPropertyValue("--action").trim(),
+      };
+    };
+
+    const size = () => {
+      const r = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(r.width * dpr);
+      canvas.height = Math.round(r.height * dpr);
+      return { w: canvas.width, h: canvas.height, dpr };
+    };
+
+    const drawSpecies = (ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, s: keyof Pts, color: string) => {
+      if (!points) return;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = s === "HUMAN" ? 0.22 : 0.4;
+      const r = 1.4 * dpr;
+      for (const [x, y] of points[s]) {
+        if (x < domain.xMin || x > domain.xMax || y < domain.yMin || y > domain.yMax) continue;
+        const px = ((x - domain.xMin) / (domain.xMax - domain.xMin)) * w;
+        const py = ((domain.yMax - y) / (domain.yMax - domain.yMin)) * h;
+        ctx.beginPath();
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+
+    const draw = (animate: boolean) => {
+      timers.forEach(clearTimeout);
+      timers = [];
+      const { w, h, dpr } = size();
+      const ctx = canvas.getContext("2d");
+      if (!ctx || !points) return;
+      ctx.clearRect(0, 0, w, h);
+      const c = colors();
+      const order: (keyof Pts)[] = ["HUMAN", "YEAST", "ECOLI"];
+      order.forEach((s, i) => {
+        if (animate && !reduce) {
+          timers.push(window.setTimeout(() => drawSpecies(ctx, w, h, dpr, s, c[s]), 250 + i * 450));
+        } else {
+          drawSpecies(ctx, w, h, dpr, s, c[s]);
+        }
+      });
+    };
+
+    const show = (animate: boolean) => load().then(() => draw(animate));
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          observer.disconnect();
+          // Draw as soon as the figure is near the screen, even while its
+          // slide is hidden, so it is complete when the carousel shows it.
+          show(false);
+        }
+      },
+      { threshold: 0.2 },
+    );
+    observer.observe(fig);
+
+    fig.closest("[data-slide]")?.addEventListener("slide:shown", () => show(false));
+
+    let resizeTimer = 0;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => points && draw(false), 150);
+    });
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => points && draw(false));
+  }
+</script>

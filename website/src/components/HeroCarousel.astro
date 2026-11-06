@@ -1,0 +1,246 @@
+---
+// Hero panel that cycles through a few figures. Slides advance every
+// `interval` ms; hovering, focusing or using the controls pauses the timer.
+// With reduced motion the slides don't advance on their own.
+//
+// To add a slide: add an entry to `slides` and render its content in the
+// matching branch below. Every slide shares one grid cell, so the panel keeps
+// the height of the tallest slide and nothing jumps when they change.
+import RuntimeScaling from "./RuntimeScaling.astro";
+import EntrapmentFdr from "./EntrapmentFdr.astro";
+import ThreeProteome from "./ThreeProteome.astro";
+import DeepCoverage from "./DeepCoverage.astro";
+
+const interval = 15000;
+
+// Yeast KO ladder, Pioneer search wall time (NTW/PIONEER_SCALING_2026-10,
+// DECISIONS.md log of 2026-11-01): 5,511 / 20,375 / 92,210 / 213,369 s.
+// Acquisition: Guzman et al. 2024 acquired the 312 runs at 180 SPD (5-min
+// gradient, 8 min injection to injection; "312 ... proteomes in 41.6 h").
+const yeastScaling = [
+  { runs: 312, hours: 5511 / 3600 },
+  { runs: 1248, hours: 20375 / 3600 },
+  { runs: 4992, hours: 92210 / 3600 },
+  { runs: 9984, hours: 213369 / 3600 },
+];
+
+const slides = [
+  { id: "runtime", label: "Processing time compared with acquisition time" },
+  { id: "entrapment", label: "Entrapment-estimated FDR compared with reported FDR" },
+  { id: "coverage", label: "Precursors and protein groups identified per run and in total" },
+  { id: "three-proteome", label: "Measured protein ratios in a three-species mixture" },
+  { id: "yeast-scale", label: "Search time for up to 9,984 runs compared with acquisition time" },
+];
+---
+<div
+  class="hero-carousel"
+  role="region"
+  aria-roledescription="carousel"
+  aria-label="Pioneer results"
+  data-interval={interval}
+>
+  <div class="rounded-2xl border border-line bg-surface p-4 sm:p-6">
+    <div class="grid">
+      {
+        slides.map((s, i) => (
+          <div
+            class:list={["slide [grid-area:1/1]", i === 0 && "active"]}
+            data-slide={s.id}
+            role="group"
+            aria-roledescription="slide"
+            aria-label={`${i + 1} of ${slides.length}: ${s.label}`}
+            aria-hidden={i === 0 ? undefined : "true"}
+            inert={i === 0 ? undefined : true}
+          >
+            {s.id === "runtime" && <RuntimeScaling />}
+            {s.id === "entrapment" && <EntrapmentFdr />}
+            {s.id === "three-proteome" && <ThreeProteome />}
+            {s.id === "coverage" && <DeepCoverage />}
+            {s.id === "yeast-scale" && (
+              <RuntimeScaling
+                id="yko"
+                title="Thermo Orbitrap Astral, 180 SPD, yeast knockouts"
+                measured={yeastScaling}
+                minutesPerRun={8}
+                unit="days"
+                xMax={10500}
+                xTicks={[0, 2500, 5000, 7500, 10000]}
+                yMax={62}
+                yTicks={[0, 20, 40, 60]}
+                ratioAt={[4992, 9984]}
+              >
+                312 runs (104 yeast knockout strains in triplicate, 8 minutes per run) from
+                <a class="underline hover:text-ink" href="https://doi.org/10.1038/s41587-023-02099-7">Guzman et al., <i>Nat. Biotechnol.</i> 2024</a>
+                (PXD046386). The 1,248-, 4,992- and 9,984-run searches include each file 4, 16 and 32
+                times. Search time on one 16-core, 64 GB node.
+              </RuntimeScaling>
+            )}
+            {s.id.startsWith("placeholder") && (
+              <div class="flex h-full min-h-[22rem] flex-col items-center justify-center rounded-xl border-2 border-dashed border-line px-6 text-center">
+                <p class="font-[600] text-ink">Figure {i + 1}</p>
+                <p class="mt-1 max-w-[32ch] text-sm text-muted">Placeholder. Content to come.</p>
+              </div>
+            )}
+          </div>
+        ))
+      }
+    </div>
+  </div>
+
+  <div class="mt-4 flex items-center justify-center gap-2">
+    <button type="button" class="nav-btn" data-step="-1" aria-label="Previous figure">
+      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    </button>
+    <div class="flex items-center gap-1">
+      {
+        slides.map((s, i) => (
+          <button
+            type="button"
+            class="dot"
+            data-index={i}
+            aria-label={`Show figure ${i + 1}: ${s.label}`}
+            aria-current={i === 0 ? "true" : undefined}
+          >
+            <span />
+          </button>
+        ))
+      }
+    </div>
+    <button type="button" class="nav-btn" data-step="1" aria-label="Next figure">
+      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    </button>
+  </div>
+</div>
+
+<style>
+  .slide {
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 450ms ease,
+      visibility 0s linear 450ms;
+  }
+  .slide.active {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 450ms ease;
+  }
+  .nav-btn {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 999px;
+    color: var(--muted);
+  }
+  .nav-btn:hover {
+    color: var(--ink);
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .dot {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+  }
+  .dot span {
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: var(--line);
+    transition:
+      width 250ms ease,
+      background-color 250ms ease;
+  }
+  .dot:hover span {
+    background: var(--muted);
+  }
+  .dot[aria-current="true"] span {
+    width: 24px;
+    background: var(--action);
+  }
+</style>
+
+<script>
+  for (const root of document.querySelectorAll<HTMLElement>(".hero-carousel")) {
+    const slides = [...root.querySelectorAll<HTMLElement>(".slide")];
+    const dots = [...root.querySelectorAll<HTMLButtonElement>(".dot")];
+    const interval = Number(root.dataset.interval) || 10000;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    let current = 0;
+    let timer = 0;
+    let hovering = false;
+    let focused = false;
+
+    const show = (index: number) => {
+      const next = (index + slides.length) % slides.length;
+      if (next === current) return;
+      slides.forEach((s, i) => {
+        const on = i === next;
+        s.classList.toggle("active", on);
+        s.toggleAttribute("inert", !on);
+        if (on) s.removeAttribute("aria-hidden");
+        else s.setAttribute("aria-hidden", "true");
+      });
+      dots.forEach((d, i) => {
+        if (i === next) d.setAttribute("aria-current", "true");
+        else d.removeAttribute("aria-current");
+      });
+      current = next;
+      slides[next].dispatchEvent(new CustomEvent("slide:shown"));
+    };
+
+    const stop = () => window.clearTimeout(timer);
+    const schedule = () => {
+      stop();
+      if (reduce || hovering || focused || document.hidden) return;
+      timer = window.setTimeout(() => {
+        show(current + 1);
+        schedule();
+      }, interval);
+    };
+
+    dots.forEach((d) =>
+      d.addEventListener("click", () => {
+        show(Number(d.dataset.index));
+        schedule();
+      }),
+    );
+    root.querySelectorAll<HTMLButtonElement>(".nav-btn").forEach((b) =>
+      b.addEventListener("click", () => {
+        show(current + Number(b.dataset.step));
+        schedule();
+      }),
+    );
+
+    root.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight") show(current + 1);
+      else if (e.key === "ArrowLeft") show(current - 1);
+    });
+
+    root.addEventListener("pointerenter", () => {
+      hovering = true;
+      stop();
+    });
+    root.addEventListener("pointerleave", () => {
+      hovering = false;
+      schedule();
+    });
+    root.addEventListener("focusin", () => {
+      focused = true;
+      stop();
+    });
+    root.addEventListener("focusout", (e) => {
+      if (!root.contains(e.relatedTarget as Node)) {
+        focused = false;
+        schedule();
+      }
+    });
+    document.addEventListener("visibilitychange", schedule);
+
+    schedule();
+  }
+</script>

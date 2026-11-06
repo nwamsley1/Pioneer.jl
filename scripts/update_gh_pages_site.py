@@ -182,20 +182,6 @@ def publish_report(
     return report_dir
 
 
-def sync_landing_page(run_dir: Path, repo_dir: Path) -> None:
-    landing_source = run_dir / "pioneer" / "pages" / "index.html"
-    logo_source = run_dir / "pioneer" / "figures" / "PIONEER_LOGO.svg"
-    if not landing_source.is_file():
-        raise FileNotFoundError(f"Missing landing page at {landing_source}")
-    if not logo_source.is_file():
-        raise FileNotFoundError(f"Missing logo at {logo_source}")
-
-    assets_dir = repo_dir / "assets"
-    assets_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(landing_source, repo_dir / "index.html")
-    shutil.copy2(logo_source, assets_dir / "pioneer-logo.svg")
-
-
 def prune_stale_plots(
     repo_dir: Path,
     current_report_dir: Path,
@@ -392,7 +378,6 @@ def main() -> int:
 
     ensure_checkout(repo_dir, repo_url, history_branch)
     report_dir = publish_report(repo_dir, report_path, report_subdir, report_timestamp, args.retention_days)
-    sync_landing_page(run_dir, repo_dir)
     pruned = prune_stale_plots(repo_dir, report_dir, report_timestamp, args.retention_days)
     render_reports_index(repo_dir)
     pushed = commit_and_push(repo_dir, history_branch, run_dir)

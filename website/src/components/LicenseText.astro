@@ -1,0 +1,31 @@
+---
+// The LICENSE text exactly as shipped with a release, in a scrollable box.
+// Used on the License and Download pages.
+import { getLicenseText, paragraphs } from "../lib/license";
+
+interface Props {
+  tag?: string;
+  // Tailwind max-height class for the scroll box.
+  maxHeight?: string;
+  class?: string;
+}
+const { tag, maxHeight = "max-h-[32rem]", class: className = "" } = Astro.props;
+const parts = paragraphs(await getLicenseText(tag));
+---
+<article
+  class:list={["overflow-y-auto rounded-xl border border-line bg-surface px-6 py-6 sm:px-8", maxHeight, className]}
+  tabindex="0"
+  aria-label="License text"
+>
+  <div class="max-w-[70ch] space-y-4 text-[0.98rem] leading-relaxed">
+    {
+      parts.map((p) =>
+        p === p.toUpperCase() && p.length > 80 ? (
+          <p class="text-[0.85rem] leading-relaxed text-muted">{p}</p>
+        ) : (
+          <p>{p}</p>
+        ),
+      )
+    }
+  </div>
+</article>

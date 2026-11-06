@@ -1,0 +1,47 @@
+[
+  {
+    "tag_name": "v0.12.0",
+    "name": "Pioneer v0.12.0",
+    "published_at": "2026-10-28T16:00:00Z",
+    "html_url": "https://github.com/nwamsley1/Pioneer.jl/releases/tag/v0.12.0",
+    "body": "Sample release notes, shown only when the site is built without access to the GitHub API.\n\n- Bruker diaPASEF support\n- Single-cell-level loadings\n- Graphical interface included in every installer",
+    "draft": false,
+    "prerelease": false,
+    "assets": [
+      { "name": "Pioneer-v0.12.0-macos-arm64.pkg", "browser_download_url": "https://github.com/nwamsley1/Pioneer.jl/releases/tag/v0.12.0", "size": 612000000 },
+      { "name": "Pioneer-v0.12.0-macos-x64.pkg", "browser_download_url": "https://github.com/nwamsley1/Pioneer.jl/releases/tag/v0.12.0", "size": 640000000 },
+      { "name": "Pioneer-v0.12.0-windows-x64.exe", "browser_download_url": "https://github.com/nwamsley1/Pioneer.jl/releases/tag/v0.12.0", "size": 598000000 },
+      { "name": "Pioneer-v0.12.0-linux-x64.deb", "browser_download_url": "https://github.com/nwamsley1/Pioneer.jl/releases/tag/v0.12.0", "size": 571000000 }
+    ]
+  },
+  {
+    "tag_name": "v0.11.0",
+    "name": "Pioneer v0.11.0",
+    "published_at": "2026-09-30T16:00:00Z",
+    "html_url": "https://github.com/nwamsley1/Pioneer.jl/releases/tag/v0.11.0",
+    "body": "Sample release.",
+    "draft": false,
+    "prerelease": false,
+    "assets": []
+  },
+  {
+    "tag_name": "v0.10.0",
+    "name": "Pioneer v0.10.0",
+    "published_at": "2026-08-25T16:00:00Z",
+    "html_url": "https://github.com/nwamsley1/Pioneer.jl/releases/tag/v0.10.0",
+    "body": "Sample release.",
+    "draft": false,
+    "prerelease": false,
+    "assets": []
+  },
+  {
+    "tag_name": "v0.9.0",
+    "name": "Pioneer v0.9.0",
+    "published_at": "2026-07-14T16:00:00Z",
+    "html_url": "https://github.com/nwamsley1/Pioneer.jl/releases/tag/v0.9.0",
+    "body": "Sample release.",
+    "draft": false,
+    "prerelease": false,
+    "assets": []
+  }
+]

@@ -86,6 +86,13 @@ jobs:
           version: ${{ needs.linux.outputs.version }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rebuild website
+        # The daily website run picks up the release if this fails, so it
+        # must not stop the release regressions below.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run website.yml --repo "$GITHUB_REPOSITORY"
       - name: Start SLURM release regressions
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
