@@ -9,7 +9,7 @@
   </p>
 </div>
 
-Pioneer is a fast solution for the quantitative analysis of data-independent acquisition (DIA) proteomics data from Thermo Fisher, SCIEX, and Bruker instruments. The Pioneer software can process large experiments of thousands of MS data files on desktop hardware. Each release is tested on a suite of benchmark datasets and tests, which include protein group and precursor identification counts, quantitative precision and accuracy analysis, and entrapment false discovery rate and false transfer rate experiments.
+Pioneer is a fast solution for the quantitative analysis of data-independent acquisition (DIA) proteomics data from Thermo Fisher, SCIEX, and Bruker instruments. The Pioneer software can process large experiments of thousands of MS data files on desktop hardware. Each release includes a suite of benchmark dataset analyses, which include protein group and precursor identification counts, quantitative precision and accuracy assessment, and entrapment false discovery rate and false transfer rate experiments.
 
 ## License
 
