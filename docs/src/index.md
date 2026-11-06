@@ -4,14 +4,14 @@ CurrentModule = Pioneer
 
 # Pioneer
 
-Pioneer is a fast solution for the quantitative analysis of data-independent acquisition (DIA) proteomics data from Thermo Fisher, SCIEX, and Bruker instruments. The Pioneer software can process large experiments of thousands of mass spectrometry data files on desktop hardware. A suite of benchmark dataset analyses for each release includes protein group and precursor identification counts, quantitative precision and accuracy assessment, and entrapment false discovery rate and false transfer rate experiments.
+Pioneer is a fast and scalable solution for the analysis of protein mass spectrometry data. Pioneer runs through both a graphical and a command-line interface, and it scales to thousands of runs on standard desktop hardware. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo Fisher, SCIEX, and Bruker instruments and for building *in silico* spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Prebuilt libraries for several proteomes are downloadable through Pioneer. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data.
 
 ## Key Features
 
 - **Cross-Platform:** Pioneer runs on Linux, macOS, and Windows.
 - **Multi-Vendor:** Supports Thermo Fisher, SCIEX, and Bruker instruments. See [Tested Instruments](@ref) for the instruments and mass analyzers tested with Pioneer.
 - **Fast:** Pioneer searches files many times faster than data acquisition with whole-proteome *in silico* libraries, even on the latest fast-scanning TOF instruments.
-- **Scalable:** Pioneer processes experiments with hundreds to thousands of runs on standard desktop hardware (32–64 GB of RAM). Search time grows linearly with the number of mass spectrometry data files.
+- **Scalable:** Pioneer processes experiments with hundreds to thousands of runs on standard desktop hardware (32–64 GB of RAM). Search time grows linearly with the number of MS data files.
 - **Deep Proteome Coverage:** Pioneer achieves high sensitivity and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.
 - **Regression Testing and FDR Control:** Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers searches on the benchmark datasets, which include entrapment false discovery rate and false transfer rate analyses. [Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/).
 
