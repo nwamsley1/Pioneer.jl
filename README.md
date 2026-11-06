@@ -29,13 +29,13 @@
   </p>
 </div>
 
-Pioneer is a fast and scalable solution for the analysis of protein mass spectrometry data. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo Fisher, Sciex, and Bruker instruments and for building in silico spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Pre-built libraries for several proteomes are downloadable through Pioneer. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data. 
+Pioneer is a fast and scalable solution for the analysis of protein mass spectrometry data. Pioneer runs through both a graphical and a command-line interface, and it scales to thousands of runs on standard desktop hardware. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo Fisher, SCIEX, and Bruker instruments and for building *in silico* spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Prebuilt libraries for several proteomes are downloadable through Pioneer. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data. 
 
 ## Features
 
-- **Cross-Platform:** Pioneer and the file conversion tool run on Linux, macOS, and Windows.
-- **Multi-Vendor:** Supports Thermo Fisher, Sciex, and Bruker instruments.
-- **Fast:** Pioneer searches files many times faster than data acquisition with whole-proteome, in silico libraries even with the latest, fast-scanning TOF instruments. 
+- **Cross-Platform:** Pioneer runs on Linux, macOS, and Windows.
+- **Multi-Vendor:** Supports Thermo Fisher, SCIEX, and Bruker instruments.
+- **Fast:** Pioneer searches files many times faster than data acquisition with whole-proteome, *in silico* libraries even with the latest, fast-scanning TOF instruments. 
 - **Scalable:** Pioneer may process experiments with hundreds to thousands of runs using standard desktop hardware (32-64GB RAM). Search time grows linearly with the number of MS data files. 
 - **Deep Proteome Coverage:** Pioneer achieves high sensitivity and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.
 - **Regression Testing and FDR Control:** Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers searches on the benchmark datasets, which include entrapment false discovery rate and false transfer rate analyses. **[Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/)**.
@@ -74,7 +74,7 @@ The installer adds a `pioneer` command to your `PATH`. On the first run macOS pe
 pioneer --help
 ```
 
-See the [Installation Guide](https://nwamsley1.github.io/Pioneer.jl/docs/stable/user_guide/installation/) for Docker, development setup, and more details.
+See the [Installation Guide](https://nwamsley1.github.io/Pioneer.jl/docs/stable/user_guide/installation/) for details and development setup, and the [Quick Start Tutorial](https://nwamsley1.github.io/Pioneer.jl/docs/stable/user_guide/quickstart/) for the command line and Docker.
 
 ## Labs
 Pioneer is developed in the [Major Lab](https://majorlab.wustl.edu/) and [Goldfarb Lab](https://goldfarblab.wustl.edu/) at Washington University in St. Louis.

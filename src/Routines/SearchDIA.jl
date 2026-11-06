@@ -63,49 +63,33 @@ Parameters:
 - params_path: Path to JSON configuration file containing search parameters
 
 Output:
-- Generates a log file in the results directory
-- Long and wide-formatted tables (.arrow and .csv) for protein-group and precursor level id's and quantitation.
-- Reports timing and memory usage statistics
+- Long and wide-format tables (.arrow and .tsv) of precursor and protein-group identifications and quantities
+- A per-run summary (`run_summary.tsv`), quality-control plots, and log files
 
 Example:
 ```julia
-julia> SearchDIA("/path/to/config.json")
-==========================================================================================
-Sarting SearchDIA
-==========================================================================================
-
-Starting search at: 2024-12-30T14:01:01.510
-Output directory: ./../data/ecoli_test/ecoli_test_results
-[ Info: Loading Parameters...
-[ Info: Loading Spectral Library...
- .
- .
- .
+julia> SearchDIA("/path/to/search_parameters.json")
 ```
-If it does not already exist, SearchDIA creates the user-specified results_dir and generates quality control plots, data tables, and logs.
+If it does not already exist, SearchDIA creates the results directory given in the parameters file and writes:
 ```
 results_dir/
-├── pioneer_search_log.txt
-├── qc_plots/
-│   ├── collision_energy_alignment/
-│   │   └── nce_alignment_plots.pdf
-│   ├── quad_transmission_model/
-│   │   ├── quad_data
-│   │   │   └── quad_data_plots.pdf
-│   │   └── quad_models
-│   │       └── quad_model_plots.pdf
-│   ├── rt_alignment_plots/
-│   │   └── rt_alignment_plots.pdf
-│   └── mass_error_plots/
-│       └── mass_error_plots.pdf
-├── precursors_long.arrow
-├── precursors_long.tsv
-├── precursors_wide.arrow
-├── precurosrs_wide.tsv
-├── protein_groups_long.arrow
-├── protein_groups_long.tsv
-├── protein_groups_wide.arrow
-└── protein_groups_wide.tsv
+├── config.json                  # the parameters used, with defaults filled in
+├── pioneer_search_log.log       # console output
+├── pioneer_search_report.txt    # summary report
+├── pioneer_search_debug.log
+├── pioneer_warnings.log
+├── run_summary.tsv              # one row per run
+├── precursors_long.arrow / .tsv
+├── precursors_wide.arrow / .tsv
+├── protein_groups_long.arrow / .tsv
+├── protein_groups_wide.arrow / .tsv
+└── qc_plots/
+    ├── collision_energy_alignment/nce_alignment_plots.pdf
+    ├── mass_error_plots/mass_error_plots.pdf
+    ├── ms1_mass_error_plots/      # one plot per run
+    ├── quad_transmission_model/quad_transmission_plots.pdf
+    ├── rt_alignment_plots/rt_alignment_plots.pdf
+    └── ion_mobility_model/ion_mobility_plots.pdf   # timsTOF data only
 ```
 """
 function SearchDIA(params_path::String)
