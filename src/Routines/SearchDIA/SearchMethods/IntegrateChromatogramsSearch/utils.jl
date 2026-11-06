@@ -2255,9 +2255,9 @@ function process_final_psms!(
     # reaches protein inference and the output tables; downstream treats a zero
     # area as "not quantified in this run" rather than as an abundance of zero.
     n_before = nrow(psms)
-    filter!(row -> !isnan(row.peak_area::Float32), psms)
+    deleteat!(psms, findall(a -> isnan(a::Float32), psms[!, :peak_area]))
     n_nan = n_before - nrow(psms)
-    n_unquantified = count(row -> row.peak_area::Float32 <= 0.0f0, eachrow(psms))
+    n_unquantified = count(a -> a::Float32 <= 0.0f0, psms[!, :peak_area])
     if n_nan > 0
         @debug_l1 "[$parsed_fname] dropped $n_nan / $n_before PSMs with NaN peak_area"
     end
@@ -2271,7 +2271,7 @@ function process_final_psms!(
     precursors = getPrecursors(getSpecLib(search_context))
     n = size(psms, 1)
     ms_file_idxs = Vector{UInt16}(undef, n)
-    peak_area = Vector{Union{Missing, Float32}}(undef, n)
+    peak_area = Vector{Union{Missing, Float32}}(psms[!, :peak_area])
     peak_area_normalized = Vector{Union{Missing, Float32}}(undef, n)
     charge = Vector{UInt8}(undef, n)
     psms_precursor_idx = psms[!,:precursor_idx]::Vector{UInt32}
@@ -2286,7 +2286,6 @@ function process_final_psms!(
     for i in range(1, n)
         pid = psms_precursor_idx[i]
         ms_file_idxs[i] = UInt32(ms_file_idx)
-        peak_area[i] = psms[i,:peak_area]
         peak_area_normalized[i] = zero(Float32)
         charge[i] = charge_col[pid]
     end

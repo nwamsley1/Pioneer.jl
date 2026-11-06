@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "8b8d87fb94d81a4df14eba54647384ac59181212"
+project_hash = "d7902cee0d7db08256b283c4e71522edbd876af8"
 
 [[deps.AMD]]
 deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse_jll"]
@@ -245,6 +245,12 @@ deps = ["TranscodingStreams", "Zlib_jll"]
 git-tree-sha1 = "970758a3d591a2a5c2a907c53f2e2f8c1b1d3537"
 uuid = "944b1d66-785c-5afd-91f1-9de20f533193"
 version = "0.7.9"
+
+[[deps.CodecZlibNG]]
+deps = ["TranscodingStreams", "ZlibNG_jll"]
+git-tree-sha1 = "0d4addbccecf9522e88cfd7bb7a34758df12d361"
+uuid = "642d12eb-acb5-4437-bcfc-a25e07ad685c"
+version = "0.2.0"
 
 [[deps.CodecZstd]]
 deps = ["TranscodingStreams", "Zstd_jll"]
@@ -1247,10 +1253,10 @@ uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 version = "2.8.8"
 
 [[deps.Pioneer]]
-deps = ["AcceleratedKernels", "ArgParse", "Arrow", "ArrowTypes", "Base64", "CSV", "CodecZlib", "Combinatorics", "DataFrames", "DataStructures", "Dates", "Dictionaries", "Distributions", "EzXML", "FASTX", "FastGaussQuadrature", "GR", "HTTP", "InlineStrings", "Interpolations", "JLD2", "JSON", "JSON3", "KernelDensity", "LaTeXStrings", "LightGBM", "LightXML", "LinearAlgebra", "Logging", "LoggingExtras", "MLJModelInterface", "Measures", "Mmap", "NumericalIntegration", "Plots", "Polynomials", "PooledArrays", "Printf", "Profile", "ProgressBars", "ProtoBuf", "Random", "RobustModels", "SHA", "SQLite", "SentinelArrays", "Serialization", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsModels", "StatsPlots", "Tables", "Zstd_jll"]
+deps = ["AcceleratedKernels", "ArgParse", "Arrow", "ArrowTypes", "Base64", "CSV", "CodecZlib", "CodecZlibNG", "Combinatorics", "DataFrames", "DataStructures", "Dates", "Dictionaries", "Distributions", "EzXML", "FASTX", "FastGaussQuadrature", "GR", "HTTP", "InlineStrings", "Interpolations", "JLD2", "JSON", "JSON3", "KernelDensity", "LaTeXStrings", "LightGBM", "LightXML", "LinearAlgebra", "Logging", "LoggingExtras", "MLJModelInterface", "Measures", "Mmap", "NumericalIntegration", "Plots", "Polynomials", "PooledArrays", "Printf", "Profile", "ProgressBars", "ProtoBuf", "Random", "RobustModels", "SHA", "SQLite", "SentinelArrays", "Serialization", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "StatsBase", "StatsModels", "StatsPlots", "Tables", "Zstd_jll"]
 path = "."
 uuid = "585db54e-1982-41c9-ae07-9e9eb56c7d61"
-version = "0.10.0"
+version = "0.12.1"
 
 [[deps.Pixman_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "LLVMOpenMP_jll", "Libdl"]
@@ -2043,6 +2049,12 @@ deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "a63799ff68005991f9d9491b6e95bd3478d783cb"
 uuid = "c5fb5394-a638-5e4d-96e5-b29de1b5cf10"
 version = "1.6.0+0"
+
+[[deps.ZlibNG_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "26ce5b42af4cb4564ed04c38b45b52854a35c331"
+uuid = "c62bbaca-5768-5b75-85e2-9a0ea54e1624"
+version = "2.3.3+1"
 
 [[deps.Zlib_jll]]
 deps = ["Libdl"]

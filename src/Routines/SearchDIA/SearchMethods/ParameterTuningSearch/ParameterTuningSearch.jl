@@ -425,6 +425,22 @@ function accumulate_psms!(
     return converged, scored_psms, total_scans_used, rate
 end
 
+# scan_to_prec_idx[scan] = the range of rows of `scan_idxs_sorted` holding that scan (a function
+# barrier: the column is untyped).
+function _fill_scan_ranges!(scan_to_prec_idx, scan_idxs_sorted::AbstractVector)
+    i = 1
+    while i <= length(scan_idxs_sorted)
+        si = scan_idxs_sorted[i]
+        j = i
+        while j <= length(scan_idxs_sorted) && scan_idxs_sorted[j] == si
+            j += 1
+        end
+        scan_to_prec_idx[si] = i:(j-1)
+        i = j
+    end
+    return scan_to_prec_idx
+end
+
 """
 NCE sweep: reuse existing (scan, precursor) pairs to find optimal NCE per precursor.
 Skips fragment index — builds PerScanPrecursorIndex directly from PSMs.
@@ -463,16 +479,7 @@ function fit_nce_from_psms!(
     prec_idxs_sorted = UInt32.(prec_idxs[sorted])
 
     scan_to_prec_idx = Vector{Union{Missing, UnitRange{Int64}}}(missing, length(spectra))
-    i = 1
-    while i <= length(scan_idxs_sorted)
-        si = scan_idxs_sorted[i]
-        j = i
-        while j <= length(scan_idxs_sorted) && scan_idxs_sorted[j] == si
-            j += 1
-        end
-        scan_to_prec_idx[si] = i:(j-1)
-        i = j
-    end
+    _fill_scan_ranges!(scan_to_prec_idx, scan_idxs_sorted)
     prec_index = PerScanPrecursorIndex(scan_to_prec_idx, prec_idxs_sorted)
 
     # Build thread tasks from unique scans
