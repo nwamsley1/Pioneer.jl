@@ -22,6 +22,7 @@ makedocs(
             "Installation Guide" => "user_guide/installation.md",
             "Quick Start Tutorial" => "user_guide/quickstart.md",
             "Search Results" => "user_guide/outputs.md",
+            "Tested Instruments" => "user_guide/instruments.md",
         ],
         "Advanced" => [
             "Parameter Configuration" => "user_guide/parameters.md",
