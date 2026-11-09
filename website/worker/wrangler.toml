@@ -1,0 +1,22 @@
+name = "pioneer-download-form"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+# Cloudflare creates the DNS record for this subdomain; the site's records are untouched.
+routes = [{ pattern = "forms.pioneeromics.bio", custom_domain = true }]
+
+# Keep the Worker's logs (a few days) so failed submissions can be looked up
+# under Observability in the Cloudflare dashboard.
+[observability]
+enabled = true
+
+[vars]
+# Audience ID from Mailchimp: Audience → Settings → Audience name and defaults.
+MAILCHIMP_LIST_ID = "938e2384bf"
+# Mailchimp data center, the "us8" in us8.admin.mailchimp.com.
+MAILCHIMP_DC = "us8"
+# Comma-separated origins allowed to submit the form.
+ALLOWED_ORIGINS = "https://pioneeromics.bio,http://localhost:4323"
+
+# The API key is a secret, set with: npx wrangler secret put MAILCHIMP_API_KEY

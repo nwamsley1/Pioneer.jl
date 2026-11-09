@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import LicenseText from "../components/LicenseText.astro";
+import DownloadForm from "../components/DownloadForm.astro";
 import { site } from "../site.config";
 import {
   getReleases,
@@ -47,7 +48,9 @@ const platforms = platformOrder.filter((p) => byPlatform.has(p));
 
           <div class="mt-10 grid gap-10 lg:grid-cols-[1.25fr_0.75fr]">
             <div>
-              <ul class="overflow-hidden rounded-xl border border-line bg-surface" id="installers">
+              <DownloadForm />
+              <noscript><style>#installers { display: block !important; }</style></noscript>
+              <ul class="hidden overflow-hidden rounded-xl border border-line bg-surface" id="installers">
                 {platforms.map((p, i) => (
                   <li
                     data-platform={p}

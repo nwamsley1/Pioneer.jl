@@ -19,6 +19,10 @@ export const site = {
 
   dockerImage: "dennisgoldfarb/pioneer",
 
+  // Cloudflare Worker in worker/ that receives the Download page form. While
+  // empty, the form only logs the details to the browser console.
+  downloadFormEndpoint: "https://forms.pioneeromics.bio",
+
   // Commercial licensing goes through WashU OTM until the startup license
   // is in place.
   commercialContact: "otm@wustl.edu",

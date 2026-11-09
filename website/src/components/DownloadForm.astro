@@ -1,0 +1,118 @@
+---
+import { site } from "../site.config";
+
+// Asks for basic details before the installers are shown. Once submitted, the
+// browser remembers it and returning visitors go straight to the downloads.
+const field =
+  "mt-1 block w-full rounded-lg border border-line bg-paper px-3 py-2 text-ink focus:border-action focus:outline-none";
+---
+<form
+  id="download-form"
+  data-endpoint={site.downloadFormEndpoint}
+  class="hidden rounded-xl border border-line bg-surface px-5 py-6 sm:px-6"
+  novalidate
+>
+  <div class="grid gap-4 sm:grid-cols-2">
+    <label class="block text-sm font-[560]">
+      Name
+      <input class={field} name="name" autocomplete="name" required />
+    </label>
+    <label class="block text-sm font-[560]">
+      Email
+      <input class={field} name="email" type="email" autocomplete="email" required />
+    </label>
+    <label class="block text-sm font-[560] sm:col-span-2">
+      Institution or company
+      <input class={field} name="organization" autocomplete="organization" required />
+    </label>
+  </div>
+
+  <!-- Hidden from people; bots that fill it are ignored by the Worker. -->
+  <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" class="absolute -left-[9999px]" />
+
+  <label class="mt-5 flex items-start gap-2 text-sm">
+    <input type="checkbox" name="updates" class="mt-0.5 accent-[var(--action)]" />
+    <span>Email me about new Pioneer releases. You can unsubscribe at any time.</span>
+  </label>
+
+  <p id="download-form-error" class="mt-4 hidden text-sm text-[var(--interferer)]" role="alert"></p>
+
+  <button
+    type="submit"
+    class="mt-5 rounded-lg bg-action px-4 py-2.5 text-[0.95rem] font-[600] text-action-ink hover:brightness-110 disabled:opacity-60"
+  >
+    Continue to downloads
+  </button>
+</form>
+
+<script>
+  const KEY = "pioneer-download-registered";
+  const form = document.getElementById("download-form") as HTMLFormElement;
+  const installers = document.getElementById("installers")!;
+  const error = document.getElementById("download-form-error")!;
+
+  function unlock() {
+    form.classList.add("hidden");
+    installers.classList.remove("hidden");
+  }
+
+  let registered = false;
+  try {
+    registered = localStorage.getItem(KEY) === "1";
+  } catch {}
+
+  if (registered) unlock();
+  else form.classList.remove("hidden");
+
+  async function submitRegistration(data: Record<string, string | boolean>) {
+    const endpoint = form.dataset.endpoint;
+    if (!endpoint) {
+      console.info("[download-form] no endpoint set, not sent:", data);
+      return;
+    }
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (res.status === 422) return "invalid_email";
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!form.checkValidity()) {
+      error.textContent = "Please fill in every field.";
+      error.classList.remove("hidden");
+      form.reportValidity();
+      return;
+    }
+    error.classList.add("hidden");
+    const fd = new FormData(form);
+    const button = form.querySelector("button")!;
+    button.disabled = true;
+    let result;
+    try {
+      result = await submitRegistration({
+        name: String(fd.get("name")).trim(),
+        email: String(fd.get("email")).trim(),
+        organization: String(fd.get("organization")).trim(),
+        updates: fd.get("updates") === "on",
+        website: String(fd.get("website") ?? ""),
+      });
+    } catch (err) {
+      // A failed submission shouldn't stop anyone from downloading.
+      console.warn("[download-form] submission failed:", err);
+    }
+    if (result === "invalid_email") {
+      error.textContent = "Please enter a valid email address.";
+      error.classList.remove("hidden");
+      button.disabled = false;
+      return;
+    }
+    try {
+      localStorage.setItem(KEY, "1");
+    } catch {}
+    unlock();
+  });
+</script>
