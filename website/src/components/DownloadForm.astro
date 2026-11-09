@@ -75,6 +75,7 @@ const field =
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
+    if (res.status === 422) return "invalid_email";
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   }
 
@@ -90,8 +91,9 @@ const field =
     const fd = new FormData(form);
     const button = form.querySelector("button")!;
     button.disabled = true;
+    let result;
     try {
-      await submitRegistration({
+      result = await submitRegistration({
         name: String(fd.get("name")).trim(),
         email: String(fd.get("email")).trim(),
         organization: String(fd.get("organization")).trim(),
@@ -101,6 +103,12 @@ const field =
     } catch (err) {
       // A failed submission shouldn't stop anyone from downloading.
       console.warn("[download-form] submission failed:", err);
+    }
+    if (result === "invalid_email") {
+      error.textContent = "Please check your email address.";
+      error.classList.remove("hidden");
+      button.disabled = false;
+      return;
     }
     try {
       localStorage.setItem(KEY, "1");

@@ -52,7 +52,13 @@ export default {
     const hash = createHash("md5").update(email).digest("hex");
     const res = await mailchimp(env, "PUT", `members/${hash}`, member);
     if (!res.ok) {
-      console.error("Mailchimp member update failed", res.status, await res.text());
+      const detail = await res.text();
+      console.error("Mailchimp member update failed", res.status, detail, { name, email, organization, updates });
+      // Mailchimp refuses addresses it considers fake or mistyped; the form
+      // asks the visitor to correct it.
+      if (res.status === 400 && /email address/i.test(detail)) {
+        return json({ error: "invalid_email" }, 422, cors);
+      }
       return json({ error: "Could not save" }, 502, cors);
     }
     const tagRes = await mailchimp(env, "POST", `members/${hash}/tags`, {
@@ -75,13 +81,12 @@ function json(data, status, headers) {
   });
 }
 
-// The API key ends in its data center, e.g. "...-us21".
 function mailchimp(env, method, path, body) {
-  const dc = env.MAILCHIMP_API_KEY.split("-").pop();
-  return fetch(`https://${dc}.api.mailchimp.com/3.0/lists/${env.MAILCHIMP_LIST_ID}/${path}`, {
+  const key = env.MAILCHIMP_API_KEY.trim();
+  return fetch(`https://${env.MAILCHIMP_DC}.api.mailchimp.com/3.0/lists/${env.MAILCHIMP_LIST_ID}/${path}`, {
     method,
     headers: {
-      Authorization: `Basic ${btoa(`pioneer:${env.MAILCHIMP_API_KEY}`)}`,
+      Authorization: `Basic ${btoa(`pioneer:${key}`)}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
