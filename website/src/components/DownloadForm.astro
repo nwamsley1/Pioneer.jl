@@ -22,8 +22,8 @@ const field =
       <input class={field} name="email" type="email" autocomplete="email" required />
     </label>
     <label class="block text-sm font-[560] sm:col-span-2">
-      Institution or company
-      <input class={field} name="organization" autocomplete="organization" required />
+      Institution or company (optional)
+      <input class={field} name="organization" autocomplete="organization" />
     </label>
   </div>
 
@@ -82,7 +82,7 @@ const field =
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!form.checkValidity()) {
-      error.textContent = "Please fill in every field.";
+      error.textContent = "Please fill in your name and email.";
       error.classList.remove("hidden");
       form.reportValidity();
       return;
