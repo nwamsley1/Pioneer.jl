@@ -65,6 +65,27 @@ Static assets go to `site-assets/` rather than Astro's default `_astro/`:
 `gh-pages` is processed by Jekyll, which hides folders whose names start with
 an underscore.
 
+## Download form
+
+The Download page asks for name, email and institution before showing the
+installers, and remembers in the browser that the visitor has filled it in.
+The form posts to the Cloudflare Worker in `worker/`, which adds everyone to
+the Mailchimp audience with the tag `pioneer-download`: visitors who tick the
+release-emails box are subscribed, and the rest are stored as non-subscribed
+contacts that receive no campaigns.
+
+Setup, once:
+
+1. In Mailchimp, add an audience text field named "Institution" with the merge
+   tag `ORG`, and copy the audience ID into `MAILCHIMP_LIST_ID` in
+   `worker/wrangler.toml`.
+2. In `worker/`: `npx wrangler login`, `npx wrangler secret put MAILCHIMP_API_KEY`
+   (a Mailchimp API key), then `npx wrangler deploy`.
+3. Put the Worker's URL in `downloadFormEndpoint` in `src/site.config.ts`.
+
+With `downloadFormEndpoint` empty, the form only logs the details to the
+browser console.
+
 ## Custom domain
 
 `pioneeromics.bio` is set in the repository's **Settings → Pages → Custom

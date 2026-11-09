@@ -1,0 +1,12 @@
+name = "pioneer-download-form"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Audience ID from Mailchimp: Audience → Settings → Audience name and defaults.
+MAILCHIMP_LIST_ID = ""
+# Comma-separated origins allowed to submit the form.
+ALLOWED_ORIGINS = "https://pioneeromics.bio,http://localhost:4323"
+
+# The API key is a secret, set with: npx wrangler secret put MAILCHIMP_API_KEY
