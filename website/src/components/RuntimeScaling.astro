@@ -51,7 +51,7 @@ const fmt = (hours: number) => {
   return v >= 100 ? Math.round(v).toLocaleString("en-US") : v >= 10 ? v.toFixed(1).replace(/\.0$/, "") : v.toFixed(1);
 };
 const unitLabel = unit === "days" ? " days" : " h";
-const tickLabel = unit === "days" ? " d" : " h";
+const axisTitle = unit === "days" ? "Time (days)" : "Time (hours)";
 
 const maxRuns = measured[measured.length - 1].runs;
 const acqHours = (n: number) => (n * minutesPerRun) / 60;
@@ -105,7 +105,7 @@ const n = (v: number) => v.toLocaleString("en-US");
       yTicks.map((t) => (
         <g>
           <line x1={m.l - 5} x2={m.l} y1={y(t * scale)} y2={y(t * scale)} stroke="var(--ink)" stroke-width="1.25" />
-          <text x={m.l - 9} y={y(t * scale) + 4} text-anchor="end" class="axis">{t}{tickLabel}</text>
+          <text x={m.l - 9} y={y(t * scale) + 4} text-anchor="end" class="axis">{t}</text>
         </g>
       ))
     }
@@ -118,7 +118,8 @@ const n = (v: number) => v.toLocaleString("en-US");
       ))
     }
     <path d={`M${m.l},${y(yMax * scale)} V${y(0)} H${m.l + pw}`} fill="none" stroke="var(--ink)" stroke-width="1.25" />
-    <text x={m.l + pw} y={H - 6} text-anchor="end" class="axis">Runs</text>
+    <text x={m.l + pw / 2} y={H - 8} text-anchor="middle" class="axis-title">Runs</text>
+    <text transform={`translate(13 ${m.t + ph / 2}) rotate(-90)`} text-anchor="middle" class="axis-title">{axisTitle}</text>
 
     <g clip-path={`url(#${id}-sweep)`}>
       <path d={acqPath} fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" />
@@ -181,6 +182,10 @@ const n = (v: number) => v.toLocaleString("en-US");
   .axis {
     font: 400 12px var(--font-figure);
     fill: var(--muted);
+  }
+  .axis-title {
+    font: 500 13px var(--font-figure);
+    fill: var(--ink);
   }
   .value {
     font: 650 20px var(--font-figure);

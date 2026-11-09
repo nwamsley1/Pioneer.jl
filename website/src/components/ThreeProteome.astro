@@ -99,8 +99,8 @@ const plot = {
           <text x={sx(t)} y={sy(yMin) + 20} text-anchor="middle" class="axis">{t}</text>
         </g>
       ))}
-      <text x={scatter.x1} y={sy(yMin) + 38} text-anchor="end" class="axis">log2 abundance</text>
-      <text x={scatter.x0} y={m.t - 8} class="axis">log2 ratio B/A</text>
+      <text x={(scatter.x0 + scatter.x1) / 2} y={sy(yMin) + 38} text-anchor="middle" class="axis-title">log2 abundance</text>
+      <text transform={`translate(13 ${sy(0)}) rotate(-90)`} text-anchor="middle" class="axis-title">log2 ratio B/A</text>
 
       {
         stats.map((b) => (
@@ -145,6 +145,10 @@ const plot = {
   .axis {
     font: 400 12px var(--font-figure);
     fill: var(--muted);
+  }
+  .axis-title {
+    font: 500 13px var(--font-figure);
+    fill: var(--ink);
   }
   .species {
     font: 600 13px var(--font-figure);
