@@ -14,8 +14,8 @@ const field =
 >
   <div class="grid gap-4 sm:grid-cols-2">
     <label class="block text-sm font-[560]">
-      Name
-      <input class={field} name="name" autocomplete="name" required />
+      Name (optional)
+      <input class={field} name="name" autocomplete="name" />
     </label>
     <label class="block text-sm font-[560]">
       Email
@@ -82,7 +82,7 @@ const field =
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!form.checkValidity()) {
-      error.textContent = "Please fill in your name and email.";
+      error.textContent = "Please enter a valid email address.";
       error.classList.remove("hidden");
       form.reportValidity();
       return;
