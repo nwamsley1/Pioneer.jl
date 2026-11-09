@@ -5,7 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # Audience ID from Mailchimp: Audience → Settings → Audience name and defaults.
-MAILCHIMP_LIST_ID = ""
+MAILCHIMP_LIST_ID = "938e2384bf"
 # Comma-separated origins allowed to submit the form.
 ALLOWED_ORIGINS = "https://pioneeromics.bio,http://localhost:4323"
 
