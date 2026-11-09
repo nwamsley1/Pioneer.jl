@@ -4,8 +4,8 @@
   <h3>Pioneer: Fast and Scalable Analysis of Protein Mass Spectrometry Data</h3>
 
   <p>
-    <a href="https://nwamsley1.github.io/Pioneer.jl/"><img src="figures/button-website-download.svg" alt="Website &amp; Download" height="28"></a>
-    <a href="https://nwamsley1.github.io/Pioneer.jl/docs/stable/"><img src="figures/button-documentation.svg" alt="Documentation" height="28"></a>
+    <a href="https://pioneeromics.bio/"><img src="figures/button-website-download.svg" alt="Website &amp; Download" height="28"></a>
+    <a href="https://pioneeromics.bio/docs/stable/"><img src="figures/button-documentation.svg" alt="Documentation" height="28"></a>
   </p>
 </div>
 

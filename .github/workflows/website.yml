@@ -1,7 +1,7 @@
 name: Website
 
 # Builds the Astro site in website/ and publishes it to the root of gh-pages
-# (https://nwamsley1.github.io/Pioneer.jl/). Documenter's docs/ and dev/ and
+# (https://pioneeromics.bio/). Documenter's docs/ and dev/ and
 # the regression reports/ share that branch and are never touched here.
 
 on:
