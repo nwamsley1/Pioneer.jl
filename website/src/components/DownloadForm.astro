@@ -105,7 +105,7 @@ const field =
       console.warn("[download-form] submission failed:", err);
     }
     if (result === "invalid_email") {
-      error.textContent = "Please check your email address.";
+      error.textContent = "Please enter a valid email address.";
       error.classList.remove("hidden");
       button.disabled = false;
       return;
