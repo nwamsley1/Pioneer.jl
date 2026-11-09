@@ -2,10 +2,10 @@ import { defineConfig } from "astro/config";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  site: "https://nwamsley1.github.io",
-  // Served from the Pioneer.jl repository's GitHub Pages site, so every page
-  // lives under /Pioneer.jl/. With a custom domain, set base to "/".
-  base: "/Pioneer.jl/",
+  site: "https://pioneeromics.bio",
+  // Served at the root of the custom domain set on the Pioneer.jl repository's
+  // GitHub Pages site.
+  base: "/",
   trailingSlash: "ignore",
   build: {
     // The gh-pages branch is processed by Jekyll, which hides folders that

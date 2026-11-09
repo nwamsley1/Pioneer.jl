@@ -2,8 +2,7 @@
 
 The public site for Pioneer: home page, downloads, license and citation. It is
 a static [Astro](https://astro.build) site styled with Tailwind CSS, served at
-https://nwamsley1.github.io/Pioneer.jl/ from this repository's `gh-pages`
-branch.
+https://pioneeromics.bio/ from this repository's `gh-pages` branch.
 
 The documentation and regression reports are **not** built here. Documenter
 publishes the docs to `docs/` on `gh-pages`, and the regression workflows
@@ -27,14 +26,13 @@ workflows changes, update `classify()` in `src/lib/releases.ts`.
 
 ```bash
 npm ci
-npm run dev        # http://localhost:4321/Pioneer.jl/
+npm run dev        # http://localhost:4321/
 npm run build      # static output in dist/
-npx astro preview  # serve dist/ at http://localhost:4321/Pioneer.jl/
+npx astro preview  # serve dist/ at http://localhost:4321/
 ```
 
-Every page is served under `/Pioneer.jl/` (`base` in `astro.config.mjs`), and
-internal links use `import.meta.env.BASE_URL`, so they work both locally and on
-GitHub Pages.
+Internal links use `import.meta.env.BASE_URL` (`base` in `astro.config.mjs`),
+so the site can move under a sub-path without editing pages.
 
 Set `GITHUB_TOKEN` to avoid the API's anonymous rate limit. Without network
 access the build uses `src/data/releases.sample.json` and the Download page
@@ -69,17 +67,11 @@ an underscore.
 
 ## Custom domain
 
-To move the site to its own domain later:
-
-1. In the repository's **Settings → Pages → Custom domain**, enter the domain
-   and enable **Enforce HTTPS** once the certificate is issued, then point the
-   domain's DNS at GitHub Pages.
-2. Set `base: "/"` and the new `site` in `astro.config.mjs`.
-3. Set `url` in `src/site.config.ts` to the new domain.
-
-The custom domain applies to the whole `gh-pages` site, so the docs and reports
-move with it; update `docsUrl`, `installGuideUrl` and `reportsUrl` in
-`src/site.config.ts` to match.
+`pioneeromics.bio` is set in the repository's **Settings → Pages → Custom
+domain**, and its DNS (on Cloudflare) points at GitHub Pages. The domain
+applies to the whole `gh-pages` site, so the docs and reports are served from
+it too, and the old `nwamsley1.github.io/Pioneer.jl/` URLs redirect to it.
+`public/CNAME` keeps the domain in every website deploy.
 
 ## Before launch
 
