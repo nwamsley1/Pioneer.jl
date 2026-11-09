@@ -2,6 +2,9 @@ name = "pioneer-download-form"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+# Cloudflare creates the DNS record for this subdomain; the site's records are untouched.
+routes = [{ pattern = "forms.pioneeromics.bio", custom_domain = true }]
 
 [vars]
 # Audience ID from Mailchimp: Audience → Settings → Audience name and defaults.
