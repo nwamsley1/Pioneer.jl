@@ -42,15 +42,14 @@ const platforms = platformOrder.filter((p) => byPlatform.has(p));
             Download Pioneer {latest.version}
           </h1>
           <p class="mt-3 text-muted">
-            Released {formatDate(latest.date)}.{" "}
-            <a class="text-action underline" href={latest.htmlUrl}>View this release on GitHub</a>
+            Released {formatDate(latest.date)}.
           </p>
 
           <div class="mt-10 grid gap-10 lg:grid-cols-[1.25fr_0.75fr]">
             <div>
               <DownloadForm />
-              <noscript><style>#installers { display: block !important; }</style></noscript>
-              <ul class="hidden overflow-hidden rounded-xl border border-line bg-surface" id="installers">
+              <noscript><style>[data-after-form] { display: block !important; }</style></noscript>
+              <ul class="hidden overflow-hidden rounded-xl border border-line bg-surface" id="installers" data-after-form>
                 {platforms.map((p, i) => (
                   <li
                     data-platform={p}
@@ -102,6 +101,17 @@ const platforms = platformOrder.filter((p) => byPlatform.has(p));
                     <a href={latest.sourceTarGz} class="rounded-lg px-4 py-2.5 text-[0.95rem] font-[600] text-ink no-underline shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]">Download .tar.gz</a>
                   </div>
                 </li>
+                {previous.length > 0 && (
+                  <li class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-line px-5 py-5">
+                    <div class="min-w-0">
+                      <p class="font-[620] text-ink">Earlier versions</p>
+                      <p class="mt-1 text-sm text-muted">Installers and source for previous releases.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                      <a href={`https://github.com/${site.repo}/releases`} class="rounded-lg px-4 py-2.5 text-[0.95rem] font-[600] text-ink no-underline shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]">All releases on GitHub</a>
+                    </div>
+                  </li>
+                )}
               </ul>
               <div class="mt-8">
                 <h2 class="text-lg font-[650]">License</h2>
@@ -135,22 +145,6 @@ const platforms = platformOrder.filter((p) => byPlatform.has(p));
               <h2 class="text-2xl font-[650] tracking-tight">What's new in {latest.version}</h2>
               <div class="prose-notes mt-5" set:html={latest.notesHtml} />
             </div>
-            {previous.length > 0 && (
-              <div>
-                <h2 class="text-lg font-[650]">Earlier versions</h2>
-                <ul class="mt-3 divide-y divide-line border-y border-line">
-                  {previous.slice(0, 12).map((r) => (
-                    <li class="flex items-baseline justify-between gap-4 py-2.5">
-                      <a class="font-[560] text-ink underline" href={r.htmlUrl}>{r.version}</a>
-                      <span class="text-sm text-muted">{formatDate(r.date)}</span>
-                    </li>
-                  ))}
-                </ul>
-                <p class="mt-3 text-sm">
-                  <a class="text-action underline" href={`https://github.com/${site.repo}/releases`}>All releases on GitHub</a>
-                </p>
-              </div>
-            )}
           </section>
         </>
       ) : (

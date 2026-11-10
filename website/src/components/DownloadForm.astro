@@ -48,12 +48,11 @@ const field =
 <script>
   const KEY = "pioneer-download-registered";
   const form = document.getElementById("download-form") as HTMLFormElement;
-  const installers = document.getElementById("installers")!;
   const error = document.getElementById("download-form-error")!;
 
   function unlock() {
     form.classList.add("hidden");
-    installers.classList.remove("hidden");
+    for (const el of document.querySelectorAll("[data-after-form]")) el.classList.remove("hidden");
   }
 
   let registered = false;
