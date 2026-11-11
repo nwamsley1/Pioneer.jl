@@ -1,7 +1,7 @@
 <div align="center">
   <img src="figures/PIONEER_LOGO.svg" alt="Pioneer logo" width="200">
 
-  <h3>Pioneer: Fast and Scalable Analysis of Protein Mass Spectrometry Data</h3>
+  <h3>Pioneer: Rapid and Scalable Analysis for Bottom-up Proteomics</h3>
 
   <p>
     <a href="https://pioneeromics.bio/"><img src="figures/button-website-download.svg" alt="Website &amp; Download" height="28"></a>
