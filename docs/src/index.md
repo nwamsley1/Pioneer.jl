@@ -4,16 +4,16 @@ CurrentModule = Pioneer
 
 # Pioneer
 
-Pioneer is a fast and scalable solution for the analysis of protein mass spectrometry data. Pioneer runs through both a graphical and a command-line interface, and it scales to thousands of runs on standard desktop hardware. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo Fisher, SCIEX, and Bruker instruments and for building *in silico* spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Prebuilt libraries for several proteomes are downloadable through Pioneer. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data.
+Pioneer is a fast and scalable solution for the analysis of protein mass spectrometry data. It runs through both a graphical and a command-line interface and scales to thousands of runs on standard desktop hardware. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo Fisher, SCIEX, and Bruker instruments and for building *in silico* spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Prebuilt libraries for several proteomes are downloadable through Pioneer. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data.
 
 ## Key Features
 
-- **Cross-Platform:** Runs on Linux, macOS, and Windows.
+- **Cross-Platform:** Runs on Linux, macOS, and Windows
 - **Multi-Vendor:** Supports Thermo Fisher, SCIEX, and Bruker instruments. See [Tested Instruments](@ref) for the instruments and mass analyzers tested with Pioneer.
-- **GUI:** Includes a graphical user interface.
-- **Fast:** Searches files many times faster than data acquisition with whole-proteome *in silico* libraries, even on the latest fast-scanning TOF instruments.
-- **Scalable:** Processes experiments with hundreds to thousands of runs on standard desktop hardware (32–64 GB of RAM).
-- **Deep Proteome Coverage:** Delivers high sensitivity, quantitative precision, and accuracy on diverse benchmark datasets.
+- **GUI:** Includes a graphical user interface
+- **Fast:** Searches whole-proteome *in silico* libraries 5–30× faster than the data are acquired
+- **Scalable:** Processes experiments with hundreds to thousands of runs on standard desktop hardware (32–64 GB of RAM)
+- **Deep Proteome Coverage:** Delivers high sensitivity, quantitative precision, and accuracy on diverse benchmark datasets
 - **Regression Testing and FDR Control:** Maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers searches on the benchmark datasets, which include entrapment false discovery rate and false transfer rate analyses. [Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/).
 
 ## Graphical User Interface
