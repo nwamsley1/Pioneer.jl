@@ -252,32 +252,84 @@ function main_thread_chunks(thread_tasks::AbstractVector,
 end
 
 """
-Bytes per row a MainSearch PSM table grows to once scoring adds its features, relative to the table
-after the per-scan features (measured 280 vs 195 B per row on a 65.5M-row file).
+Memory scoring a file's table in memory needs on top of what the process holds when the table has
+been collected, per byte of that table (after the per-scan features): the columns scoring adds
+(280 vs 195 B per row), the join and sort of the rounds, and the scoring buffers.
+
+Measured on UConn PXD082297 (21.9 and 13.6 GB tables, scored in memory): peak private memory
+during scoring was 0.64-0.69 x the table above the memory held at the end of collection; 0.8
+leaves margin above that.
 """
-const MAIN_TABLE_GROWTH = 280 / 195
+const MAIN_SCORING_EXTRA_PER_TABLE_BYTE = 0.8
+
+"""Share of total memory a MainSearch file may bring the process to."""
+const MAIN_MEMORY_FRACTION = 0.85
 
 """
-Peak process memory while a file's table is scored in memory, as a multiple of the final table
-(measured 37.9 GB private for an 18.4 GB table, library included).
-"""
-const MAIN_IN_MEMORY_PEAK_FACTOR = 2.0
+    main_memory_limit_bytes() -> Int
 
+Process memory a MainSearch file may reach while it is scored in memory: `MAIN_MEMORY_FRACTION` of
+the memory available to this process (`Sys.total_memory()`, which respects container and cgroup
+limits), or `PIONEER_MAIN_MEMORY_BUDGET_GB` when set.
 """
-    main_memory_budget_bytes() -> Int
-
-Memory a MainSearch file may use to be scored in memory: half of the memory available to this
-process (`Sys.total_memory()`, which respects container and cgroup limits), or
-`PIONEER_MAIN_MEMORY_BUDGET_GB` when set.
-"""
-function main_memory_budget_bytes()
+function main_memory_limit_bytes()
     gb = get(ENV, "PIONEER_MAIN_MEMORY_BUDGET_GB", "")
     isempty(gb) || return round(Int, parse(Float64, gb) * 1e9)
-    return Int(Sys.total_memory() ÷ 2)
+    return round(Int, MAIN_MEMORY_FRACTION * Sys.total_memory())
 end
 
-"""Projected peak memory of scoring a table, from its size after the per-scan features."""
-main_projected_peak(table_bytes::Integer) = MAIN_IN_MEMORY_PEAK_FACTOR * MAIN_TABLE_GROWTH * table_bytes
+"""Process memory scoring a table of `table_bytes` in memory would need, the process holding `held`."""
+main_scoring_need(held::Integer, table_bytes::Integer) =
+    held + round(Int, MAIN_SCORING_EXTRA_PER_TABLE_BYTE * table_bytes)
+
+"""Share of the commit headroom (`commit_headroom_bytes`) scoring in memory may use."""
+const MAIN_COMMIT_FRACTION = 0.9
+
+"""
+    main_commit_headroom_bytes() -> Int
+
+Memory the process may still commit (`commit_headroom_bytes`: on Windows, the commit charge still
+available plus what the page file may still grow by; unlimited elsewhere). Unlimited when
+`PIONEER_MAIN_MEMORY_BUDGET_GB` is set (an explicit budget replaces both checks).
+`PIONEER_DIAG_COMMIT_HEADROOM_GB` replaces the measurement (testing only).
+"""
+function main_commit_headroom_bytes()
+    isempty(get(ENV, "PIONEER_MAIN_MEMORY_BUDGET_GB", "")) || return typemax(Int)
+    gb = get(ENV, "PIONEER_DIAG_COMMIT_HEADROOM_GB", "")
+    isempty(gb) || return round(Int, parse(Float64, gb) * 1e9)
+    return commit_headroom_bytes()
+end
+
+"""
+    main_fits_in_memory(table_bytes, limit) -> (fits, need, need_before_gc, commit_ok)
+
+Whether the rows held so far (`table_bytes`, already resident) can be scored in memory, from the
+memory the process holds now (`process_private_bytes`): the process must stay within `limit`
+(`need <= limit`), and the memory scoring adds (`need` minus what is held now) must fit in
+`MAIN_COMMIT_FRACTION` of the commit headroom (`commit_ok`). The second check matters on Windows,
+where memory past physical RAM is paged out (slower, not fatal) but committing past the commit limit,
+e.g. with a fixed or small page file or a nearly full disk, makes allocations fail.
+
+Garbage the GC has not collected yet counts as held, so when the first measurement does not fit a
+full GC runs and the measurement is repeated; the GC runs only then. `need_before_gc` is that first
+measurement (equal to `need` when no GC ran).
+"""
+function main_fits_in_memory(table_bytes::Integer, limit::Integer)
+    function check()
+        held = process_private_bytes()
+        need = main_scoring_need(held, table_bytes)
+        need > limit && return (false, need, true)    # over the limit: skip the commit query
+        commit_ok = need - held <= MAIN_COMMIT_FRACTION * main_commit_headroom_bytes()
+        return (commit_ok, need, commit_ok)
+    end
+    fits, need, commit_ok = check()
+    fits && return (true, need, need, true)
+    GC.gc()
+    fits_gc, need_gc, commit_ok_gc = check()
+    return (fits_gc, need_gc, need, commit_ok_gc)
+end
+
+gb1(b) = round(b / 1e9, digits = 1)
 
 """Bytes held by a table of plain-data columns."""
 table_bytes(df::DataFrame) = sum(c -> length(c) * sizeof(eltype(c)), eachcol(df); init = 0)
@@ -315,9 +367,11 @@ end
 the two per-scan feature passes MainSearch otherwise runs after `library_search` (scan competition
 and the MS1 lookup; both read only a row's own scan) and is sorted by (precursor_idx, scan_idx).
 
-Rounds stay in memory while the projected peak of scoring the file in memory (`main_projected_peak`
-of the larger of the rows held so far and the whole file's table, extrapolated from the rows kept per
-candidate in the fitted rounds) fits `main_memory_budget_bytes()`. If every round fits, they are joined
+After each round, the rows held so far stay in memory while scoring them in memory would fit
+`main_memory_limit_bytes()`, judged from the memory the process holds now (`main_fits_in_memory`),
+not from a projection of the rows later rounds will keep: that depends on the exact RT and m/z
+filters run inside deconvolution. The held rows only grow, so the last round's check is made on the
+file's whole table. If every round fits, they are joined
 and sorted into the file's table, which MainSearch scores in memory as usual (per-scan passes and sort
 already done: `main_per_scan_done`). Once a round would not fit, the rounds held so far and every
 later round are written to disk, and MainSearch merges them into precursor-complete parts and scores
@@ -338,11 +392,11 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
     getZTGeometry(search_context, ms_file_idx) === nothing || return nothing
     round_candidates = main_chunk_candidates()
     n_candidates > round_candidates || return nothing
-    budget = main_memory_budget_bytes()
+    limit = main_memory_limit_bytes()
     chunks = main_thread_chunks(thread_tasks, scan_to_prec_idx, cld(n_candidates, round_candidates))
     psm_dir = zt_psm_dir(search_context, ms_file_idx)
     workspace = Int32SortPermWorkspace()
-    held = DataFrame[]; held_bytes = 0; on_disk = false; disk_refused = false
+    held = DataFrame[]; held_bytes = 0; on_disk = false; disk_refused = false; commit_ok = true
     chunk_paths = String[]; n_rows = 0; max_rows = 0; empty_schema = nothing
     t_deconv = 0.0; t_features = 0.0; t_write = 0.0
     function write_round!(df, ci)
@@ -354,11 +408,9 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
         isempty(keep) || (mkpath(keep); cp(path, joinpath(keep, basename(path)); force = true))
     end
     held_ci = Int[]
-    cand_done = 0; bytes_done = 0     # candidates and table bytes of the rounds fitted so far
+    need = 0                          # process memory scoring the held rows in memory would need
     for (ci, tasks) in enumerate(chunks)
         isempty(tasks) && continue
-        cand_done += sum(t -> sum(si -> (r = scan_to_prec_idx[si]; ismissing(r) ? 0 : length(r)), last(t); init = 0),
-                         tasks; init = 0)
         t_c = time()
         parts = deconv(tasks)
         raw = length(parts) == 1 ? parts[1] : vcat(parts...)
@@ -373,36 +425,41 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
             end
             _assert_precursor_scan_sorted(raw)
             rb = table_bytes(raw)
-            bytes_done += rb
-            # The whole file's table, extrapolated from the rows the fitted rounds kept per candidate,
-            # so a file that will not fit goes to disk at its first round instead of its last.
-            projected_file = bytes_done * n_candidates / max(cand_done, 1)
-            fits = main_projected_peak(max(held_bytes + rb, round(Int, projected_file))) <= budget
+            fits = true
+            if !on_disk && !disk_refused
+                # `raw` and the held rounds are resident, so the measurement already counts them
+                fits, need, need_before_gc, commit_ok = main_fits_in_memory(held_bytes + rb, limit)
+                need_before_gc != need &&
+                    @debug_l1 "Main search: round $ci over the limit before GC " *
+                              "($(gb1(need_before_gc)) GB needed); after GC $(gb1(need)) GB of $(gb1(limit)) GB"
+            end
             if !on_disk && (disk_refused || fits)
                 push!(held, raw); push!(held_ci, ci); held_bytes += rb
             else
                 if !on_disk
-                    # Over budget: move to disk, if the results disk can hold the file's PSMs.
-                    need = main_spill_bytes(n_candidates)
+                    # Over the limit: move to disk, if the results disk can hold the file's PSMs.
+                    spill = main_spill_bytes(n_candidates)
                     free = disk_free_bytes(getDataOutDir(search_context))
-                    if free < need
-                        @user_warn "Main search: this file's PSMs exceed the memory budget " *
-                                   "($(round(budget / 1e9, digits = 1)) GB) but only $(round(free / 1e9, digits = 1)) GB " *
-                                   "is free on the results disk (about $(round(need / 1e9, digits = 1)) GB needed); " *
+                    if free < spill
+                        @user_warn "Main search: this file's PSMs would bring Pioneer to $(gb1(need)) GB, over its " *
+                                   "$(gb1(limit)) GB memory limit, but only $(gb1(free)) GB " *
+                                   "is free on the results disk (about $(gb1(spill)) GB needed); " *
                                    "keeping them in memory (same results, more memory)"
                         disk_refused = true
                         push!(held, raw); push!(held_ci, ci); held_bytes += rb
                         @goto next_round
                     end
+                    why = commit_ok ? "over the $(gb1(limit)) GB limit" :
+                          "more than Windows can still commit ($(gb1(main_commit_headroom_bytes())) GB " *
+                          "including page-file growth)"
+                    @debug_l1 "Main search: scoring in memory would need $(gb1(need)) GB, $why at round " *
+                              "$ci of $(length(chunks)) ($(gb1(held_bytes + rb)) GB of rows held); " *
+                              "keeping this file's PSMs on disk"
                     rm(psm_dir; recursive = true, force = true); mkpath(psm_dir)
                     for (h, hci) in zip(held, held_ci)
                         write_round!(h, hci)
                     end
                     empty!(held); empty!(held_ci); held_bytes = 0; on_disk = true
-                    @debug_l1 "Main search: projected in-memory peak " *
-                              "$(round(main_projected_peak(round(Int, projected_file)) / 1e9, digits = 1)) GB over the " *
-                              "$(round(budget / 1e9, digits = 1)) GB budget at round $ci of $(length(chunks)); " *
-                              "keeping this file's PSMs on disk"
                 end
                 write_round!(raw, ci)
             end
@@ -411,7 +468,8 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
         n_rows += nrow(raw); max_rows = max(max_rows, nrow(raw))
         t_deconv += t_d
         @debug_l1 "Main chunk $ci/$(length(chunks)): $(sum(t -> length(last(t)), tasks)) scans -> $(nrow(raw)) PSMs " *
-                  "(deconv $(round(t_d; digits=1))s)"
+                  "(deconv $(round(t_d; digits=1))s" *
+                  (on_disk ? ")" : "; held $(gb1(held_bytes)) GB, in-memory need $(gb1(need)) GB of $(gb1(limit)) GB)")
         raw = nothing
     end
     if on_disk
@@ -427,9 +485,8 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
         length(held) > 1 && permute_psms_by_precursor_idx!(psms, workspace)
     end
     @user_info "Main search: $(length(chunks)) rounds, $n_rows PSMs in memory " *
-               "($(round(held_bytes / 1e9, digits = 1)) GB, projected peak " *
-               "$(round(main_projected_peak(held_bytes) / 1e9, digits = 1)) GB of a " *
-               "$(round(budget / 1e9, digits = 1)) GB budget); deconv $(round(t_deconv; digits=1))s, " *
+               "($(gb1(held_bytes)) GB; scoring needs about $(gb1(need)) GB of a " *
+               "$(gb1(limit)) GB limit); deconv $(round(t_deconv; digits=1))s, " *
                "per-scan features $(round(t_features; digits=1))s, join $(round(t_join; digits=1))s"
     set_main_per_scan_done!(search_context, ms_file_idx, true)
     return psms
