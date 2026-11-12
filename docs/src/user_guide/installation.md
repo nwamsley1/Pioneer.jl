@@ -9,7 +9,7 @@
 
 ## Install the Pioneer App
 
-Download the installer for the operating system from the [releases page](https://github.com/nwamsley1/Pioneer.jl/releases/latest):
+Download the installer for the operating system from the [download page](https://pioneeromics.bio/download/):
 
 | Platform | Installer |
 |---|---|
