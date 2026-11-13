@@ -257,10 +257,19 @@ been collected, per byte of that table (after the per-scan features): the column
 (280 vs 195 B per row), the join and sort of the rounds, and the scoring buffers.
 
 Measured on UConn PXD082297 (21.9 and 13.6 GB tables, scored in memory): peak private memory
-during scoring was 0.64-0.69 x the table above the memory held at the end of collection; 0.8
-leaves margin above that.
+during scoring was 0.64-0.69 x the table above the memory held at the end of collection on Windows (18 threads),
+and 0.7-1.2 x on Linux (RssAnon, 8-64 threads, Slurm jobs of 48-96 GB), growing with the thread count. Linux uses
+1.0 because exceeding a job's limit there gets the process killed (clusters rarely have swap); on Windows and macOS
+the excess is paged or swapped (slower, not fatal) and the Windows commit guard covers the fatal case.
 """
-const MAIN_SCORING_EXTRA_PER_TABLE_BYTE = 0.8
+const MAIN_SCORING_EXTRA_PER_TABLE_BYTE = Sys.islinux() ? 1.0 : 0.8
+
+"""
+Memory scoring needs per thread, on top of `MAIN_SCORING_EXTRA_PER_TABLE_BYTE`: with more threads allocating at
+once, more freed memory is held (GC and per-thread allocator arenas) before it is reused. On Linux the excess over
+1.0 x the table reached 2.6 GB at 32 threads (13.6 GB table); 0.1 GB per thread covers every run measured.
+"""
+const MAIN_SCORING_EXTRA_PER_THREAD = 100_000_000
 
 """Share of total memory a MainSearch file may bring the process to."""
 const MAIN_MEMORY_FRACTION = 0.85
@@ -269,18 +278,70 @@ const MAIN_MEMORY_FRACTION = 0.85
     main_memory_limit_bytes() -> Int
 
 Process memory a MainSearch file may reach while it is scored in memory: `MAIN_MEMORY_FRACTION` of
-the memory available to this process (`Sys.total_memory()`, which respects container and cgroup
-limits), or `PIONEER_MAIN_MEMORY_BUDGET_GB` when set.
+the memory available to this process (`memory_limit_bytes()`: physical RAM, cgroup limits including
+the parents' (Slurm), and the Slurm allocation), or `PIONEER_MAIN_MEMORY_BUDGET_GB` when set.
 """
 function main_memory_limit_bytes()
     gb = get(ENV, "PIONEER_MAIN_MEMORY_BUDGET_GB", "")
     isempty(gb) || return round(Int, parse(Float64, gb) * 1e9)
-    return round(Int, MAIN_MEMORY_FRACTION * Sys.total_memory())
+    return round(Int, MAIN_MEMORY_FRACTION * memory_limit_bytes())
 end
 
-"""Process memory scoring a table of `table_bytes` in memory would need, the process holding `held`."""
+"""
+    log_memory_limit()
+
+Sets Julia's GC heap target to the Main Search limit (`set_gc_memory_target!`) and logs, at the start of a
+search, the memory limit Main Search will use and where it came from, so a run that is
+later killed for using too much memory shows what Pioneer believed it had. When no limit was found (Pioneer then
+assumes the whole machine's memory), warns if the process runs in a batch job, and only notes it in a container with
+its own cgroup view (usually Docker without a memory limit, where that is right).
+"""
+function log_memory_limit()
+    m = memory_limit_info()
+    gb = x -> round(x / 1e9; digits = 1)
+    budget = get(ENV, "PIONEER_MAIN_MEMORY_BUDGET_GB", "")
+    main = isempty(budget) ?
+        "$(gb(main_memory_limit_bytes())) GB ($(round(Int, 100 * MAIN_MEMORY_FRACTION))% of $(gb(m.bytes)) GB, from $(m.source))" :
+        "$(gb(main_memory_limit_bytes())) GB (set by PIONEER_MAIN_MEMORY_BUDGET_GB)"
+    job = batch_job()
+    # The GC heap target follows the detected limit, not PIONEER_MAIN_MEMORY_BUDGET_GB (a tiny budget used to
+    # force the disk path must not make the GC collect constantly).
+    gcset = set_gc_memory_target!(round(Int, MAIN_MEMORY_FRACTION * m.bytes))
+    gcmsg = gcset === nothing ? "" : gcset[1] == gcset[2] ? "; GC heap target $(gb(gcset[2])) GB (unchanged)" :
+            "; GC heap target set to $(gb(gcset[2])) GB"
+    @user_info "Memory: Main Search keeps PSMs in memory up to $main. Limits found: $(m.details)" *
+               (job === nothing ? "" : "; running in $job") *
+               ". Scoring in memory is estimated to need $(MAIN_SCORING_EXTRA_PER_TABLE_BYTE) x the PSM table + " *
+               "$(gb(MAIN_SCORING_EXTRA_PER_THREAD * Threads.nthreads())) GB for $(Threads.nthreads()) threads" *
+               ". Process memory is measured as $(process_memory_source())" *
+               (Sys.iswindows() ? "; commit headroom $(gb(commit_headroom_bytes())) GB" : "") * gcmsg * "."
+    if isempty(budget) && m.source == "physical RAM"
+        if job !== nothing
+            # A batch job whose limit Pioneer cannot see (e.g. LSF without cgroup enforcement, or a container
+            # started inside the job without its variables): the scheduler may kill Pioneer, so warn.
+            @user_warn "Running in $job, but no job memory limit is visible to Pioneer (no cgroup limit or Slurm " *
+                       "variable), so it assumes all $(gb(m.bytes)) GB of the machine's memory. If the job has a " *
+                       "smaller limit, the scheduler may kill Pioneer without warning; set " *
+                       "PIONEER_MAIN_MEMORY_BUDGET_GB to about 85% of the job's memory (in GB)."
+        elseif in_cgroup_namespace()
+            # Usually a Docker/Podman container run without a memory limit, where using the whole machine is
+            # right; only noted, so the log still shows it if a limit set outside the container was missed.
+            @user_info "Note: running in a container with its own cgroup view and no memory limit inside it, so " *
+                       "Pioneer assumes the machine's $(gb(m.bytes)) GB. If the container runs inside a batch job " *
+                       "with a smaller limit, set PIONEER_MAIN_MEMORY_BUDGET_GB to about 85% of that limit (in GB) " *
+                       "or pass the scheduler's variables (e.g. SLURM_MEM_PER_NODE) into the container."
+        end
+    end
+    return nothing
+end
+
+"""
+Process memory scoring a table of `table_bytes` in memory would need, the process holding `held`: the scoring
+extra per table byte plus a per-thread allowance (`MAIN_SCORING_EXTRA_PER_THREAD` x `Threads.nthreads()`).
+"""
 main_scoring_need(held::Integer, table_bytes::Integer) =
-    held + round(Int, MAIN_SCORING_EXTRA_PER_TABLE_BYTE * table_bytes)
+    held + round(Int, MAIN_SCORING_EXTRA_PER_TABLE_BYTE * table_bytes) +
+    MAIN_SCORING_EXTRA_PER_THREAD * Threads.nthreads()
 
 """Share of the commit headroom (`commit_headroom_bytes`) scoring in memory may use."""
 const MAIN_COMMIT_FRACTION = 0.9
@@ -452,7 +513,7 @@ function chunked_main_deconvolution(params, deconv, spectra::MassSpecData,
                     why = commit_ok ? "over the $(gb1(limit)) GB limit" :
                           "more than Windows can still commit ($(gb1(main_commit_headroom_bytes())) GB " *
                           "including page-file growth)"
-                    @debug_l1 "Main search: scoring in memory would need $(gb1(need)) GB, $why at round " *
+                    @user_info "Main search: scoring in memory would need $(gb1(need)) GB, $why at round " *
                               "$ci of $(length(chunks)) ($(gb1(held_bytes + rb)) GB of rows held); " *
                               "keeping this file's PSMs on disk"
                     rm(psm_dir; recursive = true, force = true); mkpath(psm_dir)
