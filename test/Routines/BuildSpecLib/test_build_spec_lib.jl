@@ -606,6 +606,7 @@ end
         params["max_koina_batch"] = 100
         params["include_contaminants"] = false  # Don't add contaminants for testing
         delete!(params["library_params"], "calibration_raw_file")
+        params["library_params"]["im_model"] = ""  # no ion-mobility fixtures recorded
         # Clear variable modifications for simpler testing
         params["variable_mods"] = Dict("pattern" => [], "mass" => [], "name" => [])
         
@@ -848,6 +849,7 @@ end
         params["max_koina_batch"] = 200
         params["include_contaminants"] = false  # Don't add contaminants for testing
         delete!(params["library_params"], "calibration_raw_file")
+        params["library_params"]["im_model"] = ""  # no ion-mobility fixtures recorded
         # Clear variable modifications for simpler testing
         params["variable_mods"] = Dict("pattern" => [], "mass" => [], "name" => [])
         
