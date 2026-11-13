@@ -88,6 +88,8 @@ export const seg = (active: boolean): CSSProperties => ({
 /** The track a `seg` pair sits in. */
 export const SEG_TRACK: CSSProperties = {
   display: 'inline-flex',
+  // Sized to its buttons, even inside a stretching flex column.
+  width: 'fit-content',
   padding: 3,
   background: '#EEF1F4',
   borderRadius: 10,

@@ -175,7 +175,7 @@ predict; every other fragment model assumes carbamidomethyl-C.
 | `library_params.frag_mz_max` | Float | `2020.0` | Manual upper fragment m/z bound. |
 | `library_params.prec_mz_min` | Float | `390.0` | Manual lower precursor m/z bound. |
 | `library_params.prec_mz_max` | Float | `1010.0` | Manual upper precursor m/z bound. |
-| `library_params.im_model` | String | `""` | Koina ion-mobility model for timsTOF libraries (`"alphapept_ccs"` or `"im2deep"`); adds `ccs` / `inv_ion_mobility` precursor columns. Empty skips it. |
+| `library_params.im_model` | String | `"alphapept_ccs"` | Koina ion-mobility model for timsTOF libraries (`"alphapept_ccs"` or `"im2deep"`); adds `ccs` / `inv_ion_mobility` precursor columns. Empty skips it. |
 | `library_params.frag_index_local_id_type` | String | `"auto"` | Width of the fragment index's partition-local precursor IDs: `"auto"`, `"UInt16"` or `"UInt32"`. UInt16 partitions hold at most 65,535 precursors and a denser partition is split, so on large libraries the effective partition width drops below its nominal width (about 2.5 Da at 5 Da for a 10-million-precursor library). `"auto"` picks UInt32 only in that case. The choice is logged and recorded in the library's `config.json`. |
 
 ### Prediction Models

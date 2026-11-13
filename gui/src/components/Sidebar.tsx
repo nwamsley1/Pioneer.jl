@@ -140,7 +140,7 @@ const STATUS_TEXT: Record<Job['status'], string> = {
   done: 'Completed',
   failed: 'Failed',
   cancelled: 'Cancelled',
-  interrupted: 'Interrupted — click to reload its parameters',
+  interrupted: 'Interrupted',
 }
 
 /** The indeterminate "barber pole" bar the design uses while a job runs — an
@@ -177,10 +177,8 @@ function SettingsPanel({
   const [dir, setDir] = useState(defaultDir())
   const [showLicense, setShowLicense] = useState(false)
   const heading: React.CSSProperties = {
-    fontSize: 10,
-    fontWeight: 700,
-    letterSpacing: '0.07em',
-    textTransform: 'uppercase',
+    fontSize: 12,
+    fontWeight: 600,
     color: 'var(--pio-nav-fg-faint)',
     marginBottom: 7,
   }
@@ -341,7 +339,6 @@ interface NavItemProps {
   id: CommandId
   title: string
   subtitle: string
-  chip: string
   active: boolean
   collapsed: boolean
   disabled?: boolean
@@ -353,7 +350,6 @@ function NavItem({
   id,
   title,
   subtitle,
-  chip,
   active,
   collapsed,
   disabled,
@@ -388,7 +384,7 @@ function NavItem({
       className={active ? 'pio-nav-active' : 'pio-nav-item'}
       onClick={() => !disabled && onClick(id)}
       style={base}
-      title={disabled ? `${title} — not implemented yet` : title}
+      title={disabled ? `${title} (not implemented yet)` : title}
     >
       {icon}
       {!collapsed && (
@@ -404,22 +400,6 @@ function NavItem({
           <span style={{ fontSize: 11, color: 'var(--pio-nav-fg-dim)' }}>{subtitle}</span>
         </span>
       )}
-      {!collapsed && (
-        <span
-          style={{
-            marginLeft: 'auto',
-            fontSize: 10,
-            fontWeight: 600,
-            color: 'var(--pio-nav-fg-faint)',
-            border: '1px solid var(--pio-nav-hair)',
-            borderRadius: 5,
-            padding: '2px 5px',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {chip}
-        </span>
-      )}
     </button>
   )
 }
@@ -429,7 +409,6 @@ interface Props {
   selected: CommandId
   jobs: Job[]
   viewJobId: string | null
-  modKey: string
   theme: ThemeId
   onTheme: (id: ThemeId) => void
   onSelect: (id: CommandId) => void
@@ -453,7 +432,6 @@ export function Sidebar({
   selected,
   jobs,
   viewJobId,
-  modKey,
   theme,
   onTheme,
   onSelect,
@@ -539,9 +517,7 @@ export function Sidebar({
     ? { display: 'none' }
     : {
         padding: '16px 12px 8px',
-        fontSize: 10.5,
-        letterSpacing: '0.08em',
-        textTransform: 'uppercase',
+        fontSize: 12,
         color: 'var(--pio-nav-fg-faint)',
         fontWeight: 600,
       }
@@ -924,7 +900,7 @@ export function Sidebar({
   return (
     <aside
       style={{
-        width: collapsed ? 66 : 276,
+        width: collapsed ? 66 : 232,
         flex: 'none',
         background: 'var(--pio-nav)',
         color: 'var(--pio-nav-fg)',
@@ -1021,7 +997,6 @@ export function Sidebar({
           id="convertraw"
           title="ConvertRAW"
           subtitle=".raw → .arrow"
-          chip={`${modKey}1`}
           active={selected === 'convertraw'}
           collapsed={collapsed}
           onClick={onSelect}
@@ -1052,7 +1027,6 @@ export function Sidebar({
           id="buildspeclib"
           title="BuildSpecLib"
           subtitle="FASTA → library"
-          chip={`${modKey}2`}
           active={selected === 'buildspeclib'}
           collapsed={collapsed}
           onClick={onSelect}
@@ -1072,7 +1046,6 @@ export function Sidebar({
           id="downloadspeclib"
           title="DownloadSpecLib"
           subtitle="Fetch a prebuilt library"
-          chip={`${modKey}3`}
           active={selected === 'downloadspeclib'}
           collapsed={collapsed}
           onClick={onSelect}
@@ -1092,8 +1065,7 @@ export function Sidebar({
         <NavItem
           id="searchdia"
           title="SearchDIA"
-          subtitle="Find & Quantify Proteins"
-          chip={`${modKey}4`}
+          subtitle="Identify & quantify proteins"
           active={selected === 'searchdia'}
           collapsed={collapsed}
           onClick={onSelect}
@@ -1152,10 +1124,10 @@ export function Sidebar({
             <InfoDot
               tone="dark"
               text={
-                'Search matches a run\u2019s name, number, command and status, and every path it used \u2014 MS data folder, spectral library, results folder, FASTA files. ' +
+                'Search matches a run\u2019s name, number, command and status, and every path it used: MS data folder, spectral library, results folder, FASTA files. ' +
                 'For a library build it also matches the modifications and the prediction model, so \u201coxidation\u201d or \u201cprosit\u201d finds one. ' +
                 'Several words narrow rather than widen: \u201cyeast phospho\u201d matches only runs with both. ' +
-                'Individual MS file names are not searchable \u2014 only the folder they are in was recorded.'
+                'Individual MS file names are not searchable. Only the folder they are in was recorded.'
               }
             />
           </div>
@@ -1204,7 +1176,7 @@ export function Sidebar({
                 font: "11.5px 'IBM Plex Sans'",
               }}
             >
-              {`Showing ${windowSize} of ${shown.length.toLocaleString()} — scroll for more`}
+              {`Showing ${windowSize} of ${shown.length.toLocaleString()}. Scroll for more`}
             </button>
           )}
         </div>

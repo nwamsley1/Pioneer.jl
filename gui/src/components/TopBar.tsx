@@ -18,14 +18,20 @@ export interface TopBarProps {
   runLabel: string
   /** "Edit the .json directly", or "View the command line" for ConvertRAW. */
   previewLabel: string
+  /** Short text on the button itself; previewLabel is the tooltip. */
+  previewText: string
   onThreads: (n: number) => void
   onEditJson: () => void
   onRun: () => void
 }
 
+/** One height for every header control: the .json button, the threads
+ *  stepper (inner height plus its 1px border) and Run. */
+const CONTROL_H = 32
+
 const stepBtn: React.CSSProperties = {
   width: 26,
-  height: 28,
+  height: CONTROL_H - 2,
   border: 'none',
   background: '#F8FAFB',
   cursor: 'pointer',
@@ -40,15 +46,17 @@ export function TopBar({
   maxThreads,
   runLabel,
   previewLabel,
+  previewText,
   onThreads,
   onEditJson,
   onRun,
 }: TopBarProps) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 'none' }}>
-      {/* Icon only. The label ("Edit the .json directly") was the widest thing in
-          the header and pushed Run off at the narrow default width; the tooltip
-          carries the wording instead.
+      {/* A short text label (".json" or "Command"): an icon alone did not say
+          what it opened. The full wording ("Edit the .json directly") was the
+          widest thing in the header and pushed Run off at the narrow default
+          width, so it stays in the tooltip.
 
           There was also a status pill here, mirroring the selected job's state.
           It came out: the log drawer shows the identical string and the queue
@@ -64,26 +72,19 @@ export function TopBar({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 30,
-          height: 30,
+          height: CONTROL_H,
+          boxSizing: 'border-box',
           borderRadius: 8,
           background: 'none',
           border: '1px solid #E5E9ED',
           cursor: 'pointer',
           color: '#667085',
-          padding: 0,
+          padding: '0 10px',
+          font: "500 12px 'IBM Plex Mono'",
           flex: 'none',
         }}
       >
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-          <path
-            d="m13 5 6 6M4 20l1-4L16 5l3 3L8 19l-4 1Z"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        {previewText}
       </button>
 
       {showThreads && (
@@ -129,7 +130,8 @@ export function TopBar({
                 border: 'none',
                 borderLeft: '1px solid #E5E9ED',
                 borderRight: '1px solid #E5E9ED',
-                padding: '6px 0',
+                height: CONTROL_H - 2,
+                padding: 0,
                 font: "600 13px 'IBM Plex Mono'",
                 color: threads === 0 ? '#C0392B' : '#1A2230',
                 outline: 'none',
@@ -155,19 +157,20 @@ export function TopBar({
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
-          padding: '10px 18px',
+          gap: 7,
+          height: CONTROL_H,
+          padding: '0 14px',
           border: 'none',
-          borderRadius: 10,
+          borderRadius: 8,
           cursor: 'pointer',
-          font: "700 13.5px 'IBM Plex Sans'",
+          font: "700 13px 'IBM Plex Sans'",
           color: 'var(--pio-run-fg)',
           background: 'linear-gradient(135deg,var(--pio-run-from),var(--pio-run-to))',
-          boxShadow: '0 4px 12px var(--pio-accent-shadow)',
+          boxShadow: '0 1px 2px rgba(15,20,27,0.15)',
           flex: 'none',
         }}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
           <path d="M7 4.5v15l13-7.5z" />
         </svg>
         {runLabel}

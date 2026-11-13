@@ -145,7 +145,8 @@ export interface ModEntry {
 export interface PredictionModel {
   id: string
   label: string
-  note: string
+  /** Short citation shown beside the label in the model menu. */
+  cite?: string
   peptideLength: { min: number; max: number } | null
 }
 
@@ -153,25 +154,24 @@ export const PREDICTION_MODELS: PredictionModel[] = [
   {
     id: 'altimeter',
     label: 'Altimeter',
-    note: 'Spline coefficients across collision energies; instrument-aware.',
+    cite: 'Wamsley et al., 2026',
     peptideLength: null,
   },
   {
     id: 'prosit_2020_hcd',
     label: 'Prosit 2020 HCD',
-    note: 'Fixed collision energy, no PTM support beyond the defaults.',
+    cite: 'Wilhelm et al., 2021',
     peptideLength: { min: 7, max: 30 },
   },
   {
     id: 'prosit_2024_ptm',
     label: 'Prosit 2024 PTM',
-    note: 'Fixed collision energy, HCD, with PTM support.',
     peptideLength: { min: 7, max: 30 },
   },
   {
     id: 'prosit_2025_40ptm',
     label: 'Prosit 2025 40-PTM',
-    note: 'As 2024 PTM, with a wider (40) modification vocabulary.',
+    cite: 'Gabriel et al., 2025',
     peptideLength: { min: 7, max: 30 },
   },
 ]
@@ -270,7 +270,6 @@ export interface BuildParams {
   maxVarMods: string
   addDecoys: boolean
   includeContaminants: boolean
-  predictFragments: boolean
   variableMods: ModEntry[]
   fixedMods: ModEntry[]
   /** logging.debug_console_level: 0 off, 1 on. */
@@ -282,7 +281,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   fastaFiles: [],
   libPath: '',
   predictionModel: 'altimeter',
-  timsTOF: false,
+  timsTOF: true,
   rtModel: DEFAULT_RT_MODEL,
   calibrationFile: '',
   // Mirrors assets/example_config/defaultBuildLibParams.json, so an untouched
@@ -309,7 +308,6 @@ export const BUILD_DEFAULTS: BuildParams = {
   maxVarMods: '1',
   addDecoys: true,
   includeContaminants: true,
-  predictFragments: true,
   // Built from the catalogue so the starting rows are exactly what the picker
   // would add; hand-written copies drifted (Oxidation was 15.99491).
   variableMods: [modEntry('altimeter', 35)],

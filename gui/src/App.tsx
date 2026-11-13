@@ -248,10 +248,10 @@ const OVERWRITE_COPY: Record<CommandId, { title: string; confirm: string }> = {
 }
 
 const SUBTITLES: Record<CommandId, string> = {
-  searchdia: 'Find & quantify proteins',
+  searchdia: 'Identify & quantify proteins',
   buildspeclib: 'Predict a spectral library',
-  downloadspeclib: 'Download a prebuilt spectral library',
-  convertraw: 'Convert .raw or .mzML files to Arrow',
+  downloadspeclib: 'Fetch a prebuilt library',
+  convertraw: 'Convert vendor files for Pioneer',
 }
 
 /** Append one line of process output, emulating the bits of a terminal that
@@ -661,11 +661,11 @@ export default function App() {
         const info = await backend.inspectPath(path)
         const isDir = info.is_dir
         if (kind === 'dir' && !isDir) {
-          setRunError('That is a file — this field takes a folder.')
+          setRunError('That is a file. This field takes a folder.')
           return
         }
         if (kind === 'file' && isDir) {
-          setRunError('That is a folder — this field takes a file.')
+          setRunError('That is a folder. This field takes a file.')
           return
         }
         setRunError('')
@@ -879,7 +879,7 @@ export default function App() {
               logLines: [
                 ...j.logLines,
                 {
-                  text: `ERROR: no ${out} in ${dir}. The converter exited 0 but converted nothing — check the messages above for files it could not open.`,
+                  text: `ERROR: no ${out} in ${dir}. The converter exited 0 but converted nothing. Check the messages above for files it could not open.`,
                   stream: 'app' as const,
                   transient: false,
                 },
@@ -1211,13 +1211,13 @@ export default function App() {
   /** The destination note. Deliberately shows the size that is about to land:
    *  a 3 GiB fetch should say so before it starts, not once it is running. */
   const downloadDestNote: Note = !download.dest.trim()
-    ? { level: '', msg: 'Required — the library is written into this folder.' }
+    ? { level: '', msg: '' }
     : downloadTargetExists && download.selected
       ? {
           level: download.force ? 'warn' : 'error',
           msg: download.force
             ? `${download.selected} already exists here and will be replaced.`
-            : `${download.selected} already exists here. Turn on “Replace an existing copy” to overwrite it, or choose another folder.`,
+            : `${download.selected} already exists here. Turn on “Overwrite if already downloaded”, or choose another folder.`,
         }
       : (() => {
           const lib = libraries.find((l) => l.name === download.selected)
@@ -1354,7 +1354,7 @@ export default function App() {
       ...n,
       [kind]: '',
       ...(displaced.length
-        ? { variable: `Fixed modifications now cover ${displaced.join(', ')} — removed from variable.` }
+        ? { variable: `Fixed modifications now cover ${displaced.join(', ')}, so they were removed from variable.` }
         : null),
     }))
     setRunError('')
@@ -1400,7 +1400,7 @@ export default function App() {
       return { level: 'warn', msg: 'This rule finds no cleavage site in the sample sequence.' }
     }
     if (sites.length > SAMPLE_SEQUENCE.length / 2) {
-      return { level: 'warn', msg: 'This rule cleaves almost everywhere — check it is what you meant.' }
+      return { level: 'warn', msg: 'This rule cleaves almost everywhere. Check it is what you meant.' }
     }
     return { level: '', msg: '' }
   })()
@@ -1855,7 +1855,7 @@ export default function App() {
       return null
     }
 
-    return 'Unrecognized configuration — expected a SearchDIA or BuildSpecLib config.'
+    return 'Unrecognized configuration. Expected a SearchDIA or BuildSpecLib config.'
   }
 
   const applyLoad = (draft: string): string | null => {
@@ -1937,7 +1937,6 @@ export default function App() {
         }[viewJob.status]
     : 'Ready'
   const extraKeys = extraLeafPaths(currentExtras)
-  const modKeyLabel = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl '
   const runLabel = `Run ${TITLES[command]}`
 
   return (
@@ -1963,7 +1962,6 @@ export default function App() {
         selected={command}
         jobs={jobs}
         viewJobId={viewJobId}
-        modKey={modKeyLabel}
         theme={theme}
         onTheme={setTheme}
         onSelect={(id) => {
@@ -2050,6 +2048,7 @@ export default function App() {
             maxThreads={maxThreads}
             runLabel={runLabel}
             previewLabel={isArgv ? 'View the command line' : 'Edit the .json directly'}
+            previewText={isArgv ? 'Command' : '.json'}
             onThreads={setThreads}
             onEditJson={() => setJsonOpen(true)}
             onRun={() => run()}

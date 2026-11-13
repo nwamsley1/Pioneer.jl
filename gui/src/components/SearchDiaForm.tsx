@@ -9,6 +9,7 @@
  *  reproduced: the Console variant carries that state on its Component class
  *  but never renders it — everything is on one page.
  */
+import { InfoDot } from './InfoDot'
 import { LibrarySummary } from './LibrarySummary'
 import { NumField } from './NumField'
 import { RecentLibraries } from './RecentLibraries'
@@ -30,10 +31,8 @@ const CARD: React.CSSProperties = {
 
 const H2: React.CSSProperties = {
   margin: 0,
-  fontSize: 12,
-  fontWeight: 700,
-  letterSpacing: '0.04em',
-  textTransform: 'uppercase',
+  fontSize: 14,
+  fontWeight: 650,
   color: '#1B2A4A',
 }
 
@@ -241,8 +240,8 @@ function MsFileList({
         <span style={HINT}>
           {files.length
             ? batch
-              ? `${files.length} file${files.length > 1 ? 's' : ''}, searched separately \u2014 ${files.length} run${files.length > 1 ? 's' : ''} queued.`
-              : `${files.length} file${files.length > 1 ? 's' : ''}, searched together \u2014 1 run queued.`
+              ? `${files.length} file${files.length > 1 ? 's' : ''}, searched separately (${files.length} run${files.length > 1 ? 's' : ''} queued).`
+              : `${files.length} file${files.length > 1 ? 's' : ''}, searched together (1 run queued).`
             : 'Thermo: .arrow files. SCIEX: .arrow files or .scxs runs. Bruker timsTOF: .tdfs runs (select the folder).'}
         </span>
       </div>
@@ -276,15 +275,13 @@ function BatchToggle({
         borderTop: '1px solid #EEF1F4',
       }}
     >
-      <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
           Search each file separately
         </div>
-        <div style={{ ...HINT, marginTop: 2 }}>
-          {on
-            ? `One run per ${scope === 'folder' ? '.arrow file or .tdfs / .scxs run in the folder' : 'file'}, each with its own results folder and nothing shared between them.`
-            : `One run over the whole ${scope}, sharing FDR and match-between-runs across it.`}
-        </div>
+        <InfoDot
+          text={`On: one search per ${scope === 'folder' ? '.arrow file or .tdfs / .scxs run in the folder' : 'file'}, each with its own results folder. Off: all files are searched together.`}
+        />
       </div>
       <Toggle on={on} fieldKey="msDataBatch" onClick={onToggle} />
     </div>
@@ -293,23 +290,18 @@ function BatchToggle({
 
 function ToggleRow({
   title,
-  hint,
   on,
   fieldKey,
   onToggle,
 }: {
   title: string
-  hint: string
   on: boolean
   fieldKey: string
   onToggle: (key: string) => void
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
-      <div>
-        <div style={LABEL_TIGHT}>{title}</div>
-        <div style={HINT}>{hint}</div>
-      </div>
+      <div style={LABEL_TIGHT}>{title}</div>
       <Toggle on={on} fieldKey={fieldKey} onClick={() => onToggle(fieldKey)} />
     </div>
   )
@@ -475,7 +467,7 @@ export function SearchDiaForm({
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
                 <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
               </svg>
-              No library yet? Build one from a FASTA →
+              Build library from FASTA
             </button>
             <LibrarySummary info={libInfo} />
             {libInfo &&
@@ -546,14 +538,12 @@ export function SearchDiaForm({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
               <ToggleRow
                 title="Run-to-run normalization"
-                hint="Retention-time dependent cross-run intensity scaling"
                 on={params.runToRunNorm}
                 fieldKey="runToRunNorm"
                 onToggle={onToggle}
               />
               <ToggleRow
-                title="MBR"
-                hint="Match between runs"
+                title="Match between runs"
                 on={params.matchBetweenRuns}
                 fieldKey="matchBetweenRuns"
                 onToggle={onToggle}
@@ -567,28 +557,24 @@ export function SearchDiaForm({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
             <ToggleRow
               title="Write CSV report"
-              hint="Human-readable tables"
               on={params.writeCsv}
               fieldKey="writeCsv"
               onToggle={onToggle}
             />
             <ToggleRow
               title="Write decoys"
-              hint="Include decoy matches"
               on={params.writeDecoys}
               fieldKey="writeDecoys"
               onToggle={onToggle}
             />
             <ToggleRow
               title="Delete temp files"
-              hint="Clean up intermediates"
               on={params.deleteTemp}
               fieldKey="deleteTemp"
               onToggle={onToggle}
             />
             <ToggleRow
               title="Debug logging"
-              hint="Verbose console output"
               on={params.debugLogging}
               fieldKey="debugLogging"
               onToggle={onToggle}

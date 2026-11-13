@@ -177,7 +177,6 @@ export const BUILD_OWNED_PATHS = [
   'variable_mods',
   'fixed_mods',
   'include_contaminants',
-  'predict_fragments',
   'logging',
 ]
 
@@ -236,8 +235,8 @@ export function buildLibJsonBase(s: BuildParams): Json {
     library_path: disp(s.libPath, '/path/to/output/my_library'),
     library_params: {
       prediction_model: s.predictionModel,
-      // Omitted when off: Pioneer reads an absent im_model as "no ion mobility".
-      ...(s.timsTOF ? { im_model: 'alphapept_ccs' } : {}),
+      // Written either way: an absent im_model takes Pioneer's default, which predicts ion mobility.
+      im_model: s.timsTOF ? 'alphapept_ccs' : '',
       rt_model: s.rtModel,
       auto_detect_frag_bounds: s.autoDetectFragBounds,
       frag_mz_min: num(s.fragMzMin, 150),
@@ -275,7 +274,6 @@ export function buildLibJsonBase(s: BuildParams): Json {
     variable_mods: modsToJson(s.variableMods),
     fixed_mods: modsToJson(s.fixedMods),
     include_contaminants: s.includeContaminants,
-    predict_fragments: s.predictFragments,
     logging: { debug_console_level: s.debugLogging ? 1 : 0 },
   }
 }
@@ -385,7 +383,6 @@ export function buildConfigToState(obj: unknown): Partial<BuildParams> | null {
   if ('add_decoys' in d) set.addDecoys = !!d.add_decoys
 
   if ('include_contaminants' in obj) set.includeContaminants = !!obj.include_contaminants
-  if ('predict_fragments' in obj) set.predictFragments = !!obj.predict_fragments
 
   const vmods = modsFromJson(obj.variable_mods)
   if (vmods) set.variableMods = vmods

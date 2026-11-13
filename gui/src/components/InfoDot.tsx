@@ -10,10 +10,10 @@
  *
  *  `aria-label` stays, so the text is still reachable without a pointer.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 /** How long the pointer must rest before the description appears. */
-const OPEN_DELAY_MS = 100
+const OPEN_DELAY_MS = 50
 
 /** Fixed rather than max-width, so the box can be clamped to the window before
  *  it is drawn: the alternative needs a measuring pass. */
@@ -21,8 +21,9 @@ const TOOLTIP_W = 300
 const EDGE_GAP = 10
 
 export function InfoDot({ text, tone = 'light' }: { text: string; tone?: 'light' | 'dark' }) {
-  const [at, setAt] = useState<{ left: number; top: number } | null>(null)
+  const [at, setAt] = useState<{ left: number; top: number; dotTop: number } | null>(null)
   const ref = useRef<HTMLSpanElement | null>(null)
+  const tip = useRef<HTMLSpanElement | null>(null)
   const timer = useRef<number | null>(null)
 
   const cancel = () => {
@@ -44,7 +45,7 @@ export function InfoDot({ text, tone = 'light' }: { text: string; tone?: 'light'
         Math.max(EDGE_GAP, r.left + r.width / 2 - TOOLTIP_W / 2),
         window.innerWidth - TOOLTIP_W - EDGE_GAP,
       )
-      setAt({ left, top: r.bottom + 8 })
+      setAt({ left, top: r.bottom + 8, dotTop: r.top })
     }, OPEN_DELAY_MS)
   }
 
@@ -52,6 +53,15 @@ export function InfoDot({ text, tone = 'light' }: { text: string; tone?: 'light'
     cancel()
     setAt(null)
   }
+
+  // Below the dot unless that runs past the bottom of the window, in which case
+  // above it. Measured before paint, so the box never shows in the wrong place.
+  useLayoutEffect(() => {
+    const h = tip.current?.offsetHeight
+    if (!at || !h || at.top + h <= window.innerHeight - EDGE_GAP) return
+    const above = Math.max(EDGE_GAP, at.dotTop - 8 - h)
+    if (above !== at.top) setAt({ ...at, top: above })
+  }, [at])
 
   // A dot can be unmounted while its timer is pending — switching tabs mid-hover
   // does exactly that — and the callback would then set state on a dead
@@ -104,6 +114,7 @@ export function InfoDot({ text, tone = 'light' }: { text: string; tone?: 'light'
       </span>
       {at && (
         <span
+          ref={tip}
           role="tooltip"
           style={{
             // Fixed, so a card or the sidebar's own scroll box cannot clip it.
