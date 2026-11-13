@@ -35,6 +35,7 @@
     "nce": 25.0
   },
   "library_params": {
+    "im_model": "",
     "auto_detect_frag_bounds": false,
     "prec_mz_min": 390.0,
     "prec_mz_max": 1010.0,
