@@ -176,7 +176,7 @@ fn resolve_home_with_installed(
     Err(format!(
         "No Pioneer distribution found. Looked in: {}. \
          Install Pioneer, or set PIONEER_HOME to an unpacked distribution.",
-        if tried.is_empty() { "nowhere — no candidates configured".into() } else { tried.join("; ") }
+        if tried.is_empty() { "nowhere (no candidates configured)".into() } else { tried.join("; ") }
     ))
 }
 

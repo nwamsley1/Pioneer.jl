@@ -113,10 +113,10 @@ end
     @test p["library_params"]["im_model"] == "alphapept_ccs"
     @test p["library_params"]["prec_partition_width"] == 10.0
 
-    # Defaults: empty im_model (skip); a 5 and a 10 Da fragment index (SearchDIA picks one from the data), for
+    # Defaults: alphapept_ccs im_model; a 5 and a 10 Da fragment index (SearchDIA picks one from the data), for
     # timsTOF libraries too; the hidden prec_partition_width override builds that one width. Local ID type "auto".
     p0 = Pioneer.check_params_bsp(JSON.json(base))
-    @test p0["library_params"]["im_model"] == ""
+    @test p0["library_params"]["im_model"] == "alphapept_ccs"
     @test !haskey(p0["library_params"], "prec_partition_width")
     @test !haskey(p0["library_params"], "isolation_window_width")
     @test Pioneer.fragment_index_widths(p0["library_params"]) == (5.0f0, 10.0f0)

@@ -59,6 +59,7 @@ function generate_build_params(
     params["library_params"]["prec_mz_min"] = prec_mz_min
     params["library_params"]["prec_mz_max"] = prec_mz_max
     params["library_params"]["max_frag_rank"] = 50
+    params["library_params"]["im_model"] = ""
 
     # Set calibration_raw_file to empty for testing (will trigger warning but that's expected)
     params["calibration_raw_file"] = ""

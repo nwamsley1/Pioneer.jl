@@ -12,6 +12,7 @@
  *  into the Arrow files SearchDIA reads -- but their tuning knobs are disjoint,
  *  so the advanced section swaps rather than greying fields out.
  */
+import { InfoDot } from './InfoDot'
 import { NumField } from './NumField'
 import { Toggle } from './Toggle'
 import { BROWSE, BROWSE_BLOCK, LABEL, SEG_TRACK, seg } from '../lib/styles'
@@ -28,10 +29,8 @@ const CARD: React.CSSProperties = {
 
 const H2: React.CSSProperties = {
   margin: 0,
-  fontSize: 12,
-  fontWeight: 700,
-  letterSpacing: '0.04em',
-  textTransform: 'uppercase',
+  fontSize: 14,
+  fontWeight: 650,
   color: '#1B2A4A',
 }
 
@@ -208,7 +207,7 @@ function ConvertFileList({
           {unreadable.length
             ? `${unreadable.length} file${unreadable.length > 1 ? 's' : ''} neither converter reads.`
             : files.length
-              ? `${summary} \u2014 ${groups.length} run${groups.length > 1 ? 's' : ''}.`
+              ? `${summary}: ${groups.length} run${groups.length > 1 ? 's' : ''}.`
               : 'Pick .raw or .mzML files. Mixing them is fine.'}
         </span>
       </div>
@@ -258,25 +257,13 @@ export function ConvertRawForm({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <section style={CARD}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
-          <h2 style={H2}>
-            {byFiles
-              ? 'Convert files'
-              : isMzml
-                ? 'Convert mzML files'
-                : isBruker
-                  ? 'Convert Bruker timsTOF data'
-                  : isSciex
-                    ? 'Convert SCIEX data'
-                    : 'Convert raw files'}
-          </h2>
-        </div>
-        <p style={{ margin: '-4px 0 14px', fontSize: 12.5, color: '#667085', lineHeight: 1.5 }}>
+        {(byFiles || isBruker || isSciex || isMzml) && (
+        <p style={{ margin: '0 0 14px', fontSize: 12.5, color: '#667085', lineHeight: 1.5 }}>
           {byFiles ? (
             <>
               Convert <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.raw</code> and{' '}
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.mzML</code> files to
-              Arrow, which is what SearchDIA reads. The list can mix the two — each format goes to
+              Arrow, which is what SearchDIA reads. The list can mix the two. Each format goes to
               its own converter, as its own run.
             </>
           ) : isBruker ? (
@@ -303,17 +290,12 @@ export function ConvertRawForm({
             <>
               Convert <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.mzML</code>{' '}
               files to Arrow, which is what SearchDIA reads. Runs Pioneer&rsquo;s own converter, so
-              it works on any platform. The data must be centroided — profile-mode spectra are
+              it works on any platform. The data must be centroided. Profile-mode spectra are
               skipped.
             </>
-          ) : (
-            <>
-              Convert Thermo{' '}
-              <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.raw</code> files to
-              Arrow, which is what SearchDIA reads.
-            </>
-          )}
+          ) : null}
         </p>
+        )}
 
         {!byFiles && <label style={LABEL}>Format</label>}
         <div style={{ ...SEG_TRACK, marginBottom: 14, display: byFiles ? 'none' : undefined }}>
@@ -416,10 +398,10 @@ export function ConvertRawForm({
             <label style={LABEL}>Are these runs ZT Scan DIA?</label>
             <div style={SEG_TRACK}>
               <button type="button" onClick={() => onParam('ztScan', 'no')} style={seg(params.ztScan === 'no')}>
-                No — SWATH / stepped DIA (usual)
+                No (SWATH / stepped DIA, usual)
               </button>
               <button type="button" onClick={() => onParam('ztScan', 'yes')} style={seg(params.ztScan === 'yes')}>
-                Yes — ZT Scan DIA
+                Yes (ZT Scan DIA)
               </button>
             </div>
             <div style={noteStyle({ level: params.ztScan ? '' : 'warn', msg: '' })}>
@@ -444,10 +426,7 @@ export function ConvertRawForm({
           <h2 style={H2}>Output</h2>
         </div>
         <label style={LABEL}>
-          Output folder{' '}
-          <span style={{ fontWeight: 400, color: '#98A2B3' }}>
-            {byFiles ? '— required for a list of files' : '— defaults to the input folder'}
-          </span>
+          Output folder{byFiles ? ' (required)' : ''}
         </label>
         <div data-drop="convertOutput" style={{ display: 'flex', gap: 8 }}>
           <input
@@ -481,11 +460,9 @@ export function ConvertRawForm({
             marginTop: 16,
           }}
         >
-          <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>Skip existing</div>
-            <div style={{ fontSize: 11.5, color: '#98A2B3' }}>
-              Leave files alone when their output already looks complete
-            </div>
+            <InfoDot text="Don't convert a file again if its output is already in the output folder and looks complete." />
           </div>
           <Toggle
             on={params.skipExisting}
@@ -523,17 +500,12 @@ export function ConvertRawForm({
           <div>
             <div
               style={{
-                fontSize: 12,
-                fontWeight: 700,
-                letterSpacing: '0.04em',
-                textTransform: 'uppercase',
+                fontSize: 14,
+                fontWeight: 650,
                 color: '#1B2A4A',
               }}
             >
               Advanced parameters
-            </div>
-            <div style={{ fontSize: 11.5, color: '#98A2B3', marginTop: 2 }}>
-              Defaults suit most experiments
             </div>
           </div>
           <span
@@ -593,15 +565,11 @@ export function ConvertRawForm({
                     marginTop: 18,
                   }}
                 >
-                  <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
                       Include scan headers
                     </div>
-                    <div style={{ fontSize: 11.5, color: '#98A2B3' }}>
-                      Carry each scan&rsquo;s header into the Arrow file. SearchDIA does not read
-                      them and they roughly double the output — leave off unless something else
-                      needs them.
-                    </div>
+                    <InfoDot text="Carry each scan's header into the Arrow file. SearchDIA does not read them and they roughly double the output. Leave off unless something else needs them." />
                   </div>
                   <Toggle
                     on={params.includeScanHeader}

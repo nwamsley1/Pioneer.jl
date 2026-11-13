@@ -35,7 +35,6 @@
   --pio-accent-softer: #9DBDF0; /* second stripe of the barber pole */
   --pio-accent-wash: rgba(46,77,126,0.18);
   --pio-accent-wash-strong: rgba(46,77,126,0.22);
-  --pio-accent-shadow: rgba(46,77,126,0.28);
 
   /* Foreground tiers on the nav surface. Shared by every dark palette; only a
      light theme needs to override them. */
@@ -65,7 +64,6 @@
   --pio-accent-softer: #B8C6D2;
   --pio-accent-wash: rgba(132,150,166,0.16);
   --pio-accent-wash-strong: rgba(132,150,166,0.22);
-  --pio-accent-shadow: rgba(61,74,87,0.34);
 }
 
 :root[data-theme='burgundy'] {
@@ -77,7 +75,6 @@
   --pio-accent-softer: #E8AEBC;
   --pio-accent-wash: rgba(140,58,78,0.22);
   --pio-accent-wash-strong: rgba(140,58,78,0.28);
-  --pio-accent-shadow: rgba(140,58,78,0.32);
 }
 
 :root[data-theme='brown'] {
@@ -89,7 +86,6 @@
   --pio-accent-softer: #E4BB90;
   --pio-accent-wash: rgba(138,90,51,0.20);
   --pio-accent-wash-strong: rgba(138,90,51,0.26);
-  --pio-accent-shadow: rgba(138,90,51,0.32);
 }
 
 :root[data-theme='sand'] {
@@ -105,7 +101,6 @@
   --pio-accent-softer: #8A6B36;
   --pio-accent-wash: rgba(122,91,46,0.18);
   --pio-accent-wash-strong: rgba(122,91,46,0.26);
-  --pio-accent-shadow: rgba(122,91,46,0.30);
   /* The one light palette, so it is the only one that inverts the foreground
      and hairline tiers. Everything else inherits them from :root. */
   --pio-nav-fg: #2A2418;
@@ -132,7 +127,6 @@
   --pio-accent-softer: #C0CE94;
   --pio-accent-wash: rgba(92,107,51,0.22);
   --pio-accent-wash-strong: rgba(92,107,51,0.28);
-  --pio-accent-shadow: rgba(92,107,51,0.32);
 }
 
 

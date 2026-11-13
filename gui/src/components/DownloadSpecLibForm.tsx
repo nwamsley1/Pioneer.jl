@@ -10,6 +10,7 @@
  *  two that can disagree.
  */
 import { BROWSE, HINT, LABEL } from '../lib/styles'
+import { InfoDot } from './InfoDot'
 import { Toggle } from './Toggle'
 import type { DownloadParams, RemoteLibrary } from '../lib/types'
 import { type Note } from '../lib/validate'
@@ -23,10 +24,8 @@ const CARD: React.CSSProperties = {
 
 const H2: React.CSSProperties = {
   margin: 0,
-  fontSize: 12,
-  fontWeight: 700,
-  letterSpacing: '0.04em',
-  textTransform: 'uppercase',
+  fontSize: 14,
+  fontWeight: 650,
   color: '#1B2A4A',
 }
 
@@ -118,7 +117,7 @@ export function DownloadSpecLibForm({
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1B2A4A' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1B2A4A', minWidth: 0, overflowWrap: 'anywhere' }}>
                     {library.title || library.name}
                   </span>
                   <span style={{ fontSize: 12, color: '#667085', whiteSpace: 'nowrap' }}>
@@ -139,8 +138,8 @@ export function DownloadSpecLibForm({
 
       {selected && (
         <section style={CARD}>
-          <h2 style={H2}>{selected.title || selected.name}</h2>
-          <p style={{ ...HINT, marginTop: 6 }}>
+          <h2 style={{ ...H2, overflowWrap: 'anywhere' }}>{selected.title || selected.name}</h2>
+          <p style={{ ...HINT, marginTop: 6, overflowWrap: 'anywhere' }}>
             {selected.name} · {selected.size_human} in {selected.n_files} files
           </p>
           {selected.recommended_for && (
@@ -160,7 +159,7 @@ export function DownloadSpecLibForm({
             {Object.entries(selected.details).map(([label, value]) => (
               <div key={label} style={{ display: 'contents' }}>
                 <dt style={{ color: '#667085' }}>{label}</dt>
-                <dd style={{ margin: 0, color: '#1B2A4A' }}>{value}</dd>
+                <dd style={{ margin: 0, color: '#1B2A4A', minWidth: 0, overflowWrap: 'anywhere' }}>{value}</dd>
               </div>
             ))}
           </dl>
@@ -181,7 +180,7 @@ export function DownloadSpecLibForm({
             Browse
           </button>
         </div>
-        <p style={noteStyle(destNote)}>{destNote.msg}</p>
+        {destNote.msg && <p style={noteStyle(destNote)}>{destNote.msg}</p>}
 
         <div
           style={{
@@ -192,14 +191,11 @@ export function DownloadSpecLibForm({
             marginTop: 14,
           }}
         >
-          <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
-              Replace an existing copy
+              Overwrite if already downloaded
             </div>
-            <div style={{ fontSize: 11.5, color: '#98A2B3' }}>
-              Without this, a library already at the destination stops the download
-              rather than being overwritten
-            </div>
+            <InfoDot text="Otherwise the download stops if this library is already in the folder." />
           </div>
           <Toggle on={params.force} fieldKey="force" onClick={onToggleForce} />
         </div>
