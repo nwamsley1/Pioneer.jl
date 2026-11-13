@@ -229,52 +229,6 @@ end
     return best_intensity
 end
 
-@inline function _wide_fragment_peak_intensity(
-    scan_corrected_mz::Vector{Float32},
-    scan_obs_low::Vector{Float32},
-    scan_obs_high::Vector{Float32},
-    scan_int,
-    n_peaks::Int,
-    target::Float32,
-    mem::AbstractMassErrorModel,
-)
-    n_peaks == 0 && return 0f0
-    half_width = conservative_half_width(mem, target)
-    conservative_low, conservative_high = match_window(target, half_width)
-    start_idx = bsearch_hybrid(scan_corrected_mz, conservative_low, 1, n_peaks)
-    best_peak, _, _ = scan_for_nearest_in_window(
-        scan_corrected_mz,
-        scan_obs_low,
-        scan_obs_high,
-        start_idx,
-        n_peaks,
-        target,
-        conservative_high,
-    )
-    best_peak == 0 && return 0f0
-    intensity = scan_int[best_peak]
-    return ismissing(intensity) ? 0f0 : Float32(intensity)
-end
-
-@inline function _wide_fragment_mono_peak_intensity(
-    scan_corrected_mz::Vector{Float32},
-    scan_obs_low::Vector{Float32},
-    scan_obs_high::Vector{Float32},
-    scan_int,
-    n_peaks::Int,
-    frag::AltimeterFragment,
-    mem::AbstractMassErrorModel,
-)
-    return _wide_fragment_peak_intensity(
-        scan_corrected_mz,
-        scan_obs_low,
-        scan_obs_high,
-        scan_int,
-        n_peaks,
-        Float32(getMz(frag)),
-        mem,
-    )
-end
 
 @inline function _wide_window_key(center_mz, isolation_width)
     (ismissing(center_mz) || ismissing(isolation_width)) && return (Int32(0), Int32(0))

@@ -33,7 +33,6 @@ src/utils/ML/
 ├── lightgbm_utils.jl         # LightGBM API abstraction
 ├── probitRegression.jl       # Probit regression implementation
 ├── fdrUtilities.jl           # Q-value and PEP calculation
-├── ftrUtilities.jl           # FTR utilities
 │
 ├── # Regression & Splines
 ├── spectralLinearRegression.jl   # Huber-loss spectral deconvolution

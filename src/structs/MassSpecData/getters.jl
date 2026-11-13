@@ -81,8 +81,6 @@ getMsOrder(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getMsOrd
 # dynamic dispatch and the result still inferred as `Any`. The assertion pins it.
 getCycleIdx(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = UInt32(getCycleIdxs(ms_data)[scan_idx])::UInt32
 
-# Aliases used by BuildSpecLib
-getPrecursorMz(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = getCenterMz(ms_data, scan_idx)
 
 # Used by FilteredMassSpecData constructor
 getScanHeader(ms_data::NonIonMobilityData{T}, scan_idx::Integer) where T = ms_data.data[:scanHeader][scan_idx]

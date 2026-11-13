@@ -7,7 +7,6 @@
 include(joinpath(@__DIR__, "feature_selection.jl"))
 include(joinpath(@__DIR__, "protein_inference_pipeline.jl"))
 include(joinpath(@__DIR__, "qc_plots.jl"))
-include(joinpath(@__DIR__, "protein_groups.jl"))
 include(joinpath(@__DIR__, "global_protein_scoring.jl"))
 include(joinpath(@__DIR__, "qvalue_io.jl"))
 include(joinpath(@__DIR__, "model_fit.jl"))

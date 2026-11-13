@@ -21,10 +21,6 @@ getZTGeometry(s::SearchContext, index::I) where {I<:Integer} =
 setZTGeometry!(s::SearchContext, index::I, g::Union{Nothing, ZTGeometry}) where {I<:Integer} =
     (s.zt_geometry[Int64(index)] = g)
 
-"""True when `index` has been checked and is a scanning-quad acquisition."""
-isZTFile(s::SearchContext, index::I) where {I<:Integer} =
-    getZTGeometry(s, index) !== nothing
-
 """
     zt_prepare_file!(search_context, params, ms_file_idx, spectra)
 

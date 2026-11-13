@@ -101,14 +101,6 @@ append!(ADVANCED_FEATURE_SET, ZT_SCORING_FEATURES)
 # template allocation per meta-PSM.
 
 """
-The subset the per-file main-search LGBM consumes. The 2nd-pass model takes all of
-`ZT_PROFILE_FEATURES` + `ZT_SHAPE_FEATURES` via `ADVANCED_FEATURE_SET`.
-"""
-const ZT_MAINSEARCH_MODEL_FEATURES = Symbol[
-    :zt_tri_cosine, :zt_tri_pcor, :frag_corr_strength_shape, :n_correlated_fragments_shape,
-]
-
-"""
     _zt_profile_features(w, k, tri, tnorm) -> (zt_tri_cosine, zt_entropy)
 
 Weight-profile descriptors over the length-(2k+1) profile `w` (j = -k..k, center at k+1),

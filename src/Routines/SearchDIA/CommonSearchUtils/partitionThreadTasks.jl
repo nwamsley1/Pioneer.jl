@@ -4,14 +4,6 @@
 # Washington University non-commercial research license.
 # See the LICENSE file in the project root for full terms.
 
-struct ThreadTask
-    range::UnitRange{Int64}
-    thread_id::Int64
-end
-
-getRange(tt::ThreadTask) = tt.range
-getThreadID(tt::ThreadTask) = tt.thread_id
-
 function partitionThreadTasks(n_tasks::Int, tasks_per_thread::Int, n_threads::Int)
     chunk_size = max(1, n_tasks ÷ (tasks_per_thread*n_threads))
     return partition(1:n_tasks, chunk_size)

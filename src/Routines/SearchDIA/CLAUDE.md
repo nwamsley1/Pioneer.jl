@@ -95,7 +95,6 @@ Protein group handling spans multiple modules:
 **Legacy Functions** (`ScoringSearch/utils.jl`):
 - `getProteinGroupsDict()` - Creates protein groups from PSMs (legacy approach)
 - `merge_sorted_protein_groups()` - Memory-efficient merging using heap
-- `writeProteinGroups()` - Outputs final protein groups
 
 **Type-Safe Structures**:
 ```julia

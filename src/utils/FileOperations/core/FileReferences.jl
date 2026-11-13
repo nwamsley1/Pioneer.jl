@@ -466,26 +466,6 @@ function validate_exists(ref::FileReference)
     return true
 end
 
-"""
-    create_psm_reference(file_path::String) -> PSMFileReference
-
-Create a PSM file reference, extracting metadata from the file.
-"""
-create_psm_reference(file_path::String) = PSMFileReference(file_path)
-
-"""
-    create_protein_reference(file_path::String) -> ProteinGroupFileReference
-
-Create a protein group file reference, extracting metadata from the file.
-"""
-create_protein_reference(file_path::String) = ProteinGroupFileReference(file_path)
-
-"""
-    create_protein_quant_reference(file_path::String) -> ProteinQuantFileReference
-
-Create a protein quantification file reference, extracting metadata from the file.
-"""
-create_protein_quant_reference(file_path::String) = ProteinQuantFileReference(file_path)
 
 """
     create_reference(file_path::String, ::Type{T}) where T <: FileReference
@@ -504,25 +484,4 @@ function create_reference(file_path::String, ::Type{ProteinQuantFileReference})
     return ProteinQuantFileReference(file_path)
 end
 
-"""
-    describe_reference(ref::FileReference)
 
-Print a human-readable description of a file reference.
-"""
-function describe_reference(ref::FileReference)
-    println("File Reference ($(typeof(ref))):")
-    println("  Path: $(file_path(ref))")
-    println("  Exists: $(exists(ref))")
-    println("  Sorted by: $(isempty(sorted_by(ref)) ? "none" : join(sorted_by(ref), ", "))")
-    println("  Row count: $(row_count(ref))")
-    println("  Columns: $(join(sort(collect(schema(ref).columns)), ", "))")
-end
-
-"""
-    validate_schema(ref::FileReference, required_cols::Set{Symbol})
-
-Validate that a file reference has all required columns.
-"""
-function validate_schema(ref::FileReference, required_cols::Set{Symbol})
-    validate_required_columns(schema(ref), required_cols)
-end

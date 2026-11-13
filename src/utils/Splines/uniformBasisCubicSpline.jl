@@ -277,24 +277,6 @@ end
 # build_temp_spline_from_coeffs — used by SplineQuadModel
 #############################################################################
 
-"""
-    build_temp_spline_from_coeffs(c, knots, bin_width, spline_basis, degree, _first, _last, n_knots)
-
-Build a UniformSpline from pre-computed B-spline coefficients.
-Used by SplineQuadModel for residual calculation during quad fitting.
-"""
-function build_temp_spline_from_coeffs(
-    c::Vector{T},
-    knots::Vector{T},
-    bin_width::T,
-    spline_basis::NTuple{4, Polynomial},  # kept for API compatibility
-    degree::Int,
-    _first::T,
-    _last::T,
-    n_knots::Int
-) where {T<:AbstractFloat}
-    return _coeffs_to_spline(c, knots, bin_width, degree, n_knots, _first, _last)
-end
 
 #############################################################################
 # build_difference_matrix — P-spline penalty

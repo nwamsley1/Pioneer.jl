@@ -88,26 +88,6 @@ function update_psms_with_protein_scores_refs(
             tag = "pg_scores")
     end
 end
-"""
-    add_pep_column(new_col::Symbol, score_col::Symbol, target_col::Symbol;
-                   doSort::Bool = false, fdr_scale_factor::Float32 = 1.0f0)
-
-Add a column of posterior error probabilities using `get_PEP!`.
-The input DataFrame must already be sorted by `score_col` if `doSort` is false.
-"""
-function add_pep_column(new_col::Symbol, score_col::Symbol, target_col::Symbol;
-                        doSort::Bool=false, fdr_scale_factor::Float32=1.0f0)
-    desc = "add_pep_column($new_col from $score_col)"
-    op = function(df)
-        scores = df[!, score_col]::AbstractVector{Float32}
-        targets = df[!, target_col]::AbstractVector{Bool}
-        pep_vals = Vector{Float32}(undef, length(scores))
-        get_PEP!(scores, targets, pep_vals; doSort=doSort, fdr_scale_factor=fdr_scale_factor)
-        df[!, new_col] = pep_vals
-        return df
-    end
-    return desc => op
-end
 
 # Column kernels for the protein-score annotation (function barriers: the columns are untyped).
 function _fill_pg_score_lookup!(pg_score_lookup, names, targets, entrap_ids, scores, peps)

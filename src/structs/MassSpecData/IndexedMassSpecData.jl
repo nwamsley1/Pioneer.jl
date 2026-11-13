@@ -58,7 +58,6 @@ getCycleIdx(data::IndexedMassSpecData, vi::Integer) = getCycleIdx(data.original_
 getBasePeakMz(data::IndexedMassSpecData, vi::Integer) = getBasePeakMz(data.original_data, get_actual_index(data, vi))
 getBasePeakIntensity(data::IndexedMassSpecData, vi::Integer) = getBasePeakIntensity(data.original_data, get_actual_index(data, vi))
 getTIC(data::IndexedMassSpecData, vi::Integer) = getTIC(data.original_data, get_actual_index(data, vi))
-getPrecursorMz(data::IndexedMassSpecData, vi::Integer) = getPrecursorMz(data.original_data, get_actual_index(data, vi))
 getIsolationWidthMz(data::IndexedMassSpecData, vi::Integer) = getIsolationWidthMz(data.original_data, get_actual_index(data, vi))
 getCenterMz(data::IndexedMassSpecData, vi::Integer) = getCenterMz(data.original_data, get_actual_index(data, vi))
 getLowMz(data::IndexedMassSpecData, vi::Integer) = getLowMz(data.original_data, get_actual_index(data, vi))

@@ -44,8 +44,6 @@ end
 @inline get_prec_range(pi::PrecursorIndex, scan_idx::Int) = pi.scan_to_prec_idx[scan_idx]
 @inline get_precursors(pi::PrecursorIndex) = pi.precursors_passed
 
-# Always rebuild transitions for per-scan index
-@inline should_rebuild_transitions(::PerScanPrecursorIndex, ::Int, ::Float32, ::Float32) = true
 
 #==========================================================
 Dispatch helpers for library_search (LibrarySearch.jl)
@@ -111,7 +109,6 @@ function resize_if_needed!(search_data::SearchDataStructures, params::ParameterT
 end
 
 
-
 """
     post_design_matrix!(search_data, Hs, params) -> Bool
 
@@ -168,7 +165,6 @@ function compute_distance_metrics!(Hs::AbstractSparseDesignMatrix, search_data::
     getDistanceMetrics(getTempWeights(search_data), getResiduals(search_data),
         Hs, getMainSearchSpectralScores(search_data))
 end
-
 
 
 """

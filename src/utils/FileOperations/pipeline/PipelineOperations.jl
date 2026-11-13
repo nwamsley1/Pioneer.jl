@@ -43,48 +43,6 @@ function add_column(name::Symbol, compute_fn::Function)
     return desc => op
 end
 
-"""
-    rename_column(old::Symbol, new::Symbol)
-
-Rename a column from old to new name.
-"""
-function rename_column(old::Symbol, new::Symbol)
-    desc = "rename_$(old)_to_$(new)"
-    op = function(df)
-        rename!(df, old => new)
-        return df
-    end
-    return desc => op
-end
-
-"""
-    select_columns(cols::Vector{Symbol})
-
-Keep only specified columns, ignoring any that don't exist.
-"""
-function select_columns(cols::Vector{Symbol})
-    desc = "select_columns"
-    op = function(df)
-        available = intersect(cols, Symbol.(names(df)))
-        select!(df, available)
-        return df
-    end
-    return desc => op
-end
-
-"""
-    remove_columns(cols::Symbol...)
-
-Remove specified columns from the DataFrame.
-"""
-function remove_columns(cols::Symbol...)
-    desc = "remove_columns_$(join(cols, '_'))"
-    op = function(df)
-        select!(df, Not(collect(cols)))
-        return df
-    end
-    return desc => op
-end
 
 """
     filter_rows(predicate::Function; desc::String="filter")
@@ -154,43 +112,6 @@ function add_interpolated_column(new_col::Symbol, source_col::Symbol,
         source_data = df[!, source_col]
         result = Vector{Float32}(undef, length(source_data))
         _fill_interpolated!(result, source_data, interpolator)
-        df[!, new_col] = result
-        return df
-    end
-    return desc => op
-end
-
-"""
-    add_dict_column(new_col::Symbol, key_col::Symbol, lookup_dict::Dict{K,V}) where {K,V}
-
-Add a new column by looking up values in a dictionary based on a key column.
-Commonly used for adding precursor-level values (like global q-values) to PSM rows.
-
-# Arguments
-- `new_col`: Name of the new column to create
-- `key_col`: Name of the column containing keys for dictionary lookup
-- `lookup_dict`: Dictionary mapping keys to values
-
-# Example
-```julia
-pipeline = TransformPipeline() |>
-    add_dict_column(:global_qval, :precursor_idx, precursor_qval_dict)
-```
-"""
-# Function barrier (see add_interpolated_column): the type-unstable `df[!, key_col]` indexed in the
-# loop boxed ~100 B/row. Union{V,Missing} is kept so keys absent from the dict still map to `missing`.
-@inline function _fill_dict_column!(result::Vector, keys::AbstractVector, dict)
-    @inbounds for i in 1:length(keys)
-        result[i] = get(dict, keys[i], missing)
-    end
-end
-
-function add_dict_column(new_col::Symbol, key_col::Symbol, lookup_dict::Dict{K,V}) where {K,V}
-    desc = "add_dict_column($new_col from $key_col)"
-    op = function(df)
-        key_data = df[!, key_col]
-        result = Vector{Union{V, Missing}}(undef, length(key_data))
-        _fill_dict_column!(result, key_data, lookup_dict)
         df[!, new_col] = result
         return df
     end

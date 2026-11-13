@@ -301,16 +301,6 @@ If no MS1 scan is available (file has only MS2), all features are zeroed.
     return found, best_int, best_mz, best_idx, i0
 end
 
-@inline function _ms1_find_peak_bsearch(mz::Vector{Float32}, intens::Vector{Float32},
-                                        mz_target::Float32, ms1_ppm_tol::Float32)
-    half_tol = mz_target * ms1_ppm_tol * 1f-6
-    lo = mz_target - half_tol
-    hi = mz_target + half_tol
-    n_peaks = length(mz)
-    n_peaks == 0 && return (false, 0f0, 0f0, 0, 1)
-    i0 = bsearch_hybrid(mz, lo, 1, n_peaks)
-    return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0, n_peaks)
-end
 
 @inline function _ms1_find_peak_from_cursor(mz::Vector{Float32}, intens::Vector{Float32},
                                             mz_target::Float32, ms1_ppm_tol::Float32,
@@ -377,12 +367,6 @@ end
     return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0, last)
 end
 
-@inline function _ms1_find_peak(mz::Vector{Float32}, intens::Vector{Float32},
-                                mz_target::Float32, ms1_ppm_tol::Float32)
-    found, best_int, best_mz, best_idx, _ =
-        _ms1_find_peak_bsearch(mz, intens, mz_target, ms1_ppm_tol)
-    return found, best_int, best_mz, best_idx
-end
 
 @inline function _ms1_sum_window_intensity(mz::Vector{Float32}, intens::Vector{Float32},
                                            low_mz::Float32, high_mz::Float32)
