@@ -106,25 +106,6 @@ end
 # sized to n_precursors at construction).
 Base.sizehint!(::DensePrecMap, ::Integer) = nothing
 
-"""
-    resize_dense!(m::DensePrecMap{V}, new_n::Integer)
-
-Used by QuadTuning's artificial-id encoding (which needs `3 *
-n_precursors + 1` slots). No-op on sparse backings — they grow on demand.
-"""
-function resize_dense!(m::DensePrecMap{V}, new_n::Integer) where V
-    if length(m.vals) < new_n
-        old = length(m.vals)
-        resize!(m.vals, new_n)
-        @inbounds for i in (old + 1):new_n
-            m.vals[i] = zero(V)
-        end
-    end
-    return
-end
-
-# Catch-all for non-DensePrecMap impls — they don't need explicit resize.
-resize_dense!(::AbstractPrecursorMap, ::Integer) = nothing
 
 #==========================================================
 SparsePrecMap{V} — Dict-backed alternative.

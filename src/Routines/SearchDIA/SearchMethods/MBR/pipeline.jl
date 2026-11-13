@@ -367,53 +367,6 @@ function _write_mbr_recovery_sidecars_from_candidates!(
     return length(file_paths)
 end
 
-function _write_mbr_recovery_sidecars!(
-    frame::DataFrame,
-    file_paths::Vector{String},
-)
-    offset = 0
-    for path in file_paths
-        main = Arrow.Table(path)
-        n = length(main.precursor_idx)
-        rows = (offset + 1):(offset + n)
-        if n > 0
-            @inbounds for (local_row, frame_row) in enumerate(rows)
-                (
-                    main.precursor_idx[local_row] ==
-                        frame.precursor_idx[frame_row] &&
-                    main.scan_idx[local_row] ==
-                        frame.scan_idx[frame_row]
-                ) || error("MBR recovery frame misalignment at $path")
-            end
-        end
-        recovery = DataFrame(
-            precursor_idx = UInt32.(frame.precursor_idx[rows]),
-            scan_idx = UInt32.(frame.scan_idx[rows]),
-            mbr_recovered = Bool.(frame.mbr_recovered[rows]),
-            MBR_transfer_candidate =
-                Bool.(frame.MBR_transfer_candidate[rows]),
-            mbr_target_decoy_prob =
-                Float32.(frame.mbr_target_decoy_prob[rows]),
-            ftr_qval_true = Float32.(frame.ftr_qval_true[rows]),
-            ftr_pep_true = Float32.(frame.ftr_pep_true[rows]),
-            mbr_total_error_qval_true =
-                Float32.(frame.mbr_total_error_qval_true[rows]),
-            mbr_total_error_rate_true =
-                Float32.(frame.mbr_total_error_rate_true[rows]),
-            mbr_counterfactual_decoy_prob = Float32.(
-                frame[rows, MBR_COUNTERFACTUAL_DECOY_PROB_COLUMN]
-            ),
-            mbr_counterfactual_decoy_index = UInt8.(
-                frame[rows, MBR_COUNTERFACTUAL_DECOY_INDEX_COLUMN]
-            ),
-        )
-        writeArrow(path * RECOVERY_SIDECAR_SUFFIX, recovery)
-        offset += n
-    end
-    offset == nrow(frame) ||
-        error("MBR recovery frame contains unassigned rows")
-    return length(file_paths)
-end
 
 # Score-remap bounds derived from the frozen pre-MBR q-value spline. Extracted so the fused path in
 # _merge_mbr_recoveries! and the standalone _remap_mbr_scores! fallback compute them identically.

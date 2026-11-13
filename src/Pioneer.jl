@@ -22,7 +22,6 @@ using Interpolations
 using JSON, JLD2
 using LinearAlgebra, LightXML, Logging
 using Measures
-using NumericalIntegration
 using Plots, Polynomials, ProgressBars, Printf
 using PooledArrays: PooledArray
 using Tables
@@ -35,7 +34,6 @@ ENV["LIGHTGBM_LOG_LIBRARY_DISCOVERY"] = "false"
 using LightGBM
 import MLJModelInterface: fit, predict
 using KernelDensity
-using FastGaussQuadrature
 using LaTeXStrings, Printf
 using Dates
 using InlineStrings
@@ -940,7 +938,7 @@ function __init__()
     ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
     # Force GR's off-screen workstation so plot creation never opens a gksqt
     # window. Plots are rendered to in-memory bits and then combined into the
-    # multi-page PDFs by save_multipage_pdf — opening Qt windows here both
+    # multi-page PDFs — opening Qt windows here both
     # slows down PDF writes substantially and disrupts the user's desktop
     # during long searches. Set both legacy and modern env var names.
     get!(ENV, "GKSwstype", "100")

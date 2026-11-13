@@ -159,19 +159,6 @@ function _scoring_better_iteration_state(previous_state, current_state)
     return current_state.target_q01 >= previous_state.target_q01 ? current_state : previous_state
 end
 
-function _split_scoring_train_masks(
-    row_counts::AbstractVector{<:Integer},
-    training_mask::AbstractVector{Bool},
-)
-    masks = Vector{BitVector}(undef, length(row_counts))
-    offset = 0
-    for (file_idx, n_integer) in enumerate(row_counts)
-        n = Int(n_integer)
-        masks[file_idx] = BitVector(@view training_mask[(offset + 1):(offset + n)])
-        offset += n
-    end
-    return masks
-end
 
 function _log_global_feature_importances(
     models::Vector{LightGBMModel},

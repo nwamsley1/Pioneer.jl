@@ -317,49 +317,11 @@ store_final_predictions!(::ArrowFileScoringWorkspace, ::UInt8) = nothing
 # OOM Prediction Phase (ArrowFileScoringWorkspace)
 #############################################################################
 
-"""
-    process_fold!(::PredictionPhase, workspace::ArrowFileScoringWorkspace, ...)
-
-OOM prediction for a single fold: apply pre-trained model to all Arrow files
-in this fold, write predictions to sidecars.
-"""
-function process_fold!(
-    ::PredictionPhase,
-    workspace::ArrowFileScoringWorkspace,
-    fold::UInt8,
-    num_rounds::Int,
-    config::ScoringConfig,
-    pbar
-)
-    models = get_all_models(workspace)
-    container = workspace.container
-
-    # Per-file prediction for this fold (files are already per-fold)
-    for group in get_file_groups_for_fold(container, fold)
-        data_df = load_arrow_dataframe(group.data_path)
-        scores_df = load_arrow_dataframe(group.scores_path)
-
-        # Build temp container with data + scores columns for prediction
-        for col in names(scores_df)
-            data_df[!, Symbol(col)] = scores_df[!, col]
-        end
-        temp = DataFramePSMContainer(data_df, Val(:unsafe))
-
-        preds = predict_scores(models[fold][1], temp)
-        scores_df.trace_prob .= preds
-
-        writeArrow(group.scores_path, scores_df)
-    end
-
-    !isnothing(pbar) && update(pbar)
-end
 
 #############################################################################
 # Workspace-level finalize_scoring! — ArrowFileScoringWorkspace
 #############################################################################
 
-finalize_scoring!(ws::ArrowFileScoringWorkspace) =
-    _finalize_scoring_arrow!(ws.container)
 
 function _finalize_scoring_arrow!(container::ArrowFilePSMContainer)
     for group in container.file_groups

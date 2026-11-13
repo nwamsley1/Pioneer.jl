@@ -120,15 +120,3 @@ struct TrainingPhase <: ScoringPhase end
 Phase 2: Apply stored models to held-out test data.
 """
 struct PredictionPhase <: ScoringPhase end
-
-#############################################################################
-# Wrapper struct for trained probit models
-#############################################################################
-
-"""
-Wrapper struct for trained probit models.
-"""
-struct ProbitModel
-    beta::Vector{Float64}
-    features::Vector{Symbol}
-end

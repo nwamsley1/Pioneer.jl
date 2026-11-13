@@ -79,14 +79,6 @@ function solveOLS!(Hs::AbstractSparseDesignMatrix{Ti, T},
     return (false, max_iter_outer)
 end
 
-# ─── Diagnostic counters for adaptive-LASSO solver verification ─────────────
-const DIAG_ALASSO_CALLS              = Threads.Atomic{Int64}(0)
-const DIAG_ALASSO_NCOLS              = Threads.Atomic{Int64}(0)
-const DIAG_ALASSO_ZEROS_AFTER_OLS    = Threads.Atomic{Int64}(0)
-const DIAG_ALASSO_ZEROS_AFTER_FINAL  = Threads.Atomic{Int64}(0)
-const DIAG_ALASSO_LAMBDA_MAX_SUM     = Threads.Atomic{Float64}(0.0)
-const DIAG_ALASSO_LAMBDA_EFF_SUM     = Threads.Atomic{Float64}(0.0)
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Weighted L1 + non-negativity inner solver (single weighted-LASSO subproblem).
 # Identical to solveOLS! except `grad += λ * penalty_weights[col]` is added
@@ -172,7 +164,6 @@ function solveLasso!(Hs::AbstractSparseDesignMatrix{Ti, T},
         X₁[j] = zero(T)
     end
     initResiduals!(r, Hs, X₁)
-    Threads.atomic_add!(DIAG_ALASSO_CALLS, 1)
     λ_max = zero(T)
     @inbounds for col in 1:Hs.n
         g = zero(T)
@@ -198,14 +189,6 @@ function solveLasso!(Hs::AbstractSparseDesignMatrix{Ti, T},
     converged, iters = solveWeightedL1NN!(Hs, r, X₁, colnorm2,
                                             penalty_weights, λ_eff,
                                             max_iter_outer, relative_convergence_threshold)
-    n_zero_now = 0
-    @inbounds for j in 1:Hs.n
-        n_zero_now += (X₁[j] == zero(T))
-    end
-    Threads.atomic_add!(DIAG_ALASSO_ZEROS_AFTER_FINAL, n_zero_now)
-    Threads.atomic_add!(DIAG_ALASSO_NCOLS, Int(Hs.n))
-    Threads.atomic_add!(DIAG_ALASSO_LAMBDA_MAX_SUM, Float64(λ_max))
-    Threads.atomic_add!(DIAG_ALASSO_LAMBDA_EFF_SUM, Float64(λ_eff))
     return (converged, iters)
 end
 
@@ -248,7 +231,6 @@ function solveIteratedAdaptiveLasso!(Hs::AbstractSparseDesignMatrix{Ti, T},
         X₁[j] = zero(T)
     end
     initResiduals!(r, Hs, X₁)   # now r = -y (Hs convention: r = Hw - y)
-    Threads.atomic_add!(DIAG_ALASSO_CALLS, 1)
     λ_max = zero(T)
     @inbounds for col in 1:Hs.n
         g = zero(T)
@@ -264,12 +246,6 @@ function solveIteratedAdaptiveLasso!(Hs::AbstractSparseDesignMatrix{Ti, T},
 
     # Step 1: unpenalized OLS (initial estimator)
     solveOLS!(Hs, r, X₁, colnorm2, max_iter_outer, relative_convergence_threshold)
-    n_zero_after_OLS = 0
-    @inbounds for j in 1:Hs.n
-        n_zero_after_OLS += (X₁[j] == zero(T))
-    end
-    Threads.atomic_add!(DIAG_ALASSO_ZEROS_AFTER_OLS, n_zero_after_OLS)
-    Threads.atomic_add!(DIAG_ALASSO_NCOLS, Int(Hs.n))
 
     # Skip iteration if no signal at all
     if λ_eff == zero(T)
@@ -297,15 +273,6 @@ function solveIteratedAdaptiveLasso!(Hs::AbstractSparseDesignMatrix{Ti, T},
                                              penalty_weights, λ_eff,
                                              max_iter_outer, relative_convergence_threshold)
         total_iters += iters_used
-        n_zero_now = 0
-        @inbounds for j in 1:Hs.n
-            n_zero_now += (X₁[j] == zero(T))
-        end
-        if t == n_iters
-            Threads.atomic_add!(DIAG_ALASSO_ZEROS_AFTER_FINAL, n_zero_now)
-        end
     end
-    Threads.atomic_add!(DIAG_ALASSO_LAMBDA_MAX_SUM, Float64(λ_max))
-    Threads.atomic_add!(DIAG_ALASSO_LAMBDA_EFF_SUM, Float64(λ_eff))
     return (true, total_iters)
 end

@@ -199,14 +199,9 @@ end
 
 # Accessor functions for ParameterTuningSearchParameters
 getMaxFragsForMassErrEstimation(params::ParameterTuningSearchParameters) = params.max_frags_for_mass_err_estimation
-getIntensityFilterQuantile(params::ParameterTuningSearchParameters) = params.intensity_filter_quantile
 
 # Optional JSON override accessors
 
-# RT alignment parameter accessors
-getLambdaPenalty(params::ParameterTuningSearchParameters) = params.lambda_penalty
-getRansacThresholdPsms(params::ParameterTuningSearchParameters) = params.ransac_threshold_psms
-getMinPsmsForSpline(params::ParameterTuningSearchParameters) = params.min_psms_for_spline
 
 # RT alignment parameter accessors (used by fit_irt_model in utils.jl)
 getRtAlignmentLambdaPenalty(params::ParameterTuningSearchParameters) = params.lambda_penalty
@@ -218,8 +213,6 @@ getRtAlignmentMinPsms(params::ParameterTuningSearchParameters) = params.min_psms
 import Pioneer: getMaxBestRank
 getMaxBestRank(params::ParameterTuningSearchParameters) = UInt8(1)  # Default value for PSM filtering
 
-# New getters and setters for multi-score support
-getMinIndexSearchScores(params::ParameterTuningSearchParameters) = params.min_index_search_scores
 getMinIndexSearchScore(params::ParameterTuningSearchParameters) = params.current_min_score
 function setCurrentMinScore!(params::ParameterTuningSearchParameters, score::UInt8)
     params.current_min_score = score

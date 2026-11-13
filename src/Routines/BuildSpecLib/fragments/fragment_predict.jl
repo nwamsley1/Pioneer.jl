@@ -398,13 +398,6 @@ function filter_fragments!(df::DataFrame, model::SplineCoefficientModel,
 end
 
 
-"""
-Sort fragments by intensity within each precursor group.
-"""
-function sort_fragments!(df::DataFrame)
-    sort!(df, [:precursor_idx, order(:intensities, rev=true)])
-end
-
 # ---------------------------------------------------------------------------
 # Prosit (InstrumentAgnosticModel) prediction path
 # ---------------------------------------------------------------------------

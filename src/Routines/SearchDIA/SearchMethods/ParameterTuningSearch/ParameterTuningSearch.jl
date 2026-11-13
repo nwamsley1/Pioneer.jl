@@ -56,9 +56,7 @@ Results Access Methods
 ==========================================================#
 getMassErrorModel(ptsr::ParameterTuningSearchResults) = ptsr.mass_err_model[]
 getRtToIrtModel(ptsr::ParameterTuningSearchResults) = ptsr.rt_to_irt_model[]
-getQcPlotsFolder(ptsr::ParameterTuningSearchResults) = ptsr.qc_plots_folder_path
 getDiagnostics(ptsr::ParameterTuningSearchResults) = ptsr.diagnostics
-getParameterHistory(ptsr::ParameterTuningSearchResults) = ptsr.parameter_history
 
 function set_rt_to_irt_model!(
     ptsr::ParameterTuningSearchResults,

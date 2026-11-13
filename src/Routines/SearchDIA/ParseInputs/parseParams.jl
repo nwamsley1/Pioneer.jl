@@ -53,18 +53,6 @@ function params_to_dict(params::PioneerParameters)
     )
 end
 
-# Helper function to merge settings with global defaults
-function merge_with_globals(specific_settings::NamedTuple, global_settings::NamedTuple)
-    merged = Dict{Symbol,Any}()
-    for (k, v) in pairs(global_settings)
-        merged[k] = v
-    end
-    for (k, v) in pairs(specific_settings)
-        merged[k] = v
-    end
-    return NamedTuple(merged)
-end
-
 
 function parse_pioneer_parameters(json_path::String; apply_defaults::Bool = true)
     # Read user JSON

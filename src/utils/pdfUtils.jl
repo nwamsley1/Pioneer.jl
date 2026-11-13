@@ -130,21 +130,3 @@ function write_pngs_to_pdf(png_paths::AbstractVector{String}, dest::String)
 end
 end  # module PDFGenerator
 
-# Public helper: render each Plots.Plot to a temp PNG, then assemble into a
-# multipage PDF. The temp PNGs are deleted on success. Output is one PDF per
-# call, mirroring the historical save_multipage_pdf UX, but the pages are
-# embedded raster (~30-150 KB each) instead of vector (~hundreds of KB-MB).
-function save_multipage_pdf(plots::AbstractVector{<:Plots.Plot}, dest::String)
-    ensure_directory_exists(dest)
-    isempty(plots) && return dest
-    mktempdir() do tmp
-        png_paths = String[]
-        for (i, p) in enumerate(plots)
-            png = joinpath(tmp, "page_$i.png")
-            Plots.savefig(p, png)
-            push!(png_paths, png)
-        end
-        PDFGenerator.write_pngs_to_pdf(png_paths, dest)
-    end
-    return dest
-end
