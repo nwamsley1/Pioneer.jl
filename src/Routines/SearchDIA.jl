@@ -125,7 +125,8 @@ function SearchDIA(params_path::String)
         @user_print repeat("=", 90)
         @user_info "\nStarting search at: $(Dates.now())"
         @user_info "Output directory: $(params.paths[:results])"
-        
+        log_memory_limit()
+
 
         # === Initialize performance tracking ===
         timings = Dict{String, Any}()
@@ -374,6 +375,8 @@ function print_summary_statistics(total_time, total_memory, peak_memory, total_g
     @user_print "Total alloc (cumulative):   $(round(total_memory/1024^3, digits=2)) GB"
     @user_print "Working set (peak RSS):     $(round(peak_memory/1024^3, digits=2)) GB"
     @user_print "System RAM:                 $(round(current_mem, digits=2)) GB"
+    mlim = memory_limit_info()
+    @user_print "Memory limit used:          $(round(mlim.bytes/1e9, digits=1)) GB (10^9 bytes; $(mlim.source))"
     if !isempty(rss_deltas)
         peak_step = argmax(rss_deltas)
         @user_print "Largest RSS jump:           +$(@sprintf("%.2f", rss_deltas[peak_step])) GB during $peak_step"
