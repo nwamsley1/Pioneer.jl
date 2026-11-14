@@ -304,7 +304,8 @@ function _pt_mass_err_thread_task(
     ion_list,
     precursor_idxs::Vector{UInt32},
     max_rank::Int64,
-) where {S<:SearchDataStructures, M<:AbstractMassErrorModel}
+    peak_select::PS,
+) where {S<:SearchDataStructures, M<:AbstractMassErrorModel, PS<:PeakSelection}
     thread_id = first(thread_task)
     sd = search_data[thread_id]
     corr_mz   = getScanCorrectedMz(sd)
@@ -329,7 +330,8 @@ function _pt_mass_err_thread_task(
             ion_list,
             precursor_idxs, scan_to_prec_idx[scan_idx],
             mem, scan_mz, scan_int, scan_rt;
-            max_rank = max_rank)
+            max_rank = max_rank,
+            peak_select = peak_select)
     end
 
     @view(getMassErrSamples(sd)[1:sample_idx])
@@ -344,14 +346,16 @@ function mass_error_search(
     search_data::AbstractVector{S},
     mem::M,
     params::P,
-    nce_model::NceModel{Float32}
+    nce_model::NceModel{Float32};
+    peak_select::PeakSelection = NearestPeak()
 ) where {
         M<:AbstractMassErrorModel,
         S<:SearchDataStructures,
         P<:SearchParameters
         }
     return mass_error_search(spectra, scan_idxs, precursor_idxs, ms_file_idx,
-                            spec_lib, search_data, mem, params, nce_model, MS2CHROM())
+                            spec_lib, search_data, mem, params, nce_model, MS2CHROM();
+                            peak_select = peak_select)
 end
 
 function mass_error_search(
@@ -364,7 +368,8 @@ function mass_error_search(
     mem::M,
     params::P,
     nce_model::NceModel{Float32},
-    ::MS2CHROM
+    ::MS2CHROM;
+    peak_select::PeakSelection = NearestPeak()
 ) where {
         M<:AbstractMassErrorModel,
         S<:SearchDataStructures,
@@ -388,7 +393,7 @@ function mass_error_search(
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn _pt_mass_err_thread_task(
             thread_task, search_data, spectra, scan_to_prec_idx,
-            mem, ion_list, precursor_idxs, max_rank)
+            mem, ion_list, precursor_idxs, max_rank, peak_select)
     end
     fetch.(tasks)
 end
@@ -480,7 +485,8 @@ function get_matched_fragments(
     psms::DataFrame,
     search_context::SearchContext,
     params::P,
-    ms_file_idx::Int64
+    ms_file_idx::Int64;
+    peak_select::PeakSelection = NearestPeak()
 ) where {P<:FragmentIndexSearchParameters}
 
     return vcat(mass_error_search(
@@ -493,7 +499,8 @@ function get_matched_fragments(
         getMassErrorModel(search_context, ms_file_idx),
         params,
         getNceModel(search_context, ms_file_idx),
-        MS2CHROM()
+        MS2CHROM();
+        peak_select = peak_select
     )...)
 end
 
