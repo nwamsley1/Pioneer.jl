@@ -14,16 +14,20 @@ const field =
 >
   <div class="grid gap-4 sm:grid-cols-2">
     <label class="block text-sm font-[560]">
-      Name (optional)
-      <input class={field} name="name" autocomplete="name" />
+      First name
+      <input class={field} name="first_name" autocomplete="given-name" required />
     </label>
     <label class="block text-sm font-[560]">
+      Last name
+      <input class={field} name="last_name" autocomplete="family-name" required />
+    </label>
+    <label class="block text-sm font-[560] sm:col-span-2">
       Email
       <input class={field} name="email" type="email" autocomplete="email" required />
     </label>
     <label class="block text-sm font-[560] sm:col-span-2">
-      Institution (optional)
-      <input class={field} name="organization" autocomplete="organization" />
+      Institution
+      <input class={field} name="organization" autocomplete="organization" required />
     </label>
   </div>
 
@@ -32,7 +36,7 @@ const field =
 
   <label class="mt-5 flex items-start gap-2 text-sm">
     <input type="checkbox" name="updates" class="mt-0.5 accent-[var(--action)]" />
-    <span>Email me about new Pioneer releases. You can unsubscribe at any time.</span>
+    <span>Subscribe to the Pioneer mailing list (optional)</span>
   </label>
 
   <p id="download-form-error" class="mt-4 hidden text-sm text-[var(--interferer)]" role="alert"></p>
@@ -81,7 +85,14 @@ const field =
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!form.checkValidity()) {
-      error.textContent = "Please enter a valid email address.";
+      const emailInput = form.elements.namedItem("email") as HTMLInputElement;
+      const blank = ["first_name", "last_name", "email", "organization"].some(
+        (n) => !String(new FormData(form).get(n) ?? "").trim(),
+      );
+      error.textContent =
+        blank || emailInput.validity.valid
+          ? "Please fill in your name, email, and institution."
+          : "Please enter a valid email address.";
       error.classList.remove("hidden");
       form.reportValidity();
       return;
@@ -92,8 +103,13 @@ const field =
     button.disabled = true;
     let result;
     try {
+      const firstName = String(fd.get("first_name")).trim();
+      const lastName = String(fd.get("last_name")).trim();
       result = await submitRegistration({
-        name: String(fd.get("name")).trim(),
+        first_name: firstName,
+        last_name: lastName,
+        // Kept for the form endpoint until it reads the two fields above.
+        name: `${firstName} ${lastName}`.trim(),
         email: String(fd.get("email")).trim(),
         organization: String(fd.get("organization")).trim(),
         updates: fd.get("updates") === "on",

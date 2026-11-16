@@ -25,7 +25,7 @@ const features = [
   },
   {
     title: "Fast",
-    body: "Searches whole-proteome in silico libraries 5–30× faster than the data are acquired",
+    body: "Searches runs against whole-proteome <i>in silico</i> libraries 5–30× faster than the data are acquired",
   },
   {
     title: "Scalable",
@@ -49,7 +49,7 @@ const features = [
         Rapid Analysis for Bottom-Up Proteomics
       </h1>
       <p class="mt-6 max-w-[54ch] text-lg leading-relaxed text-muted">
-        Pioneer identifies and quantifies precursors and proteins from data-independent
+        Pioneer identifies and quantifies peptides and proteins from data-independent
         acquisition (DIA) experiments. It runs through both a graphical and a command-line interface
         and scales to thousands of runs on standard desktop hardware.
       </p>
@@ -98,7 +98,7 @@ const features = [
             <div class="border-t border-line py-5">
               <dt class="font-[620] text-ink">{f.title}</dt>
               <dd class="mt-1.5 max-w-[60ch] text-muted">
-                {f.body}
+                <Fragment set:html={f.body} />
                 {f.link && (
                   <>
                     {" "}

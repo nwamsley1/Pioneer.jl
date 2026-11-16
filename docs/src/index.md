@@ -11,7 +11,7 @@ Pioneer is a fast and scalable solution for the analysis of protein mass spectro
 - **Cross-Platform:** Runs on Linux, macOS, and Windows
 - **Multi-Vendor:** Supports Thermo Fisher, SCIEX, and Bruker instruments. See [Tested Instruments](@ref) for the instruments and mass analyzers tested with Pioneer.
 - **GUI:** Includes a graphical user interface
-- **Fast:** Searches whole-proteome *in silico* libraries 5–30× faster than the data are acquired
+- **Fast:** Searches runs against whole-proteome *in silico* libraries 5–30× faster than the data are acquired
 - **Scalable:** Processes experiments with hundreds to thousands of runs on standard desktop hardware (32–64 GB of RAM)
 - **Deep Proteome Coverage:** Delivers high sensitivity, quantitative precision, and accuracy on diverse benchmark datasets
 - **Regression Testing and FDR Control:** Maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers searches on the benchmark datasets, which include entrapment false discovery rate and false transfer rate analyses. [Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/).
