@@ -16,7 +16,7 @@ Pioneer is a fast solution for the quantitative analysis of data-independent acq
 Non-commercial research use that is non-clinical and does not involve human subjects is permitted under the [Washington University license](LICENSE). Licenses for commercial, clinical, or human subjects use are available upon request. Please contact Washington University's Office of Technology Management to request a license agreement: otm@wustl.edu.
 
 ## Labs
-Pioneer is developed in the [Major Lab](https://majorlab.wustl.edu/) and [Goldfarb Lab](https://goldfarblab.wustl.edu/) at Washington University in St. Louis.
+Pioneer is developed in the [Goldfarb Lab](https://goldfarblab.wustl.edu/) and [Major Lab](https://majorlab.wustl.edu/) at Washington University in St. Louis.
 
-<a href="https://majorlab.wustl.edu/"><img src="figures/majorlab.png" width="125px"/></a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://goldfarblab.wustl.edu/"><img src="figures/goldfarb.png" width="125px"/></a>
+<a href="https://goldfarblab.wustl.edu/"><img src="figures/goldfarb.png" width="125px"/></a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://majorlab.wustl.edu/"><img src="figures/majorlab.png" width="125px"/></a>
 <br>

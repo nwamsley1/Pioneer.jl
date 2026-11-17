@@ -23,7 +23,7 @@ const bibtex = `@article{wamsley${p.year}pioneer,
     <section class="mt-10">
       <h2 class="text-lg font-[650]">Reference</h2>
       <p class="mt-3 max-w-[68ch] leading-relaxed">
-        {p.authors.join(", ")} "{p.title}." <em>{p.venue}</em> ({p.year}).{" "}
+        {p.authors.slice(0, -1).join(", ")}, &amp; {p.authors.at(-1)} "{p.title}." <em>{p.venue}</em> ({p.year}).{" "}
         <a class="text-action underline" href={p.url}>doi:{p.doi}</a>
       </p>
     </section>
