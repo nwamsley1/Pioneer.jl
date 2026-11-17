@@ -340,20 +340,22 @@ end
 
 
 ##########################################
-# Orbitrap-family acquisition files: SpectrumDecoder
+# Thermo .raw -> .arrow conversion (convertRaw, SpectrumDecoder)
 ##########################################
 # Synthetic files from write_synthetic_acquisition (no download): one with centroid scans, one with ion-trap
-# profile-only MS1 scans that are centroided on write. Compiles the reader, the consistency checks, the threaded
-# `.arrow` writer and Pioneer's loading of its output.
-maybe_run("SpectrumDecoder") do
+# profile-only MS1 scans that are centroided on write. Compiles the reader, the consistency checks, convertRaw with the
+# threaded `.arrow` writer, and Pioneer's loading of its output.
+maybe_run("convertRaw") do
     SD = Pioneer.SpectrumDecoder
     dir = mktempdir()
     for profile in (false, true)
         raw = SD.write_synthetic_acquisition(joinpath(dir, "synthetic_$(profile).raw"); ms1_profile = profile)
-        f = SD.open_acquisition(raw)
-        SD.check_consistency(f)
-        out = SD.write_pioneer_arrow(f, joinpath(dir, "synthetic_$(profile).arrow"))
-        length(Pioneer.loadMassSpecData(out)) == length(f) || error("SpectrumDecoder: written scan count differs")
+        SD.check_consistency(SD.open_acquisition(raw))
+    end
+    out = Pioneer.convertRaw(dir; output_dir = joinpath(dir, "arrow"))
+    length(out) == 2 || error("convertRaw: expected 2 .arrow runs, got $(length(out))")
+    for path in out
+        length(Pioneer.loadMassSpecData(path)) == 55 || error("convertRaw: written scan count differs in $path")
     end
     rm(dir; recursive = true, force = true)
 end

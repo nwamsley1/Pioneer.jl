@@ -449,6 +449,7 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "Routines", "mzmlConverter", "convertMzML.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "BrukerConverter", "convertBruker.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "SciexConverter", "convertSciex.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "RawConverter", "convertRaw.jl"))
 
     return files_loaded
 end

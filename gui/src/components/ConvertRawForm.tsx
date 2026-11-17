@@ -6,11 +6,12 @@
  *  binaries cannot express it) and the panel shows the real command line
  *  instead of an invented JSON document.
  *
- *  The page drives two programs, not one: Thermo `.raw` goes through
- *  PioneerConverter (.NET), `.mzML` through Pioneer's own `convertMzML`
- *  (Julia). They are one page because they are one task -- get instrument data
- *  into the Arrow files SearchDIA reads -- but their tuning knobs are disjoint,
- *  so the advanced section swaps rather than greying fields out.
+ *  The page drives several programs: Thermo `.raw` goes through `convertRaw`,
+ *  `.mzML` through `convertMzML`, Bruker `.d` through `convertBruker` and
+ *  SCIEX `.wiff` through `convertSciex`. They are one page because they are one
+ *  task -- get instrument data into the files SearchDIA reads -- but their
+ *  tuning knobs are disjoint, so the advanced section swaps rather than greying
+ *  fields out.
  */
 import { InfoDot } from './InfoDot'
 import { NumField } from './NumField'
@@ -528,9 +529,9 @@ export function ConvertRawForm({
         </button>
         {advancedOpen && (
           <div style={{ padding: '4px 20px 20px', borderTop: '1px solid #EEF1F4' }}>
-            {/* Disjoint sets, not a shared set with some fields disabled: none
-                of PioneerConverter's knobs has a counterpart in convertMzML,
-                so showing them greyed out would only suggest otherwise. */}
+            {/* Disjoint sets, not a shared set with some fields disabled: no
+                converter's knobs have a counterpart in another's, so showing
+                them greyed out would only suggest otherwise. */}
             {isBruker ? (
               <div style={{ marginTop: 16, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
                 None. Slicing uses the settings Pioneer&rsquo;s timsTOF search was validated with.
@@ -591,12 +592,6 @@ export function ConvertRawForm({
                 <NumField
                   fieldKey="threadsPerFile"
                   value={params.threadsPerFile}
-                  onChange={onParam}
-                />
-                <NumField fieldKey="batchSize" value={params.batchSize} onChange={onParam} />
-                <NumField
-                  fieldKey="scanChunkSize"
-                  value={params.scanChunkSize}
                   onChange={onParam}
                 />
               </div>

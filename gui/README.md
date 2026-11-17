@@ -75,7 +75,7 @@ visible rather than mysterious.
 All three are properties of the packaged distribution, not of this app:
 
 - **`convert-raw` and `convert-mzml` are different programs.** Only
-  `PioneerConverter` reads Thermo `.raw`.
+  `convertRaw` reads Thermo `.raw`.
 - **`bin/SearchDIA` does not set `JULIA_NUM_THREADS`.** Calling the executable
   directly leaves it single-threaded (~3.7x slower). The `pioneer` wrapper
   defaults it to `auto`, but only when unset (`if [ -z "$JULIA_NUM_THREADS" ]`) —
@@ -86,13 +86,11 @@ All three are properties of the packaged distribution, not of this app:
     wrapper's own formula. Note the name: `JULIA_GC_THREADS` is **not** a Julia
     variable and is silently ignored, leaving GC threads at the full worker
     count. Verified with `Threads.ngcthreads()`.
-- **ConvertRAW is not a Julia program and has no params file.** It is a separate
-  .NET 8 binary taking a positional RAW path plus flags
-  (`-o/--output-dir`, `--skip-existing`,
-  `-t/--threads-per-file`, `-b/--batch-size`, `--scan-chunk-size`). The design
-  invented a `{input:{mode,path},output:{path}}` JSON for it; no such file
-  exists. `runner::Invocation` models the two shapes, and the Julia thread
-  settings are skipped for it.
+- **The converters have no params file.** `convertRaw` takes a positional
+  `.raw` path plus flags (`-o/--output-dir`, `--skip-existing`,
+  `-t/--threads-per-file`). The design invented a
+  `{input:{mode,path},output:{path}}` JSON for it; no such file exists.
+  `runner::Invocation` models the two shapes.
 - **A spectral library is a directory, not a file — and the extension is
   `.poin`.** It holds `precursors_table.arrow`, `detailed_fragments.jls`, the
   fragment index tables and so on. Browse therefore opens a *folder* picker, and
@@ -153,26 +151,19 @@ So the form has the field, and leaving it blank shows a standing amber warning
 naming the defaults you will get instead. A path that is set but wrong blocks the
 run; absent does not.
 
-## PioneerConverter is grafted in, not built
+## convertRaw
 
-It never passes through the Julia build. `.github/workflows/build_app_*.yml`
-downloads the latest release of the separate `nwamsley1/PioneerConverter` repo,
-picks the asset matching the platform (`osx-x64`, `osx-arm64`, …), and copies
-`bin/*` and `lib/*` into the distribution. To reproduce locally:
+`bin/convertRaw` is built with the other Julia executables (`packaging/app_config.jl`)
+and reads `.raw` files with the vendored SpectrumDecoder module.
 
-```sh
-unzip PioneerConverter-osx-x64-<ver>.zip -d converter
-cp -r converter/PioneerConverter-osx-x64/bin/* "$PIONEER_HOME/bin/"
-cp -r converter/PioneerConverter-osx-x64/lib/* "$PIONEER_HOME/lib/"
-```
+It converts RAW files sequentially. Within the current file, reading and writing
+are split over `--threads-per-file` tasks (default: `min(4, JULIA_NUM_THREADS)`),
+capped by `JULIA_NUM_THREADS`. A chosen list of `.raw` files runs as one
+invocation per file, in one job.
 
-It converts RAW files sequentially. Within the current file, scan extraction,
-ordered Arrow assembly, and writing can overlap. `--threads-per-file` controls
-scan-reader workers (default: 3). The GUI passes only within-file tuning options
-for RAW conversion; the removed file-concurrency option is not emitted.
-
-The Julia thread picker is hidden on this page because PioneerConverter is a
-.NET program. The separate mzML converter still has a files-at-a-time setting.
+The header thread picker is hidden on this page; the Advanced section holds
+threads per file for `.raw` and files-at-a-time for `.mzML`. The backend still
+sets `JULIA_NUM_THREADS` from the sidebar count.
 
 ## The log drawer emulates a terminal
 

@@ -835,7 +835,7 @@ export default function App() {
   // here left the note reading "switch the format to .mzML" after the format
   // had been switched. The deps lint that would have caught it is off (see
   // `info`, which is rebuilt every render), so nothing did. Recomputing when an
-  // unrelated field like batchSize changes costs two pure string comparisons.
+  // unrelated field like threadsPerFile changes costs two pure string comparisons.
   const convertNotes = useMemo(
     () => ({
       input: convertInputNote(convert, info('convertInput')),
@@ -935,13 +935,10 @@ export default function App() {
           prev.map((j) => {
             if (j.id !== job_id) return j
             const status: JobStatus = cancelled ? 'cancelled' : success ? 'done' : 'failed'
-            // A conversion that exits 0 is not necessarily a conversion that
-            // happened: PioneerConverter reports every file it could not open
-            // and still exits 0, so a whole batch can fail while the queue says
-            // "done" and the output folder stays empty. Checked rather than
-            // trusted -- but only when the folder holds no .arrow at all, so a
-            // run that legitimately skipped everything (--skip-existing) or
-            // added to an existing folder is never called a failure.
+            // A finished conversion is also checked for output: a run whose
+            // output folder holds no .arrow at all is reported as failed. A run
+            // that skipped everything (--skip-existing) or added to an existing
+            // folder still has .arrow files there and is never called a failure.
             if (status === 'done' && j.cmd === 'convertraw') {
               void verifyConversionProduced(j)
             }
@@ -1701,8 +1698,7 @@ export default function App() {
         taken.add(title)
 
         if (group.format === 'raw') {
-          // One invocation per file on its real path -- PioneerConverter's
-          // Thermo reader cannot open a linked .raw (see convertGroups) -- but
+          // One invocation per file on its real path (see convertGroups), as
           // one job, because one list is one thing the user asked for. `input`
           // on the snapshot is the first file, so recalling the run and the
           // "point SearchDIA at the output" step both still have a path.
@@ -2037,12 +2033,10 @@ export default function App() {
             <div style={{ fontSize: 12.5, color: '#667085', marginTop: 1 }}>{SUBTITLES[command]}</div>
           </div>
           <TopBar
-            // Neither converter wants a picker here. PioneerConverter is .NET
-            // and never reads JULIA_NUM_THREADS at all; convertMzML is Julia and
-            // does, but its own knob is files-at-a-time and a second control
-            // would just be the multiplying-knobs trap the RAW path already
-            // avoids. The backend sets JULIA_NUM_THREADS from this value
-            // regardless, so the mzML converter still gets threads to spawn on.
+            // No picker on the converter page: convertRaw takes threads per
+            // file and convertMzML files-at-a-time, and a second control would
+            // multiply with those. The backend sets JULIA_NUM_THREADS from this
+            // value regardless, so both converters have threads to spawn on.
             showThreads={!isConvert}
             threads={threads}
             maxThreads={maxThreads}

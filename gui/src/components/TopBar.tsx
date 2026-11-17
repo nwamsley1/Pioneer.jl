@@ -11,7 +11,7 @@
 import type React from 'react'
 
 export interface TopBarProps {
-  /** ConvertRAW has no thread control: PioneerConverter takes its own flag. */
+  /** ConvertRAW has no thread control here: its converters take their own flags. */
   showThreads: boolean
   threads: number
   maxThreads: number

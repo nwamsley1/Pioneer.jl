@@ -55,4 +55,4 @@ julia> using Pkg; Pkg.instantiate()
 julia> using Pioneer
 ```
 
-The [Function Reference](@ref) lists the functions behind each step. Thermo `.raw` conversion from source requires [PioneerConverter](https://github.com/nwamsley1/PioneerConverter).
+The [Function Reference](@ref) lists the functions behind each step.

@@ -21,14 +21,15 @@ try {
   const require = createRequire(path.join(out, 'test.cjs'))
   const { buildConvertArgs, convertCommandLine } = require('./config.js')
   const { CONVERT_DEFAULTS } = require('./types.js')
-  assert.equal(CONVERT_DEFAULTS.batchSize, '1000')
+  assert.equal(CONVERT_DEFAULTS.threadsPerFile, '4')
   const raw = { ...CONVERT_DEFAULTS, input: ' /data/input.raw ',
-    outputDir: ' /ssd/output ', skipExisting: true, threadsPerFile: '4',
-    batchSize: '50', scanChunkSize: '17', concurrentFiles: '8' }
+    outputDir: ' /ssd/output ', skipExisting: true, threadsPerFile: '3',
+    concurrentFiles: '8' }
   assert.deepEqual(buildConvertArgs(raw), [
     '/data/input.raw', '--output-dir', '/ssd/output', '--skip-existing',
-    '--threads-per-file', '4', '--batch-size', '50', '--scan-chunk-size', '17',
+    '--threads-per-file', '3',
   ])
+  assert(convertCommandLine(raw).startsWith('convertRaw '))
   for (const inputMode of ['files', 'folder']) {
     const args = buildConvertArgs({ ...raw, inputMode })
     assert(!args.includes('--concurrent-files'))
