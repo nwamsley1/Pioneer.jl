@@ -22,6 +22,8 @@ export interface TopBarProps {
   previewText: string
   onThreads: (n: number) => void
   onEditJson: () => void
+  /** Search and Build: opens the command line that runs the .json. */
+  onCommand?: () => void
   onRun: () => void
 }
 
@@ -49,8 +51,24 @@ export function TopBar({
   previewText,
   onThreads,
   onEditJson,
+  onCommand,
   onRun,
 }: TopBarProps) {
+  const linkStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: CONTROL_H,
+    boxSizing: 'border-box',
+    borderRadius: 8,
+    background: 'none',
+    border: '1px solid #E5E9ED',
+    cursor: 'pointer',
+    color: '#667085',
+    padding: '0 10px',
+    font: "500 12px 'IBM Plex Mono'",
+    flex: 'none',
+  }
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 'none' }}>
       {/* A short text label (".json" or "Command"): an icon alone did not say
@@ -68,24 +86,23 @@ export function TopBar({
         onClick={onEditJson}
         title={previewLabel}
         aria-label={previewLabel}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: CONTROL_H,
-          boxSizing: 'border-box',
-          borderRadius: 8,
-          background: 'none',
-          border: '1px solid #E5E9ED',
-          cursor: 'pointer',
-          color: '#667085',
-          padding: '0 10px',
-          font: "500 12px 'IBM Plex Mono'",
-          flex: 'none',
-        }}
+        style={linkStyle}
       >
         {previewText}
       </button>
+
+      {onCommand && (
+        <button
+          type="button"
+          className="pio-link"
+          onClick={onCommand}
+          title="View the command line"
+          aria-label="View the command line"
+          style={linkStyle}
+        >
+          Command
+        </button>
+      )}
 
       {showThreads && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

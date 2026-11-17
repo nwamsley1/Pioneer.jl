@@ -330,6 +330,7 @@ export default function App() {
   const [pioneerError, setPioneerError] = useState('')
 
   const [jsonOpen, setJsonOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
   const [loadOpen, setLoadOpen] = useState(false)
   const [jobConfirm, setJobConfirm] = useState<{
     id: string
@@ -1512,6 +1513,12 @@ export default function App() {
     [isConvert, isDownload, isSearch, previewSearch, build, convert, download, currentExtras, threads],
   )
 
+  /** Search and Build: the `pioneer` command that runs the .json, with a
+   *  placeholder for where the .json is saved. */
+  const paramsCommandText = isSearch
+    ? `pioneer --threads=${threads} search /path/to/search_parameters.json`
+    : `pioneer --threads=${threads} build /path/to/buildspeclib_params.json`
+
   const overwriteNote = isConvert
     ? convertNotes.output
     // With force on, replacing an existing library is a warning rather than a
@@ -1886,7 +1893,7 @@ export default function App() {
 
   // ---- keyboard ----------------------------------------------------------
 
-  const anyModalOpen = jsonOpen || loadOpen || overwriteOpen || uninstallOpen || !!jobConfirm || !!slowStorage
+  const anyModalOpen = jsonOpen || commandOpen || loadOpen || overwriteOpen || uninstallOpen || !!jobConfirm || !!slowStorage
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -2045,6 +2052,7 @@ export default function App() {
             previewText={isArgv ? 'Command' : '.json'}
             onThreads={setThreads}
             onEditJson={() => setJsonOpen(true)}
+            onCommand={isArgv ? undefined : () => setCommandOpen(true)}
             onRun={() => run()}
           />
         </header>
@@ -2210,6 +2218,19 @@ export default function App() {
             onClose={() => setJsonOpen(false)}
             onApply={(draft) => applyConfig(draft, false)}
             onRevert={() => setExtras((e) => ({ ...e, [command]: null }))}
+          />
+        )}
+
+        {commandOpen && (
+          <JsonModal
+            fileName="command line"
+            editable={false}
+            text={paramsCommandText}
+            hasExtras={false}
+            extraKeys={[]}
+            onClose={() => setCommandOpen(false)}
+            onApply={() => null}
+            onRevert={() => {}}
           />
         )}
 
