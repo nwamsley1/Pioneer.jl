@@ -10,6 +10,7 @@ A search writes its results to the folder chosen under **Results folder** (`path
 | `precursors_wide.tsv` / `.arrow` | Identified precursors, one row per precursor with a quantity column for each run |
 | `protein_groups_long.tsv` / `.arrow` | Protein groups, one row per protein group per run |
 | `protein_groups_wide.tsv` / `.arrow` | Protein groups, one row per protein group with an abundance column for each run |
+| `precursors_wide_ms1`, `protein_groups_wide_ms1` (`.tsv` / `.arrow`) | MS1 quantities in the wide layout; written when MS1 quantification is on (DIA, `maxLFQ.ms1_quantification`) |
 | `run_summary.tsv` | One row of quality-control metrics per run |
 | `qc_plots/` | Retention time alignment, mass error, collision energy, and quadrupole transmission plots |
 | `pioneer_search_report.txt` | Summary of the search |
@@ -34,6 +35,7 @@ reported as 100 × their mean over identified target precursors.
 | `peptides_identified` | Distinct stripped sequences among identified precursors |
 | `protein_groups_identified` / `protein_groups_quantified` | Target protein groups for the run / with a positive abundance |
 | `total_peak_area`, `median_peak_area` | Sum and median of quantified precursor areas |
+| `precursors_quantified_ms1`, `total_peak_area_ms1`, `protein_groups_quantified_ms1` | The MS1 counterparts; present when MS1 quantification is on |
 | `median_normalization_factor` | Median `peak_area_normalized / peak_area` (empty when normalization is off) |
 | `median_irt_error` | Median absolute iRT prediction error |
 | `median_rt_fwhm` | Median RT span (min) of the scans at or above half the apex intensity; 0 when only the apex scan qualifies (fast gradients / few points per peak) |
@@ -99,10 +101,11 @@ A precursor is a peptide sequence with a specific set of modifications and a spe
 | `global_qval` | Experiment-wide precursor q-value |
 | `qval` | Precursor q-value in this run |
 | `pep` | Posterior error probability in this run |
-| `peak_area` | Integrated chromatographic peak area; empty when the precursor was identified but not quantified |
+| `peak_area` | Integrated chromatographic peak area (the MS1 area for DDA runs); empty when the precursor was identified but not quantified |
 | `peak_area_normalized` | Peak area after run-to-run normalization; present only when normalization is on (`maxLFQ.run_to_run_normalization`) |
 | `points_integrated` | Number of scans integrated across the peak |
 | `quant_withheld` | `true` when the peak area was withheld because less than a fifth of the signal survived baseline subtraction; explains an empty `peak_area` |
+| `peak_area_ms1`, `peak_area_ms1_normalized`, `quant_withheld_ms1` | The MS1 area, its normalized value, and its withheld flag; present when MS1 quantification is on (DIA) |
 | `precursor_fraction_transmitted` | Estimated fraction of the precursor isotope envelope transmitted by the quadrupole isolation window |
 | `rt` | Retention time (minutes) of the best-scoring scan |
 | `apex_scan` | Scan index of the chromatographic peak apex |
@@ -142,6 +145,7 @@ A protein group is the set of proteins that the identified peptides cannot disti
 | `pg_pep` | Protein group posterior error probability in this run |
 | `total_peak_area` | Sum of the quantified precursor peak areas (normalized when normalization is on) in this run |
 | `abundance` | Protein group abundance in this run, estimated by MaxLFQ across runs (`maxLFQ.quantification_method`). Equals `total_peak_area` when the group is quantified in only one run |
+| `abundance_ms1`, `total_peak_area_ms1`, `n_precursors_quantified_ms1` | The same from the MS1 areas; present when MS1 quantification is on (DIA) |
 
 ### `protein_groups_wide`
 

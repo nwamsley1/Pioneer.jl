@@ -9,11 +9,11 @@ Instruments whose raw files have been converted and searched with Pioneer, using
 | Instrument | Mass analyzer (MS2) | Acquisition tested |
 |---|---|---|
 | Q Exactive | Orbitrap | DIA, including gas-phase fractionation |
-| Q Exactive HF | Orbitrap | DIA |
-| Q Exactive HF-X | Orbitrap | DIA |
+| Q Exactive HF | Orbitrap | DIA, DDA |
+| Q Exactive HF-X | Orbitrap | DIA, DDA |
 | Orbitrap Exploris 480 | Orbitrap | DIA |
 | Orbitrap Eclipse | Orbitrap | DIA |
-| Orbitrap Astral | Astral | DIA, including 250 pg single-cell inputs |
+| Orbitrap Astral | Astral | DIA and DDA, including 250 pg single-cell inputs |
 
 ## Bruker
 
@@ -25,7 +25,7 @@ Instruments whose raw files have been converted and searched with Pioneer, using
 | timsTOF Pro 2 | TIMS-QTOF | diaPASEF |
 | timsTOF SCP | TIMS-QTOF | diaPASEF |
 | timsTOF HT | TIMS-QTOF | diaPASEF, Thin-diaPASEF |
-| timsTOF Ultra | TIMS-QTOF | diaPASEF |
+| timsTOF Ultra | TIMS-QTOF | diaPASEF, ddaPASEF (250 pg) |
 | timsTOF Ultra 2 | TIMS-QTOF | diaPASEF, including single-cell inputs |
 | timsTOF Ultra AIP | TIMS-QTOF | diaPASEF |
 
