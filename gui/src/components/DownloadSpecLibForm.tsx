@@ -63,6 +63,54 @@ interface Props {
   onRefresh: () => void
 }
 
+/** A small turning ring, sized to sit inside a line of text. */
+function Spinner() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: 'inline-block',
+        width: 12,
+        height: 12,
+        borderRadius: '50%',
+        border: '2px solid #C7D2FE',
+        borderTopColor: '#2563EB',
+        animation: 'pio-spin 0.8s linear infinite',
+        flex: 'none',
+      }}
+    />
+  )
+}
+
+/** A bar sliding along a thin track, for work with no known length. */
+function BusyBar() {
+  return (
+    <div
+      role="progressbar"
+      aria-label="Loading libraries"
+      style={{
+        position: 'relative',
+        height: 3,
+        marginTop: 12,
+        borderRadius: 2,
+        overflow: 'hidden',
+        background: '#E7EAEE',
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '40%',
+          borderRadius: 2,
+          background: '#2563EB',
+          animation: 'pio-slide 1.1s ease-in-out infinite',
+        }}
+      />
+    </div>
+  )
+}
+
 export function DownloadSpecLibForm({
   params,
   libraries,
@@ -82,10 +130,18 @@ export function DownloadSpecLibForm({
       <section style={CARD}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <h2 style={H2}>Available libraries</h2>
-          <button type="button" style={BROWSE} onClick={onRefresh} disabled={loading}>
+          <button
+            type="button"
+            style={{ ...BROWSE, display: 'inline-flex', alignItems: 'center', gap: 7 }}
+            onClick={onRefresh}
+            disabled={loading}
+          >
+            {loading && <Spinner />}
             {loading ? 'Loading…' : 'Refresh'}
           </button>
         </div>
+
+        {loading && <BusyBar />}
 
         {error && <p style={noteStyle({ level: 'error', msg: error })}>{error}</p>}
 

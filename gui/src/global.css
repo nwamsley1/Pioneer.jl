@@ -340,3 +340,19 @@ body {
   border-color: #2e4d7e !important;
   background: #f4f7fc !important;
 }
+
+/* Busy indicators: a turning ring and a bar sliding along a track. */
+@keyframes pio-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pio-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
