@@ -25,7 +25,6 @@ export interface Release {
   htmlUrl: string;
   // GitHub's automatic source archives for the release tag.
   sourceZip: string;
-  sourceTarGz: string;
   sourceTree: string;
   notesHtml: string;
   assets: Asset[];
@@ -92,7 +91,6 @@ function toRelease(r: GhRelease): Release {
     date: new Date(r.published_at ?? Date.now()),
     htmlUrl: r.html_url,
     sourceZip: `https://github.com/${site.repo}/archive/refs/tags/${r.tag_name}.zip`,
-    sourceTarGz: `https://github.com/${site.repo}/archive/refs/tags/${r.tag_name}.tar.gz`,
     sourceTree: `https://github.com/${site.repo}/tree/${r.tag_name}`,
     notesHtml: marked.parse(r.body ?? "", { async: false }) as string,
     assets,
