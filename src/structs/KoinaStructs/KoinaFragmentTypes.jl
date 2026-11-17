@@ -11,8 +11,6 @@ abstract type AbstractKoinaFragment end
 
 getIntensity(pf::AbstractKoinaFragment) = pf.intensity
 getMZ(pf::AbstractKoinaFragment) = pf.mz
-getType(pf::AbstractKoinaFragment) = pf.ion_type
-getIndex(pf::AbstractKoinaFragment) = pf.frag_index
 getCharge(pf::AbstractKoinaFragment) = pf.charge
 getSulfurCount(pf::AbstractKoinaFragment) = pf.sulfur_count
 isY(pf::AbstractKoinaFragment) = pf.is_y
@@ -79,4 +77,3 @@ struct PioneerFragAnnotation
 end
 ArrowTypes.arrowname(::Type{PioneerFragAnnotation}) = :PioneerFragAnnotation
 ArrowTypes.JuliaType(::Val{:PioneerFragAnnotation}) = PioneerFragAnnotation
-getBaseType(pfa::PioneerFragAnnotation) = pfa.base_type

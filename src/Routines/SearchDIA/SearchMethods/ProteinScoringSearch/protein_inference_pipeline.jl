@@ -1887,19 +1887,6 @@ function add_protein_features(
     return desc => op
 end
 
-"""
-    _precursor_consensus_report_bucket(n_peptides)
-
-Bucket proteins by support size for the precursor consensus QC report.
-"""
-@inline function _precursor_consensus_report_bucket(n_peptides::Int)
-    if n_peptides <= 1
-        return :one_peptide
-    elseif n_peptides <= 3
-        return :two_to_three_peptides
-    end
-    return :four_plus_peptides
-end
 
 #==========================================================
 High-Level Interface

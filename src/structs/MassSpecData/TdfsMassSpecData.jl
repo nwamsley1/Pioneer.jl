@@ -160,7 +160,6 @@ getCenterMz(d::TdfsMassSpecData, i::Integer) = d.center_mz[i]::Union{Missing, Fl
 getIsolationWidthMz(d::TdfsMassSpecData, i::Integer) = d.isolation_width[i]::Union{Missing, Float32}
 getMsOrder(d::TdfsMassSpecData, i::Integer) = d.ms_order[i]::UInt8
 getCycleIdx(d::TdfsMassSpecData, i::Integer) = d.cycle_idx[i]::UInt32
-getPrecursorMz(d::TdfsMassSpecData, i::Integer) = getCenterMz(d, i)
 getCollisionEnergyEv(d::TdfsMassSpecData, i::Integer)::Float32 = d.collision_energy_ev[i]
 getScanHeader(::TdfsMassSpecData, ::Integer) = ""
 getScanNumber(::TdfsMassSpecData, i::Integer) = Int32(i)

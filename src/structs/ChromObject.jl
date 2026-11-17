@@ -43,6 +43,3 @@ struct MS1ChromObject <: ChromObject
     precursor_idx::UInt32
 end
 
-function growChromObjects!(chromatograms::Vector{ChromObject}, block_size::Int64)
-    chromatograms = append!(chromatograms, Vector{ChromObject}(undef, block_size))
-end

@@ -16,7 +16,6 @@ struct UniformSpline{N, T<:AbstractFloat}
 end
 
 abstract type RtConversionModel end
-getModel(rt::RtConversionModel) = rt.model
 
 struct SplineRtConversionModel <: RtConversionModel
     model::UniformSpline
@@ -40,12 +39,9 @@ function (m::LinearRtConversionModel)(rt::AbstractFloat)
     return m.intercept + m.slope * rt
 end
 
-# Override getModel for LinearRtConversionModel since it doesn't wrap another model
-getModel(m::LinearRtConversionModel) = m
 
 struct IdentityModel <: RtConversionModel end
 
 (::IdentityModel)(x::AbstractFloat) = x
-getModel(::IdentityModel) = identity
 
 RtConversionModel() = IdentityModel()

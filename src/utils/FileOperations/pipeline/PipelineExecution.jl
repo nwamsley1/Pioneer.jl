@@ -191,46 +191,4 @@ function apply_pipeline_batch(refs::Vector{<:FileReference},
     return new_refs
 end
 
-"""
-    write_transformed(ref::FileReference, output_path::String) -> FileReference
-
-Write the current state of a FileReference to a new location, creating a new reference.
-Useful as the final step after applying transformations.
-
-Example:
-```julia
-# Apply transformations
-apply_pipeline!(ref, pipeline)
-
-# Write to new location
-new_ref = write_transformed(ref, "output/filtered_data.arrow")
-```
-"""
-function write_transformed(ref::FileReference, output_path::String)
-    # Validate input
-    validate_exists(ref)
-    
-    # Ensure output directory exists
-    output_dir = dirname(output_path)
-    !isdir(output_dir) && mkpath(output_dir)
-    
-    # Copy file to new location
-    cp(file_path(ref), output_path, force=true)
-    
-    # Create new reference of same type
-    new_ref = if ref isa PSMFileReference
-        PSMFileReference(output_path)
-    elseif ref isa ProteinGroupFileReference
-        ProteinGroupFileReference(output_path)
-    else
-        FileReference(output_path)  # Generic fallback
-    end
-    
-    # Copy metadata (sort state, schema)
-    if !isempty(sorted_by(ref))
-        mark_sorted!(new_ref, sorted_by(ref)...)
-    end
-    
-    return new_ref
-end
 

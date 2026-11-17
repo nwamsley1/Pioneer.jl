@@ -68,13 +68,13 @@ using DataFrames, Dictionaries, Distributions
 import DataStructures  # qualified to avoid reset! conflict
 using FASTX, Interpolations, JSON, JLD2
 using LinearAlgebra, LightXML
-using Measures, NumericalIntegration
+using Measures
 using Plots, Polynomials, ProgressBars
 using Tables, StatsPlots, SentinelArrays
 using Random, StaticArrays, StatsBase, SpecialFunctions, Statistics
 using LightGBM
 using MLJModelInterface: fit, predict
-using KernelDensity, FastGaussQuadrature
+using KernelDensity
 using LaTeXStrings, Printf
 using SparseArrays, Dates
 using HTTP

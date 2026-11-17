@@ -122,12 +122,7 @@ compute_chromatogram_isotope_sets(trace_type::IsotopeTraceType) = seperateTraces
 # Explicit debug-only target list for writing a small set of chromatogram plots.
 # Plot generation is still gated by `DEBUG_CONSOLE_LEVEL[] >= 1`.
 const DEBUG_CHROM_TARGET_PRECURSOR_IDXS = Ref{Set{UInt32}}(Set{UInt32}())
-const DEBUG_CHROM_TARGET_PRECURSOR_IDX = DEBUG_CHROM_TARGET_PRECURSOR_IDXS
 
-@inline function debug_should_plot_chromatogram(precursor_idx::Integer)
-    return DEBUG_CONSOLE_LEVEL[] >= 1 &&
-        UInt32(precursor_idx) in DEBUG_CHROM_TARGET_PRECURSOR_IDXS[]
-end
 
 function debug_sanitize_chromatogram_filename(value::AbstractString)
     safe = replace(String(value), r"[^A-Za-z0-9]+" => "_")

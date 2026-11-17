@@ -123,7 +123,6 @@ getCenterMz(d::ScxsMassSpecData, i::Integer) = d.center_mz[i]::Union{Missing, Fl
 getIsolationWidthMz(d::ScxsMassSpecData, i::Integer) = d.isolation_width[i]::Union{Missing, Float32}
 getMsOrder(d::ScxsMassSpecData, i::Integer) = d.ms_order[i]::UInt8
 getCycleIdx(d::ScxsMassSpecData, i::Integer) = d.cycle_idx[i]::UInt32
-getPrecursorMz(d::ScxsMassSpecData, i::Integer) = getCenterMz(d, i)
 getCollisionEnergyEv(::ScxsMassSpecData, ::Integer)::Float32 = 0f0     # as for mzML-converted Arrow
 getScanHeader(::ScxsMassSpecData, ::Integer) = ""
 getScanNumber(::ScxsMassSpecData, i::Integer) = Int32(i)

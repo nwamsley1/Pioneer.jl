@@ -502,19 +502,6 @@ function _mbr_iteration_metrics(
     )
 end
 
-function _mbr_evenly_spaced_sample(
-    rows::Vector{Int},
-    limit::Int,
-)
-    limit >= 0 || throw(ArgumentError("MBR training limit must be nonnegative"))
-    length(rows) <= limit && return copy(rows)
-    limit == 0 && return Int[]
-    n = length(rows)
-    return Int[
-        rows[fld((2 * sample_idx - 1) * n, 2 * limit) + 1]
-        for sample_idx in 1:limit
-    ]
-end
 
 """
     _mbr_sample_positions(n, limit) -> Vector{Int}

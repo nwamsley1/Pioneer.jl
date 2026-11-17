@@ -6,29 +6,6 @@
 
 abstract type ScoredPSM{H,L<:AbstractFloat} <: PSM end
 
-# Counters for diagnostic accounting of skipped PSMs across all Score! calls.
-# Reset and read by the SearchDIA driver when PIONEER_LOG_SKIPPED=1.
-const SKIPPED_WEIGHT_TOTAL = Threads.Atomic{Int64}(0)
-const TOTAL_PSMS_CONSIDERED = Threads.Atomic{Int64}(0)
-
-# Per-thread diagnostic capture of precursors that ever appeared in deconv,
-# split by whether they passed the weight filter. Populated only when
-# PIONEER_LOG_DROPPED_PRECS=1. The current ms_file_idx is set by the search
-# driver before each file's deconv begins.
-const DIAG_CURRENT_FILE_IDX = Ref{Int64}(0)
-const DIAG_LOG_DROPPED = Ref{Bool}(false)
-# Sized at runtime by SearchDIA driver to current Threads.maxthreadid(); we
-# default to 1 here so module precompilation works with single-threaded julia.
-const DIAG_SEEN_PER_THREAD = Dict{Int, Set{UInt32}}[]
-const DIAG_DROPPED_PER_THREAD = Dict{Int, Set{UInt32}}[]
-function _diag_ensure_thread_storage()
-    n = Threads.maxthreadid()
-    while length(DIAG_SEEN_PER_THREAD) < n
-        push!(DIAG_SEEN_PER_THREAD, Dict{Int, Set{UInt32}}())
-        push!(DIAG_DROPPED_PER_THREAD, Dict{Int, Set{UInt32}}())
-    end
-end
-
 """
     psm_logfac(N) -> Float64
 
@@ -248,8 +225,6 @@ function Score!(scored_psms::Vector{MainSearchScoredPSM{H, L}},
         )
         last_val += 1
     end
-    Threads.atomic_add!(SKIPPED_WEIGHT_TOTAL, skipped_weight)
-    Threads.atomic_add!(TOTAL_PSMS_CONSIDERED, n_vals)
     return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=skipped_frag_count, skipped_matched_ratio=0, skipped_topn=0, skipped_spectral_contrast=0)
 end
 
@@ -349,7 +324,5 @@ function Score!(scored_psms::Vector{TuningScoredPSM{H, L}},
         )
         last_val += 1
     end
-    Threads.atomic_add!(SKIPPED_WEIGHT_TOTAL, skipped_weight)
-    Threads.atomic_add!(TOTAL_PSMS_CONSIDERED, n_vals)
     return (last_val=last_val, skipped_weight=skipped_weight, skipped_frag_count=0, skipped_matched_ratio=0, skipped_topn=0, skipped_spectral_contrast=0)
 end

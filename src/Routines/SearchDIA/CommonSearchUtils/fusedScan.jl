@@ -147,34 +147,6 @@ const FUSED_SIMD_CUTOFF = 32
     return simd_find_first_ge(a, lo, lo + len - 1, target)
 end
 
-"""
-    scan_for_nearest(mz, lo, hi, target, ppm_tol) -> (peak_idx, ppm_err)
-
-Scalar forward scan for the peak nearest `target` within ppm tolerance,
-starting at `lo`. Returns `(0, 0f0)` if no peak is within tolerance. Called
-after `bsearch_hybrid` has narrowed the window to ~1-3 peaks.
-"""
-@inline function scan_for_nearest(mz::AbstractVector{Float32}, lo::Int, hi::Int,
-                                   target::Float32, ppm_tol::Float32)
-    tol = target * ppm_tol * 1f-6
-    target_hi = target + tol
-    best_peak = 0
-    best_err = typemax(Float32)
-    @inbounds while lo <= hi && mz[lo] <= target_hi
-        err = abs(mz[lo] - target)
-        if err <= tol && err < best_err
-            best_err = err
-            best_peak = lo
-        end
-        lo += 1
-    end
-    if best_peak > 0
-        @inbounds ppm_err = (target - mz[best_peak]) / (target * 1f-6)
-        return best_peak, ppm_err
-    else
-        return 0, 0f0
-    end
-end
 
 """
     insertion_sort_scratch!(s, n)

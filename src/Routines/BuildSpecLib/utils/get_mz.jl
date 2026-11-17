@@ -12,9 +12,6 @@ const PROTON::Float64 = Float64(1.0072764)
 const C13_C12_MASS_DIFF::Float64 = Float64(13.00335483507 - 12.0)
 const C13_C12_MASS_DIFF_F32::Float32 = Float32(C13_C12_MASS_DIFF)
 
-const default_mods::Dict{String, Float64} = Dict{String, Float64}(
-    "Carb" => Float64(57.021464))
-
 const AA_to_mass::Dict{Char, Float64} = Dict{Char, Float64}(
         'A' => 71.03711,
         'R' => 156.10111,

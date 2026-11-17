@@ -326,62 +326,6 @@ function get_sulfur_counts!(sulfur_counts::Vector{Int8},
     end
 end
 
-"""
-    calculate_reversed_mz!(df::DataFrame, iso_mod_masses::Vector{Float32})
-
-Reverses the peptide sequence (except last AA) and recalculates fragment m/z values.
-Terminal modifications stay in place and are included in m/z calculations.
-"""
-function calculate_mz_and_sulfur_count!(df::DataFrame, 
-                    structural_mod_to_mass::Dict{String, T},
-                    iso_mods_dict::Dict{String, Dict{String, T}},
-                    mods_to_sulfur_diff::Dict{String, Int8}) where {T<:AbstractFloat}
-    
-    aa_masses = zeros(Float32, 255)
-    structural_mod_masses = zeros(Float32, 255)
-    iso_mod_masses = zeros(Float32, 255)
-    sulfur_counts = zeros(Int8, 255)
-    
-    for row in eachrow(df)
-        seq_length = length(row.sequence)
-        base_type = first(row.frag_type)
-        
-        # Calculate masses
-        get_aa_masses!(aa_masses, row.sequence)
-        get_structural_mod_masses!(structural_mod_masses, row.structural_mods, structural_mod_to_mass)
-        getIsoModMasses!(iso_mod_masses, row.structural_mods, row.isotopic_mods, iso_mods_dict)
-        
-        # Calculate sulfur counts
-        get_sulfur_counts!(sulfur_counts, row.sequence, row.structural_mods, mods_to_sulfur_diff)
-        
-        # Get fragment indices
-        start_idx, stop_idx = get_fragment_indices(
-            base_type,
-            row.frag_series_number,
-            UInt8(seq_length)
-        )
-        
-        # Calculate m/z values
-        row.frag_mz = get_fragment_mz(
-            start_idx, stop_idx,
-            base_type, row.frag_charge,
-            aa_masses,
-            structural_mod_masses,
-            iso_mod_masses
-        )
-        
-        row.prec_mz = get_precursor_mz(
-            seq_length, row.prec_charge,
-            aa_masses,
-            structural_mod_masses,
-            iso_mod_masses
-        )
-        
-        # Set sulfur counts
-        row.prec_sulfur_count = sum(sulfur_counts[1:seq_length])
-        row.frag_sulfur_count = sum(sulfur_counts[start_idx:stop_idx])
-    end
-end
 
 """
     reverseSequence(sequence::String, structural_mods::String)

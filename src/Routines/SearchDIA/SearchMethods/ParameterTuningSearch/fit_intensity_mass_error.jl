@@ -236,16 +236,6 @@ function _constant_bias_spline(first_x::Float64,
     )
 end
 
-function _constant_bias_extrap(spline::UniformSpline{N, Float64}) where N
-    return SplineExtrap{Float64}(
-        spline.first,
-        spline.last,
-        spline(spline.first),
-        0.0,
-        spline(spline.last),
-        0.0
-    )
-end
 
 function _shift_spline(spline::UniformSpline{N, Float64}, offset::Float64) where N
     coeffs = collect(spline.coeffs)

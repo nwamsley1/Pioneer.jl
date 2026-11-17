@@ -54,9 +54,7 @@ Subtypes differ in how they store intensity: fixed (DetailedFrag) vs spline (Spl
 """
 abstract type AltimeterFragment{T} <: LibraryFragmentIon{T} end
 
-getPID(f::AltimeterFragment) = f.prec_id
 getMz(f::AltimeterFragment) = f.mz
-getIonType(f::AltimeterFragment) = f.ion_type
 isY(f::AltimeterFragment) = f.is_y
 isB(f::AltimeterFragment) = f.is_b
 isP(f::AltimeterFragment) = f.is_p
@@ -123,8 +121,6 @@ const _CF_IS_B       = UInt16(0x0002)
 const _CF_IS_P       = UInt16(0x0004)
 const _CF_IS_ISOTOPE = UInt16(0x0008)
 
-# Getters — all @inline for zero overhead
-@inline getPID(f::CompactFrag) = f.prec_id
 @inline getMz(f::CompactFrag) = f.mz
 @inline getIntensity(f::CompactFrag) = f.intensity
 @inline getIntensity(f::CompactFrag, ::ConstantType) = f.intensity
@@ -139,8 +135,6 @@ const _CF_IS_ISOTOPE = UInt16(0x0008)
 @inline getIonPosition(f::CompactFrag) = UInt8(f.packed_b & 0x3f)
 @inline getRank(f::CompactFrag)        = UInt8((f.packed_b >> 6) & 0x1f)
 
-# ion_type not stored — return 0 (callers should use isY/isB/isP instead)
-@inline getIonType(f::CompactFrag) = UInt16(0)
 
 # Constructor from individual fields (used by fillTransitionList!)
 @inline function CompactFrag(prec_id::UInt32, mz::T, intensity::Float16,
@@ -186,8 +180,6 @@ struct SplineCompactFrag{N,T<:AbstractFloat} <: AltimeterFragment{T}
     packed_b::UInt16
 end
 
-# Getters — same packed layout as CompactFrag
-@inline getPID(f::SplineCompactFrag) = f.prec_id
 @inline getMz(f::SplineCompactFrag) = f.mz
 @inline getMZ(f::SplineCompactFrag) = f.mz
 @inline isY(f::SplineCompactFrag)  = (f.packed_a & _CF_IS_Y) != 0
@@ -199,7 +191,6 @@ end
 @inline getSulfurCount(f::SplineCompactFrag) = UInt8((f.packed_a >> 9) & 0x07)
 @inline getIonPosition(f::SplineCompactFrag) = UInt8(f.packed_b & 0x3f)
 @inline getRank(f::SplineCompactFrag)        = UInt8((f.packed_b >> 6) & 0x1f)
-@inline getIonType(f::SplineCompactFrag) = UInt16(0)
 
 @inline function getIntensity(
         pf::SplineCompactFrag{4,T}, intensity_type::PreparedSplineFractions{T}) where {T<:AbstractFloat}
