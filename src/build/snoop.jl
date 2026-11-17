@@ -278,6 +278,23 @@ maybe_run("SearchDIA_yeast") do
     search_checked(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
 end
 
+# The same yeast DIA search with MS1 quantification on (maxLFQ.ms1_quantification): MS1 chromatogram extraction,
+# deconvolution and integration next to MS2, and the MS1 columns of the protein and output tables. Off by default,
+# so no other target reaches it.
+maybe_run("SearchDIA_yeast_ms1") do
+    search_checked(joinpath(data_dir, "precompile", "search_yeast_altimeter_ms1.json"))
+end
+
+# DDA: quantification from MS1 (calibrated extraction window, MS1 mass model, second pass) and the DDA branches of
+# scoring and MBR. Fixture (temp/zenodo/dda_raw): two Astral DDA 5 min 50 ng runs of the PXD070049 three-proteome
+# samples, conditions A and B; all MS1 scans with peaks restricted to 490-615 m/z, MS2 scans with an isolation centre
+# in 500-600 m/z (the yeast library's band) keeping their 200 most intense peaks. ~2,200 / 1,550 precursors, enough
+# for the window calibration and the mass model to take their measured (not fallback) paths. The mode is set in the
+# config: a 100 m/z MS2 band is covered almost every cycle, so the data rule would call these runs DIA.
+maybe_run("SearchDIA_dda") do
+    search_checked(joinpath(data_dir, "precompile", "search_dda_altimeter.json"))
+end
+
 
 ##########################################
 # timsTOF: .d -> .tdfs conversion and search

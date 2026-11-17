@@ -570,6 +570,8 @@ function train_and_predict_pass1_oom!(
     t_total_start = time()
     @debug_l1 "Pass-1 metadata starting: files=$(length(file_paths))"
     available = _resolve_available_features(file_paths, features)
+    isempty(get(ENV, "PIONEER_SCORE_FEATURE_DUMP", "")) ||
+        foreach(p -> dump_score_features("pass1", DataFrame(Arrow.Table(p)), available), file_paths)
     if isempty(available)
         error("train_and_predict_pass1_oom!: no requested features are present " *
               "in the per-file Arrow schema")

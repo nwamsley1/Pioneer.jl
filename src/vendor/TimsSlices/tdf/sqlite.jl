@@ -10,7 +10,7 @@ using SQLite
 struct FrameTable
     id::Vector{Int32}
     time::Vector{Float64}          # seconds
-    msms_type::Vector{Int32}       # 0 = MS1, 9 = diaPASEF MS2
+    msms_type::Vector{Int32}       # 0 = MS1, 8 = DDA-PASEF MS2, 9 = diaPASEF MS2
     num_scans::Vector{Int32}
     num_peaks::Vector{Int64}
     tims_id::Vector{Int64}         # byte offset of the block in analysis.tdf_bin
@@ -161,9 +161,29 @@ struct CeRamp
     slope::Float64
 end
 @inline ce_at(c::CeRamp, scan) = c.intercept + c.slope * scan
-function fit_ce_ramp(scheme::DiaScheme)
+"""
+    read_pasef_events(db, frames) -> Vector{Vector{DiaWindow}}
+
+DDA-PASEF isolation events (`PasefFrameMsMsInfo`), per frame row, sorted by scan: each row is one precursor isolated
+over scans `ScanNumBegin:ScanNumEnd-1` of that frame, stored as a `DiaWindow` (scan range, isolation centre and width,
+collision energy) so the window pipeline treats it like a diaPASEF window. Empty when the table is absent.
+"""
+function read_pasef_events(db::SQLite.DB, frames::FrameTable)
+    ev = [DiaWindow[] for _ in 1:length(frames)]
+    has = !isempty(collect(DBInterface.execute(db, "SELECT name FROM sqlite_master WHERE type='table' AND name='PasefFrameMsMsInfo'")))
+    has || return ev
+    row_of = Dict{Int32, Int}(frames.id[i] => i for i in 1:length(frames))
+    for r in DBInterface.execute(db, "SELECT Frame, ScanNumBegin, ScanNumEnd, IsolationMz, IsolationWidth, CollisionEnergy FROM PasefFrameMsMsInfo ORDER BY Frame, ScanNumBegin")
+        i = get(row_of, Int32(r[:Frame]), 0)
+        i > 0 && push!(ev[i], DiaWindow(Int32(r[:ScanNumBegin]), Int32(r[:ScanNumEnd]), Float32(r[:IsolationMz]),
+                                        Float32(r[:IsolationWidth]), Float32(r[:CollisionEnergy])))
+    end
+    ev
+end
+
+function fit_ce_ramp(scheme::DiaScheme, pasef::Vector{Vector{DiaWindow}} = Vector{DiaWindow}[])
     xs = Float64[]; ys = Float64[]
-    for ws in scheme.groups, w in ws
+    for ws in Iterators.flatten((scheme.groups, pasef)), w in ws
         push!(xs, (w.scan_begin + w.scan_end) / 2); push!(ys, w.ce)
     end
     length(xs) < 2 && return CeRamp(isempty(ys) ? 0.0 : ys[1], 0.0)

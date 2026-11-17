@@ -26,6 +26,7 @@ on:
           - all
           - fast
           - fastest
+          - MS1_quant
           - APMS_Astral
           - APMS_Astral_1
           - APMS_Astral_2

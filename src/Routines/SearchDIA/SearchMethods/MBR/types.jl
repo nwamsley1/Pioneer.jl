@@ -466,6 +466,29 @@ const MBR_ION_MOBILITY_FEATURES = Symbol[
     _mbr_true_feature("MBR_worst_observed_im_diff"),
 ]
 
+# Transfer-model features (true-pairing names) left out on DDA data. DDA quantifies from MS1 and fragments a
+# precursor in one (Orbitrap/Astral) or a few (DDA-PASEF) scans, so the features built on an MS2 elution profile are
+# constant or nearly so (cross-scan fragment correlations, their bitvec ranks and Hellinger contrasts; the MS2-vs-MS1
+# apex offset; the cluster peer count). The explained-intensity ratio added nothing either. 250 pg Astral/timsTOF
+# 15/5 min: dropping these changed MBR gains by -6..+3% with the same accuracy; temporal_frag_hellinger is kept
+# (dropping it cost 9-21% on timsTOF).
+const MBR_DDA_EXCLUDED_FEATURES = Symbol[
+    :ms1_weight_apex_to_m0_apex_irt,
+    :MBR_receiver_frag_corr_bitvec_rank,
+    (_mbr_true_feature(stem) for stem in (
+        "MBR_receiver_cluster_peer_count",
+        "MBR_best_donor_frag_corr_bitvec_rank",
+        "MBR_best_shared_corr_frag_bitvec_rank",
+        "MBR_best_log2_explained_ratio",
+        "MBR_worst_log2_explained_ratio",
+        (base * suffix
+         for base in ("MBR_best_temporal_corr_frag_hellinger",
+                      "MBR_best_temporal_receiver_corr_frag_hellinger",
+                      "MBR_best_temporal_shared_corr_frag_hellinger")
+         for suffix in ("", "_rank", "_margin"))...,
+    ))...,
+]
+
 function _mbr_ftr_features_false(counterfactual_idx::Int)
     return Symbol[
         MBR_RECEIVER_FEATURES...,

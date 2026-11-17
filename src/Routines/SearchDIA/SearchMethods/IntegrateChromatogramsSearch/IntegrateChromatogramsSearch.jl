@@ -32,6 +32,7 @@ Results container for chromatogram integration search.
 struct IntegrateChromatogramSearchResults <: SearchResults
     psms::Base.Ref{DataFrame}  # PSM rows for one file after integration
     rhs_extended::Set{UInt32}  # precursors with the right-tail window extension (all files)
+    dda::Base.Ref{Bool}        # some file was DDA (MS1 quantification): post-integration MBR uses its DDA features
 end
 
 function _resolve_chromatogram_trace_type(
@@ -105,6 +106,10 @@ function chromatogram_integration_solver_label(solver::DeconvolutionSolver)
     return string(nameof(typeof(solver)))
 end
 
+"""Whether DIA searches also quantify from MS1 (`maxLFQ.ms1_quantification`, default false)."""
+ms1_quantification_enabled(params) =
+    hasproperty(params.maxLFQ, :ms1_quantification) && Bool(params.maxLFQ.ms1_quantification)
+
 """
 Parameters for chromatogram integration search.
 
@@ -134,6 +139,9 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
     prec_estimation::P
     match_between_runs::Bool
     q_value_threshold::Float32
+    # DIA: also quantify each precursor from MS1 (peak_area_ms1, next to the MS2 peak_area);
+    # maxLFQ.ms1_quantification, default false. DDA always quantifies from MS1.
+    ms1_quantification::Bool
 
     function IntegrateChromatogramSearchParameters(params::PioneerParameters)
         # Extract relevant parameter groups
@@ -178,6 +186,7 @@ struct IntegrateChromatogramSearchParameters{P<:PrecEstimation, I<:IsotopeTraceT
             prec_estimation,
             match_between_runs,
             _resolve_q_value_threshold(global_params),
+            ms1_quantification_enabled(params),
         )
     end
 end
@@ -208,6 +217,7 @@ function init_search_results(::IntegrateChromatogramSearchParameters, search_con
     return IntegrateChromatogramSearchResults(
         Ref(DataFrame()),
         rhs_extended,
+        Ref(false),
     )
 end
 
@@ -313,6 +323,11 @@ function process_file!(
     # Initialize the integration schema before the empty-file check so an
     # empty staged MBR file remains consumable by the post-integration pass.
     passing_psms[!, :peak_area] = zeros(Float32, nrow(passing_psms))
+    # DIA with maxLFQ.ms1_quantification: the MS1 area next to the MS2 one (dia_ms1_quantification)
+    dia_ms1 = params.ms1_quantification && !is_dda_file(search_context, ms_file_idx)
+    dia_ms1 && (passing_psms[!, :peak_area_ms1] = zeros(Float32, nrow(passing_psms)))
+    # true where QUANT_MIN_AREA_SURVIVING_RATIO withheld the MS1 area (it is then missing, like quant_withheld for MS2)
+    dia_ms1 && (passing_psms[!, :quant_withheld_ms1] = zeros(Bool, nrow(passing_psms)))
     passing_psms[!, :new_best_scan] = zeros(UInt32, nrow(passing_psms))
     passing_psms[!, :points_integrated] = zeros(UInt32, nrow(passing_psms))
     passing_psms[!, :integration_start_scan] =
@@ -351,8 +366,13 @@ function process_file!(
         passing_psms = passing_psms[selected_rows, :]
     end
 
+    # DDA: a precursor is fragmented in ~1 MS2 scan, so its MS2 trace integrates to zero. Quantify from
+    # MS1 instead (ms1_quant.jl). MS2 chromatograms are then only needed for MBR and the debug plots.
+    dda = is_dda_file(search_context, ms_file_idx)
+    dda && (results.dda[] = true)
+    need_ms2_chroms = !dda || params.match_between_runs || write_intermediate_chromatogram_debug_plots(params)
     # Extract chromatograms for all passing PSMs
-    chromatograms, scan_tic = extract_chromatograms(
+    chromatograms, scan_tic = need_ms2_chroms ? extract_chromatograms(
         spectra,
         passing_psms,
         rt_index,
@@ -361,14 +381,56 @@ function process_file!(
         ms_file_idx,
         MS2CHROM();
         rhs_extended = results.rhs_extended,
-    )
+    ) : (DataFrame(), nothing)
     _diag_table("integration file $ms_file_idx: chromatograms extracted", chromatograms)
-    # MS1 chromatogram extraction is currently unwired; the MS1
-    # build_chromatograms body is block-commented in utils.jl pending a
-    # fused port. The ms1_quant knob has been removed from the public
-    # config schema.
-    #Arrow.write(joinpath(out_dir, "test_chroms_ms1.arrow"), ms1_chromatograms)
-    #jldsave("/Users/nathanwamsley/Desktop/test_chroms_ms1.jld2"; ms1_chromatograms)
+    ms1_chromatograms = nothing
+    ms1_smooth_scale = 0f0
+    ms1_im_half = 0                       # DDA MS1 on mobility data: band half-width (IM scans) for 2D integration
+    ms1_apex_im = nothing
+    ms1_seed = passing_psms[!, :scan_idx]   # DDA: integration seed per PSM (the PSM scan; the MS1 apex after a second pass)
+    if dda
+        # per-file intensity-aware MS1 mass model from the calibration precursors (tuning's model if it cannot be fit)
+        ms1_mem = fit_ms1_quant_mass_model(spectra, passing_psms[ms1_calibration_rows(passing_psms), :],
+                                           search_context, ms_file_idx)
+        # per-run window and smoothing scale from the MS1 peaks of the most confident precursors
+        cal = calibrate_ms1_window(spectra, passing_psms, rt_index, search_context, params, ms_file_idx;
+                                   ms1_mass_err_model = ms1_mem)
+        ms1_rt_tol = cal.half_width
+        ms1_smooth_scale = ms1_smoothing_rt_scale(cal.smooth_scale)
+        reset_ms1_solve_stats!()
+        t_ms1 = @elapsed (ms1_chromatograms, _) = extract_chromatograms(
+            spectra, passing_psms, rt_index, search_context, params, ms_file_idx, MS1CHROM();
+            ms1_rt_tol = ms1_rt_tol, ms1_mass_err_model = ms1_mem)
+        st = MS1_SOLVE_STATS
+        @user_info "DDA MS1 extraction: $(round(t_ms1, digits = 2)) s: $(st.scans[]) scans, " *
+                   "$(round(st.cols[] / max(st.scans[], 1), digits = 1)) cols/scan, $(round(st.iters[] / max(st.scans[], 1), digits = 2)) " *
+                   "outer iters/scan, $(st.capped[]) capped (max $(params.max_iter_outer))"
+        # mobility data: grid coordinates for the 2D integration (as the DIA MS2 path) and the PSMs' IM scans,
+        # which seed the apex (the identifying MS2 slice is not in the MS1 grid)
+        let ims = getImScans(spectra)
+            if ims !== nothing && nrow(ms1_chromatograms) > 0
+                cyc = getCycleIdxs(spectra)
+                ms1_chromatograms[!, :cycle_idx] = UInt32[UInt32(cyc[s]) for s in ms1_chromatograms.scan_idx]
+                ms1_chromatograms[!, :im_scan] = UInt16[UInt16(ims[s]) for s in ms1_chromatograms.scan_idx]
+                ms1_im_half = im_half_width_scans(CHROM_IM_BAND_K0, spectra, search_context, ms_file_idx)
+                ms1_apex_im = UInt16[UInt16(ims[s]) for s in passing_psms.scan_idx]
+            end
+        end
+        if ms1_two_pass() && nrow(ms1_chromatograms) > 0
+            ms1_chromatograms, ms1_seed, ms1_apex_im = ms1_second_pass(
+                ms1_chromatograms, spectra, passing_psms, search_context, params, ms_file_idx;
+                ms1_mass_err_model = ms1_mem, fwhm_q90 = cal.fwhm_q90, pass1_rt_tol = ms1_rt_tol,
+                rhs_extended = results.rhs_extended, im_half_scans = ms1_im_half, rt_scale = ms1_smooth_scale,
+                apex_im = ms1_apex_im)
+        end
+        sort_chromatograms_for_integration!(ms1_chromatograms, CombineTraces(params.min_fraction_transmitted))
+        @user_info "DDA run: MS1 quantification ($(nrow(ms1_chromatograms)) MS1 chromatogram points)"
+        if get(ENV, "PIONEER_MS1_DUMP", "0") == "1" && nrow(ms1_chromatograms) > 0
+            dump_dir = joinpath(getDataOutDir(search_context), "ms1_chroms")
+            mkpath(dump_dir)
+            writeArrow(joinpath(dump_dir, getParsedFileName(search_context, ms_file_idx) * ".arrow"), ms1_chromatograms)
+        end
+    end
     # Scanning-quad (ZT): one point per precursor per cycle (ZT/chromatogram_collapse.jl).
     zt_geom = getZTGeometry(search_context, Int64(ms_file_idx))
     chromatograms = zt_collapse_chromatograms(zt_geom, chromatograms, spectra, search_context)
@@ -410,13 +472,14 @@ function process_file!(
         end
     end
     _diag_table("integration file $ms_file_idx: isotopes + IM columns added", chromatograms)
-    sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
+    nrow(chromatograms) > 0 && sort_chromatograms_for_integration!(chromatograms, params.isotope_tracetype)
     _diag_table("integration file $ms_file_idx: chromatograms sorted", chromatograms)
 
-    # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted)
-    if nrow(chromatograms) > 0
+    # Integrate chromatographic peaks for each precursor (skip if no chromatograms extracted); DDA integrates the
+    # MS1 traces
+    if nrow(dda ? ms1_chromatograms : chromatograms) > 0
         psm_isotopes_captured = nothing
-        if seperateTraces(params.isotope_tracetype)
+        if seperateTraces(params.isotope_tracetype) && nrow(chromatograms) > 0
             # In separate-trace mode, choose the transmitted isotope trace used
             # for quantification and mirror that choice onto the PSM/output
             # columns. Combined mode keeps the upstream PSM isotope metadata.
@@ -430,22 +493,32 @@ function process_file!(
             )
         end
         integrate_precursors(
-            chromatograms,
-            params.isotope_tracetype,
+            # DDA: the MS1 traces (one combined trace per precursor; 2D RT x IM grid on mobility data)
+            dda ? ms1_chromatograms : chromatograms,
+            dda ? CombineTraces(params.min_fraction_transmitted) : params.isotope_tracetype,
             params.min_fraction_transmitted,
             passing_psms[!, :precursor_idx],
-            passing_psms[!, :scan_idx],
+            dda ? ms1_seed : passing_psms[!, :scan_idx],
             passing_psms[!, :peak_area],
             passing_psms[!, :new_best_scan],
             passing_psms[!, :points_integrated],
             passing_psms[!, :integration_start_scan],
             passing_psms[!, :integration_stop_scan],
             passing_psms[!, :quant_withheld],
-            isotopes_captured = psm_isotopes_captured,
+            isotopes_captured = dda ? nothing : psm_isotopes_captured,
             λ = params.wh_smoothing_strength,
-            im_half_scans = im_half_scans,
+            im_half_scans = dda ? ms1_im_half : im_half_scans,
+            rt_scale = dda ? ms1_smooth_scale : 0f0,
+            apex_im = dda ? ms1_apex_im : nothing,
         )
         _diag_table("integration file $ms_file_idx: integrated (psms)", passing_psms)
+        # DIA: MS1 quantification next to MS2, centred on the MS2 apex just integrated
+        if dia_ms1
+            ms1_area, ms1_withheld = dia_ms1_quantification(spectra, passing_psms, rt_index, search_context, params,
+                                                            ms_file_idx)
+            passing_psms[!, :peak_area_ms1] = ms1_area
+            passing_psms[!, :quant_withheld_ms1] = ms1_withheld
+        end
         if params.match_between_runs &&
            isfile(passing_psms_path * PASS1_SIDECAR_SUFFIX)
             # OFFLINE-PROFILING HOOK (PIONEER_MBR_ARG_DUMP=<path>): serialise the exact argument
@@ -471,8 +544,19 @@ function process_file!(
                 bitvec_rank_table =
                     getBitVecExcessRanks(search_context, ms_file_idx),
                 scan_tic = scan_tic,
+                # DDA: new_best_scan is the MS1 apex, absent from the MS2 chromatograms (see the docstring)
+                seed_scans = dda ? passing_psms.scan_idx : passing_psms.new_best_scan,
+                apex_rt = dda ? Float32[s == 0 ? NaN32 : Float32(getRetentionTime(spectra, Int(s)))
+                                        for s in passing_psms.new_best_scan] : nothing,
             )
             _diag_table("integration file $ms_file_idx: MBR spectra features added (psms)", passing_psms)
+            # DDA receiver irt_error from the MS1 apex, not the MS2 trigger
+            if dda && hasproperty(passing_psms, :irt_pred) && hasproperty(passing_psms, :irt_error)
+                apex_irt = passing_psms[!, MBR_INTEGRATED_APEX_IRT_COLUMN]
+                passing_psms[!, :irt_error] = Float32[isfinite(a) ? abs(a - Float32(p)) : Float32(e)
+                    for (a, p, e) in zip(apex_irt, passing_psms.irt_pred, passing_psms.irt_error)]
+                @debug_l1 "DDA MBR: irt_error from the MS1 apex for $(count(isfinite, apex_irt)) of $(nrow(passing_psms)) PSMs"
+            end
             selected_rows = _select_postintegration_mbr_rows(
                 passing_psms,
                 params.q_value_threshold,
@@ -586,7 +670,7 @@ function _qval_keep_mask(qcol, threshold::Float32)
 end
 
 function summarize_results!(
-    ::IntegrateChromatogramSearchResults,
+    results::IntegrateChromatogramSearchResults,
     params::P,
     search_context::SearchContext
 ) where {P<:IntegrateChromatogramSearchParameters}
@@ -614,6 +698,7 @@ function summarize_results!(
             donor_q_threshold = MBR_DONOR_Q_THRESHOLD,
             fdr_scale_factor = getLibraryFdrScaleFactor(search_context),
             ion_mobility = has_ion_mobility(search_context),
+            dda = results.dda[],
             merged_path = joinpath(
                 getDataOutDir(search_context), "temp_data",
                 "merged_quant.arrow",

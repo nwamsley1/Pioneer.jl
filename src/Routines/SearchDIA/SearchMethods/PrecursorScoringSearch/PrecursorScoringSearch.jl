@@ -337,6 +337,7 @@ function summarize_results!(
             valid_fold_paths;
             match_between_runs = params.match_between_runs,
             ion_mobility = has_ion_mobility(search_context),
+            dda = any_dda(search_context),
         )
     end
     _pmark(:scoring)

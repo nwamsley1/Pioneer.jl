@@ -525,6 +525,7 @@ function train_lgbm_for_irt_refinement(
     features::Vector{Symbol} = collect(PRESCORE_FEATURES),
 )
     t0 = time()
+    dump_score_features("main", psms, features)
     all_scores, _, last_classifier, info = train_psm_classifier_with_fallback(
         psms;
         features = features,

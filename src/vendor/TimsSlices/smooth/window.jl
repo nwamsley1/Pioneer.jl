@@ -31,10 +31,12 @@ struct LevelSetup
     kmz::Vector{Float64}
     h_im::Int
     h_mz::Int
+    kflat::Vector{Float64}   # all-ones IM kernel for window_sum (covers any window of up to MAX_WINDOW_SCANS scans)
 end
+const MAX_WINDOW_SCANS = 4096
 function LevelSetup(lp::LevelParams)
     kim = im_kernel(lp); kmz = mz_kernel(lp)
-    LevelSetup(lp, kim, kmz, length(kim) ÷ 2, length(kmz) ÷ 2)
+    LevelSetup(lp, kim, kmz, length(kim) ÷ 2, length(kmz) ÷ 2, lp.window_sum ? ones(2MAX_WINDOW_SCANS + 1) : Float64[])
 end
 
 """
@@ -45,8 +47,14 @@ entries in reach, or no surviving centroids, is not recorded.
 """
 function smooth_window!(out::FrameSlices, sc::SmoothScratch, buf::FrameBuffer, s0::Integer, s1::Integer, widx::Integer, ls::LevelSetup)
     lp = ls.lp
-    for c in s0:lp.stride:s1-1
-        im_accumulate!(sc, buf, s0, s1, c, ls.kim, ls.h_im)
+    # window_sum: a single slice at the window's middle scan, every scan of the window weighted 1
+    centres = lp.window_sum ? (s0 + (s1 - 1 - s0) ÷ 2:s0 + (s1 - 1 - s0) ÷ 2) : (s0:lp.stride:s1-1)
+    for c in centres
+        if lp.window_sum
+            im_accumulate!(sc, buf, s0, s1, c, ls.kflat, MAX_WINDOW_SCANS)
+        else
+            im_accumulate!(sc, buf, s0, s1, c, ls.kim, ls.h_im)
+        end
         isempty(sc.sp_bin) && continue
         if lp.centroid == :none
             emit_sparse!(out, sc, lp.min_scans)

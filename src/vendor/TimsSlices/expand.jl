@@ -15,7 +15,7 @@ function expand(tdfs_dir::AbstractString, arrow_path::AbstractString; log::IO = 
     meta = t.meta
     pd = meta["params"]
     # Parameters a later TimsSlices no longer has (e.g. the quantile culls, removed in 0.1) are ignored.
-    p = ConvertParams(; (Symbol(k) => (k in ("centroid", "format") ? Symbol(v) : k == "frames" ? nothing : v)
+    p = ConvertParams(; (Symbol(k) => (k in ("centroid", "format", "ms2_mode") ? Symbol(v) : k == "frames" ? nothing : v)
                          for (k, v) in pd if Symbol(k) in fieldnames(ConvertParams))...)
     aw = SliceArrowWriter(arrow_path, arrow_metadata(meta, p),
                           t.mz_cal, t.bin_scale, t.int_scale, Float64(meta["mz_lo"]), Float64(meta["mz_hi"]))

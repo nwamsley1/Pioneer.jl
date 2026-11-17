@@ -341,6 +341,9 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     # path so BitVec's adaptive while loop doesn't re-allocate ~50–100 MB per batch.
     frag_index_scratch::FragIndexScratch
 
+    # Per-file DDA acquisition, decided at search start (detect_acquisition_modes!, acquisition_mode.jl).
+    dda_files::Dict{Int64, Bool}
+
     # Constructor
     function SearchContext(
         spec_lib::L,
@@ -380,6 +383,7 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, Vector{Bool}}(),  # Initialize bitvec_filter
             Dict{Int64, Vector{UInt16}}(), # Initialize bitvec_excess_rank
             FragIndexScratch(n_threads),  # reusable frag-index scratch buffers
+            Dict{Int64, Bool}(),  # dda_files
         )
     end
 end
@@ -437,9 +441,43 @@ has_ion_mobility(sc::SearchContext) = any(is_tdfs_path, getMSData(sc).file_paths
 # searches without ion mobility leave them out of the LightGBM models.
 const ION_MOBILITY_FEATURES = (:im_error, :n_scans_in_window, :weight_frac_in_cycle)
 
-"`features` as a Vector, without `ION_MOBILITY_FEATURES` unless the search has ion mobility."
-model_features(features, ion_mobility::Bool) =
-    ion_mobility ? collect(features) : filter(f -> !(f in ION_MOBILITY_FEATURES), collect(features))
+# PSM-model features built on a precursor's MS2 elution profile. DDA fragments a precursor in one scan (Orbitrap/Astral)
+# or a few (DDA-PASEF): they are constant on Astral and weak on timsTOF. 250 pg Astral/timsTOF 15/5 min without them:
+# Astral identical, timsTOF +1.2/+4.7% precursors (union), quantification unchanged.
+const DDA_EXCLUDED_SCORE_FEATURES = (
+    :frag_apex_dispersion_irt, :n_correlated_fragments, :n_correlated_fragments_bitvec_rank,
+    :frag_corr_strength, :frag_corr_effective_n, :frag_corr_best_m0,
+    :irt_fwhm, :smoothness, :n_contiguous_scans, :ms1_weight_apex_to_m0_apex_irt,
+)
+
+"""`features` as a Vector, without `ION_MOBILITY_FEATURES` unless the search has ion mobility, without
+`DDA_EXCLUDED_SCORE_FEATURES` on DDA data, and without any named in `PIONEER_SCORE_DROP_FEATURES` (testing;
+comma-separated, applies to both PSM scoring models)."""
+function model_features(features, ion_mobility::Bool; dda::Bool = false)
+    dropped = Set(Symbol.(filter(!isempty, strip.(split(get(ENV, "PIONEER_SCORE_DROP_FEATURES", ""), ",")))))
+    return filter(f -> (ion_mobility || !(f in ION_MOBILITY_FEATURES)) && !(dda && f in DDA_EXCLUDED_SCORE_FEATURES) &&
+                       !(f in dropped), collect(features))
+end
+
+"Whether any file of the search is DDA (`dda_files`, decided at search start)."
+any_dda(sc::SearchContext) = any(values(sc.dda_files))
+
+"""
+    dump_score_features(stage, psms, features)
+
+Testing (`PIONEER_SCORE_FEATURE_DUMP=<dir>`): write a sample (at most 50,000 rows) of a PSM scoring model's input, the
+`features` present in `psms` plus `target`, to `<dir>/<stage>_<rows>_<id>.arrow`.
+"""
+function dump_score_features(stage::AbstractString, psms::DataFrame, features)
+    dir = get(ENV, "PIONEER_SCORE_FEATURE_DUMP", "")
+    (isempty(dir) || nrow(psms) == 0 || !hasproperty(psms, :target)) && return nothing
+    mkpath(dir)
+    cols = unique(vcat(Symbol[f for f in features if hasproperty(psms, f)], [:target]))
+    n = nrow(psms)
+    rows = n <= 50_000 ? collect(1:n) : sort(randperm(MersenneTwister(1), n)[1:50_000])
+    Arrow.write(joinpath(dir, "$(stage)_$(n)_$(time_ns()).arrow"), psms[rows, cols])
+    return nothing
+end
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]
 
 # Add length method for ArrowTableReference

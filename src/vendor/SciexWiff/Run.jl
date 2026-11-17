@@ -157,6 +157,7 @@ Facts about the acquisition written into the converter's outputs (Arrow schema m
 - `acquisition_type`: `zt_scan_dia` or `swath`, as the user declared it (`zt_scan`); `acquisition_type_source`:
   `user`. The `.wiff` does not record the scan mode, so it is never guessed.
 - `acquisition_method`: the method name.
+- `acquisition_mode` = `dia` (`acquisition_mode_source` = `vendor`): only SWATH-method runs are converted.
 - ZT only: `q1_bin_width_mz`, `q1_bin_step_mz` (mean over the method's Q1 bins), `q1_bins_per_cycle`,
   `q1_first_bin_center_mz`, `q1_last_bin_center_mz`, `q1_bin_dwell_ms` (median MS2 spacing within a cycle),
   `q1_scan_rate_mz_per_s`. The quad window width is not recorded: the `.wiff` does not store it, and method names
@@ -165,7 +166,11 @@ Facts about the acquisition written into the converter's outputs (Arrow schema m
 Throws `ArgumentError` when `zt_scan` is set on a run whose window table cannot be ZT (`zt_candidate_windows`).
 """
 function acquisition_metadata(run::WiffRun; zt_scan::Bool = false)
-    m = Dict{String,String}("acquisition_method" => run.method_name, "acquisition_type_source" => "user")
+    m = Dict{String,String}("acquisition_method" => run.method_name, "acquisition_type_source" => "user",
+                            # only SWATH-method runs convert (read_swath_windows), so the mode is always DIA
+                            "acquisition_mode" => "dia", "acquisition_mode_source" => "vendor",
+                            "acquisition_mode_evidence" => "sciex SWATHMethod, $(length(run.windows)) windows",
+                            "acquisition_mode_version" => "1")
     if !zt_scan
         m["acquisition_type"] = "swath"
         return m

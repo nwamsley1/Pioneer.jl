@@ -29,9 +29,15 @@ mutable struct RunSummaryStats
     total_peak_area::Float64
     total_missed_cleavages::Int
     medians::NTuple{7, Union{Missing, Float32}}
+    # DIA MS1 quantification (maxLFQ.ms1_quantification); reported only when has_ms1
+    has_ms1::Bool
+    precursors_quantified_ms1::Int
+    total_peak_area_ms1::Float64
+    protein_groups_quantified_ms1::Int
 end
 
-RunSummaryStats(name::String) = RunSummaryStats(name, 0, 0, 0, 0, 0, 0, 0.0, 0, ntuple(_ -> missing, 7))
+RunSummaryStats(name::String) = RunSummaryStats(name, 0, 0, 0, 0, 0, 0, 0.0, 0, ntuple(_ -> missing, 7),
+                                                false, 0, 0.0, 0)
 
 struct RunSummaryRecord
     run::UInt32
@@ -276,7 +282,21 @@ function accumulate_run_summary!(acc::RunSummaryAccumulator, tbl)
     _accumulate_run_summary!(acc, cols.ms_file_idx, cols.target, cols.sequence, cols.peak_area,
         get(cols, :peak_area_normalized, nothing), get(cols, :mbr_recovered, nothing),
         cols.irt_error, cols.rt_fwhm, cols.points_integrated, cols.charge, cols.missed_cleavage)
+    haskey(cols, :peak_area_ms1) && _accumulate_ms1_summary!(acc, cols.ms_file_idx, cols.target, cols.peak_area_ms1)
     return acc
+end
+
+function _accumulate_ms1_summary!(acc::RunSummaryAccumulator, ms_file_idx, target, peak_area_ms1)
+    for i in 1:length(ms_file_idx)
+        target[i] || continue
+        s = acc.stats[ms_file_idx[i]]
+        s.has_ms1 = true
+        a = peak_area_ms1[i]
+        if !ismissing(a) && a > 0
+            s.precursors_quantified_ms1 += 1
+            s.total_peak_area_ms1 += a
+        end
+    end
 end
 
 # Function barrier: the column types are only known once the table is opened.
@@ -331,6 +351,10 @@ function add_protein_group_counts!(stats::Vector{RunSummaryStats},
         stats[i].protein_groups_identified += 1
         a = row.abundance
         !ismissing(a) && a > 0 && (stats[i].protein_groups_quantified += 1)
+        if hasproperty(row, :abundance_ms1)
+            a1 = row.abundance_ms1
+            !ismissing(a1) && a1 > 0 && (stats[i].protein_groups_quantified_ms1 += 1)
+        end
     end
     return stats
 end
@@ -419,6 +443,13 @@ function write_run_summary(path::String, stats::Vector{RunSummaryStats},
         n_ms1_scans = [r[2] for r in raw],
         n_ms2_scans = [r[3] for r in raw],
     )
+    if any(s -> s.has_ms1, stats)
+        insertcols!(df, :protein_groups_quantified, :protein_groups_quantified_ms1 =>
+                    [s.protein_groups_quantified_ms1 for s in stats]; after = true)
+        insertcols!(df, :precursors_quantified, :precursors_quantified_ms1 =>
+                    [s.precursors_quantified_ms1 for s in stats]; after = true)
+        insertcols!(df, :total_peak_area, :total_peak_area_ms1 => [s.total_peak_area_ms1 for s in stats]; after = true)
+    end
     add_calibration_qc_columns!(df, search_context.calibration_qc, n)
     CSV.write(path, df, delim = '\t')
     return df

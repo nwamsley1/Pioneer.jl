@@ -70,7 +70,8 @@ function convert_run(dir::AbstractString, out_dir::AbstractString; params::Conve
     p = validate(resolve_mz_scale(resolve_im_scale(params, f.im_cal.slope), f.timebase_ns))
     name === nothing && (name = output_name(dir, p))
     rows = p.frames === nothing ? valid_frames(f) : sort(p.frames)
-    all(i -> 1 <= i <= n_frames(f) && (is_ms1(f, i) || is_dia(f, i)), rows) || throw(ArgumentError("frames must be rows of MS1 / diaPASEF frames"))
+    all(i -> 1 <= i <= n_frames(f) && (is_ms1(f, i) || is_dia(f, i) || is_pasef(f, i)), rows) ||
+        throw(ArgumentError("frames must be rows of MS1 / diaPASEF / DDA-PASEF frames"))
     @printf(log, "source %s: %d frames (%d MS1, %d MS2), %d raw peaks; mz cal residual ppm %s; temperature shift %.1f ppm (corrected)\n", basename(rstrip(dir, '/')), length(rows),
             count(i -> is_ms1(f, i), rows), count(i -> !is_ms1(f, i), rows), sum(Int, f.frames.num_peaks[rows]), string(round.(f.mz_cal_resid_ppm, digits = 2)),
             f.mz_temp_shift_ppm)
@@ -96,6 +97,9 @@ function convert_run(dir::AbstractString, out_dir::AbstractString; params::Conve
         "mz_sigma_explicit" => params.mz_sigma !== nothing, "digitizer_timebase_ns" => f.timebase_ns,
         "bin_scale" => p.bin_scale, "int_scale" => p.int_scale, "zstd_level" => p.zstd_level,
         "converter" => "Pioneer.jl $(pkgversion(parentmodule(@__MODULE__))) (TimsSlices, from b3e6d12)", "converted_at" => string(now_utc()))
+    merge!(meta, acquisition_mode_meta(f))
+    @printf(log, "acquisition mode: %s (%s: %s)\n", meta["acquisition_mode"], meta["acquisition_mode_source"],
+            meta["acquisition_mode_evidence"])
     mkpath(out_dir)
     want_tdfs = p.format in (:tdfs, :both); want_arrow = p.format in (:arrow, :both)
     tdfs_path = want_tdfs ? joinpath(out_dir, name * ".tdfs") : nothing
@@ -162,10 +166,27 @@ function convert_run(dir::AbstractString, out_dir::AbstractString; params::Conve
     (tdfs = tdfs_path, arrow = arrow_path)
 end
 
+"""
+    acquisition_mode_meta(f) -> Dict
+
+The run's acquisition mode from the Bruker frame types (`Frames.MsMsType`: 8 = DDA-PASEF, 9 = dia/diagonal PASEF),
+as the `acquisition_mode` metadata Pioneer reads (SearchDIA/acquisition_mode.jl). The majority MS2 type decides;
+anything else (no MS2 frames, PRM) is `unknown`, which Pioneer classifies from the data.
+"""
+function acquisition_mode_meta(f::TdfFile)
+    n8 = count(i -> is_pasef(f, i), 1:length(f.frames.id)); n9 = count(i -> is_dia(f, i), 1:length(f.frames.id))
+    n2 = count(i -> !is_ms1(f, i), 1:length(f.frames.id))
+    mode = n2 > 0 && n8 > n2 / 2 ? "dda" : n2 > 0 && n9 > n2 / 2 ? "dia" : "unknown"
+    Dict{String, Any}("acquisition_mode" => mode, "acquisition_mode_source" => "vendor",
+                      "acquisition_mode_evidence" => "bruker MsMsType 8 (DDA-PASEF) $n8, 9 (dia-PASEF) $n9 of $n2 MS2 frames",
+                      "acquisition_mode_version" => "1")
+end
+
 function arrow_metadata(meta::Dict{String, Any}, p::ConvertParams)
     m = Dict{String, String}()
     for k in ("source", "instrument", "mz_cal_sqrt_intercept", "mz_cal_sqrt_slope", "im_scan0_1overK0", "im_slope_1overK0_per_scan",
-              "ce_ev_intercept", "ce_ev_slope_per_scan", "NumScans", "OneOverK0AcqRangeLower", "OneOverK0AcqRangeUpper")
+              "ce_ev_intercept", "ce_ev_slope_per_scan", "NumScans", "OneOverK0AcqRangeLower", "OneOverK0AcqRangeUpper",
+              "acquisition_mode", "acquisition_mode_source", "acquisition_mode_evidence", "acquisition_mode_version")
         m[k] = string(meta[k])
     end
     m["centroid_im_sigma"] = string(p.im_sigma); m["centroid_mz_sigma"] = string(p.mz_sigma); m["centroid_stride"] = string(p.stride)
