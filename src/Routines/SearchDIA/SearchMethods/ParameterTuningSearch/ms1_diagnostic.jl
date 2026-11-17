@@ -7,49 +7,54 @@
 # MS1 mass-error diagnostic.
 #
 # For each PSM accepted by the MS2 mass-error fit, look up the nearest MS1 scan
-# and find the closest peak to the precursor's predicted M+0/M+1/M+2 m/z within
-# ±MS1_DIAG_WINDOW_PPM. Record observed-vs-theoretical ppm residuals and write a
+# and find the most intense peak within ±MS1_DIAG_WINDOW_PPM of the precursor's
+# predicted M+0/M+1/M+2 m/z. (Most intense, not nearest: the window is centred on
+# zero offset, and on timsTOF data strong peaks carry weaker satellite centroids
+# ~40 ppm away, so once the true offset passes ~20 ppm the nearest peak is a
+# satellite and the median lands between the two clusters.) Record observed-vs-theoretical ppm residuals and write a
 # per-file histogram. These observations also fit the production MS1 model.
 
 const MS1_DIAG_WINDOW_PPM = 100.0f0
 const MS1_DIAG_TOL_K_MAD  = 5.0f0
 
-# Inlined minimal nearest-peak finder. Uses Julia's searchsortedfirst rather
+# Inlined minimal most-intense-peak finder. Uses Julia's searchsortedfirst rather
 # than the perf-tuned bsearch_hybrid since this only runs once per file on a
-# bounded PSM set.
-function _ms1_diag_find_peak(mz::Vector{Float32}, mz_target::Float32, tol_ppm::Float32)
+# bounded PSM set. Ties keep the first (lowest m/z) peak.
+function _ms1_diag_find_peak(mz::Vector{Float32}, intensity::Vector{Float32}, mz_target::Float32, tol_ppm::Float32)
     half_tol = mz_target * tol_ppm * 1f-6
     lo = mz_target - half_tol
     hi = mz_target + half_tol
     n = length(mz)
     n == 0 && return (false, 0f0)
     i0 = searchsortedfirst(mz, lo)
-    best_diff = Inf32
-    best_mz   = 0f0
+    best_int = -Inf32
+    best_mz  = 0f0
     found = false
     @inbounds for j in i0:n
         m = mz[j]
         m > hi && break
-        d = abs(m - mz_target)
-        if d < best_diff
-            best_diff = d
-            best_mz   = m
+        if intensity[j] > best_int
+            best_int = intensity[j]
+            best_mz  = m
             found = true
         end
     end
     return found, best_mz
 end
 
-# Strip Union{Missing, Float32} into a dense sorted-by-m/z Vector{Float32}.
-function _ms1_diag_clean_mz(raw_mz)
+# Strip Union{Missing, Float32} into dense sorted-by-m/z vectors (m/z, intensity; missing intensity -> 0).
+function _ms1_diag_clean_peaks!(out_mz::Vector{Float32}, out_int::Vector{Float32}, raw_mz, raw_int)
+    empty!(out_mz); empty!(out_int)
     n_raw = length(raw_mz)
-    out = Vector{Float32}()
-    sizehint!(out, n_raw)
+    sizehint!(out_mz, n_raw); sizehint!(out_int, n_raw)
     @inbounds for j in 1:n_raw
         m = raw_mz[j]
-        ismissing(m) || push!(out, Float32(m))
+        ismissing(m) && continue
+        push!(out_mz, Float32(m))
+        it = raw_int[j]
+        push!(out_int, ismissing(it) ? 0f0 : Float32(it))
     end
-    return out
+    return out_mz, out_int
 end
 
 """
@@ -57,7 +62,7 @@ end
 
 For each (scan_idx, precursor_idx) row in `psms` (typically the MS2-accepted
 PSMs from ParameterTuningSearch), find the nearest MS1 scan by RT and record
-the ppm residual of the closest peak to the precursor's M+0, M+1, M+2 isotopes
+the ppm residual of the most intense peak near the precursor's M+0, M+1, M+2 isotopes
 within ±MS1_DIAG_WINDOW_PPM. Returns a flat vector of signed ppm residuals
 (positive = observed peak above theoretical m/z). Optional `qc_coordinates` receives
 matching theoretical m/z and scan RT values for within-file residual checks;
@@ -82,6 +87,7 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
     sizehint!(residuals, n * 3)
 
     cached_mz::Vector{Float32} = Float32[]
+    cached_int::Vector{Float32} = Float32[]
     cached_ms1_idx::Int = -1
     decode_buf = PeakDecodeBuffer()
 
@@ -89,7 +95,7 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
         ms1_idx = Int(scan_to_ms1[Int(psms.scan_idx[i])])
         if ms1_idx != cached_ms1_idx
             cached_ms1_idx = ms1_idx
-            cached_mz = _ms1_diag_clean_mz(first(getPeaks!(decode_buf, spectra, ms1_idx)))
+            _ms1_diag_clean_peaks!(cached_mz, cached_int, getPeaks!(decode_buf, spectra, ms1_idx)...)
         end
         pid = UInt32(psms.precursor_idx[i])
         prec_mz  = Float32(prec_mzs[pid])
@@ -97,7 +103,7 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
 
         for iso in 0:2
             target = prec_mz + Float32(iso) * C13_C12_MASS_DIFF_F32 / Float32(prec_chg)
-            hit, obs_mz = _ms1_diag_find_peak(cached_mz, target, MS1_DIAG_WINDOW_PPM)
+            hit, obs_mz = _ms1_diag_find_peak(cached_mz, cached_int, target, MS1_DIAG_WINDOW_PPM)
             if hit
                 push!(residuals, (obs_mz - target) / target * 1f6)
                 if qc_coordinates !== nothing

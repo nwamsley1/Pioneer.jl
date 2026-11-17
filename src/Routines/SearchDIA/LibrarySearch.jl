@@ -79,6 +79,7 @@ function library_search(
     scan_indices::Union{Nothing, AbstractVector{<:Integer}} = nothing,
     fragment_index = nothing,
     max_peaks::Int = 0,
+    peak_select::PeakSelection = NearestPeak(),   # fragment peak choice; MostIntensePeak only for the tuning scout
 ) where {P<:FragmentIndexSearchParameters}
 
     # --- 1. Extract per-file models and library data ---
@@ -232,7 +233,7 @@ function library_search(
                 last(thread_task), spectra, prec_index,
                 ms_file_idx,
                 search_data[first(thread_task)], params, precursors, ion_list,
-                intensity_model, qtm_deconv, mem, rt_to_irt, irt_tol)
+                intensity_model, qtm_deconv, mem, rt_to_irt, irt_tol; peak_select = peak_select)
         end
         # Unwrap TaskFailedException so the real error surfaces instead of
         # being buried inside a Task wrapper.

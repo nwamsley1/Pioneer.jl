@@ -134,10 +134,11 @@ function collect_raw_psms(
     params::P,
     ms_file_idx::Int64;
     scan_indices::Union{Nothing, AbstractVector{<:Integer}} = nothing,
-    max_peaks::Int = 0
+    max_peaks::Int = 0,
+    peak_select::PeakSelection = NearestPeak()
 ) where {P<:ParameterTuningSearchParameters}
     psms = library_search(spectra, search_context, params, ms_file_idx;
-                          scan_indices = scan_indices, max_peaks = max_peaks)
+                          scan_indices = scan_indices, max_peaks = max_peaks, peak_select = peak_select)
     if !iszero(size(psms, 1))
         precursors = getPrecursors(getSpecLib(search_context))
         add_tuning_search_columns!(
@@ -279,7 +280,8 @@ function accumulate_psms!(
     max_per_precursor::Int = 0,     # 0 = count PSM rows; k > 0 = keep the best k per precursor, count rows
     low_tier_max_peaks::Int = 0,    # > 0: tiers <= TUNING_LOW_TIER_MAX_SCORE match only this many peaks per scan
     max_scans_per_tier::Int = typemax(Int),
-    projection_stop::Bool = false   # back off a tier whose extrapolated yield cannot approach the target
+    projection_stop::Bool = false,  # back off a tier whose extrapolated yield cannot approach the target
+    peak_select::PeakSelection = NearestPeak()   # fragment peak choice (MostIntensePeak: wide scout)
 )
     all_scan_indices = scan_priority[1:min(length(scan_priority), length(scan_priority))]
     max_scans = length(all_scan_indices)
@@ -317,7 +319,8 @@ function accumulate_psms!(
             batch = collect_raw_psms(
                 spectra, search_context, params, ms_file_idx;
                 scan_indices = batch_indices,
-                max_peaks = peaks)
+                max_peaks = peaks,
+                peak_select = peak_select)
             if size(batch, 1) > 0
                 if isempty(raw_psms)
                     raw_psms = batch
@@ -730,9 +733,13 @@ function process_file!(
             model = phase.mass_model !== nothing ? phase.mass_model :
                 getMassErrorModel(search_context, ms_file_idx)
 
+            # Wide scout: match the most intense peak in the window (see PeakSelection), for its PSMs and for
+            # its fragment-error sample below; the collection phase matches the nearest peak, like every other search.
+            peak_select = phase_idx == 1 ? MostIntensePeak() : NearestPeak()
             converged, scored_psms, n_scans, _ = accumulate_psms!(
                 spectra, search_context, params, ms_file_idx, scan_priority;
                 mass_model = model,
+                peak_select = peak_select,
                 target_psms = phase.target_psms,
                 initial_scans = phase.initial_scans,
                 max_peaks = phase.max_peaks,
@@ -746,7 +753,8 @@ function process_file!(
 
             # Extract fragments and fit model
             frags = n_passing > 0 ?
-                get_matched_fragments(spectra, scored_psms, search_context, params, ms_file_idx) :
+                get_matched_fragments(spectra, scored_psms, search_context, params, ms_file_idx;
+                                      peak_select = peak_select) :
                 MassErrSample[]
             n_frags = length(frags)
 

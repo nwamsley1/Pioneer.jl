@@ -49,8 +49,9 @@ function fuse_scans_count!(
     qtm::QuadTransmissionModel,
     mem::AbstractMassErrorModel,
     rt_to_irt_spline,
-    irt_tol::AbstractFloat
-) where {P<:FragmentIndexSearchParameters, PI<:PrecursorIndex}
+    irt_tol::AbstractFloat;
+    peak_select::S = NearestPeak()   # see PeakSelection
+) where {P<:FragmentIndexSearchParameters, PI<:PrecursorIndex, S<:PeakSelection}
 
     Hs              = getHsFused(search_data)
     unscored_psms   = get_unscored_psms(search_data, params)
@@ -132,7 +133,8 @@ function fuse_scans_count!(
                 isotope_err_bounds;
                 m_rank = last(getMinTopNofM(params)),
                 scan_idx = Int64(scan_idx),
-                scan_ev = getCollisionEnergyEv(spectra, scan_idx)
+                scan_ev = getCollisionEnergyEv(spectra, scan_idx),
+                peak_select = peak_select
             )
             if nmatches ≤ 2
                 reset_scan_arrays!(id_to_col, Hs, unscored_psms)

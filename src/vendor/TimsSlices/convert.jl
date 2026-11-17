@@ -71,8 +71,9 @@ function convert_run(dir::AbstractString, out_dir::AbstractString; params::Conve
     name === nothing && (name = output_name(dir, p))
     rows = p.frames === nothing ? valid_frames(f) : sort(p.frames)
     all(i -> 1 <= i <= n_frames(f) && (is_ms1(f, i) || is_dia(f, i)), rows) || throw(ArgumentError("frames must be rows of MS1 / diaPASEF frames"))
-    @printf(log, "source %s: %d frames (%d MS1, %d MS2), %d raw peaks; mz cal residual ppm %s\n", basename(rstrip(dir, '/')), length(rows),
-            count(i -> is_ms1(f, i), rows), count(i -> !is_ms1(f, i), rows), sum(Int, f.frames.num_peaks[rows]), string(round.(f.mz_cal_resid_ppm, digits = 2)))
+    @printf(log, "source %s: %d frames (%d MS1, %d MS2), %d raw peaks; mz cal residual ppm %s; temperature shift %.1f ppm (corrected)\n", basename(rstrip(dir, '/')), length(rows),
+            count(i -> is_ms1(f, i), rows), count(i -> !is_ms1(f, i), rows), sum(Int, f.frames.num_peaks[rows]), string(round.(f.mz_cal_resid_ppm, digits = 2)),
+            f.mz_temp_shift_ppm)
     ls1 = LevelSetup(level_params(p, true)); ls2 = LevelSetup(level_params(p, false))
     @printf(log, "IM scale: %.6f 1/K0 per scan -> stride %d scans (%s), IM sigma %.2f scans (%s)\n", abs(f.im_cal.slope),
             p.stride, params.stride === nothing ? "from $(p.stride_k0) 1/K0, rounded up" : "set explicitly",
@@ -85,6 +86,7 @@ function convert_run(dir::AbstractString, out_dir::AbstractString; params::Conve
     meta = Dict{String, Any}(
         "source" => basename(rstrip(dir, '/')), "source_bin_bytes" => f.bin_size, "instrument" => get(f.meta, "InstrumentName", ""),
         "mz_cal_sqrt_intercept" => f.mz_cal.intercept, "mz_cal_sqrt_slope" => f.mz_cal.slope,
+        "mz_temp_shift_ppm" => f.mz_temp_shift_ppm,
         "im_scan0_1overK0" => f.im_cal.intercept, "im_slope_1overK0_per_scan" => f.im_cal.slope,
         "ce_ev_intercept" => f.ce_ramp.intercept, "ce_ev_slope_per_scan" => f.ce_ramp.slope,
         "NumScans" => f.max_scans, "n_bins" => n_bins(f), "mz_lo" => mz_lo, "mz_hi" => mz_hi,
