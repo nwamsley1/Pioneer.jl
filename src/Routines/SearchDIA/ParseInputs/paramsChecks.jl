@@ -65,6 +65,20 @@ function checkParams(json_path::String)
             "Missing parameter: search.n_isotopes", search_section))
     end
 
+    # optional: DDA / DIA per file is decided automatically (acquisition_mode.jl); "dda" / "dia" force it
+    if haskey(search_section, "acquisition_mode") &&
+       !(lowercase(string(search_section["acquisition_mode"])) in ("auto", "dda", "dia"))
+        throw(InvalidParametersError(
+            "Invalid parameter search.acquisition_mode: expected \"auto\", \"dda\" or \"dia\"", search_section))
+    end
+
+    # optional: DIA MS1 quantification next to MS2 (default false)
+    if haskey(params, "maxLFQ") && haskey(params["maxLFQ"], "ms1_quantification") &&
+       !(params["maxLFQ"]["ms1_quantification"] isa Bool)
+        throw(InvalidParametersError("Invalid parameter maxLFQ.ms1_quantification: expected true or false",
+                                     params["maxLFQ"]))
+    end
+
     # Validate optimization parameters
     opt_params = params["optimization"]
     check_param(opt_params, "machine_learning", Dict)

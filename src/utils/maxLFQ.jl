@@ -739,7 +739,8 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             quantification_method::Symbol = :maxlfq,
             batch_size = 100000,
             protein_group_names::Vector{String} = String[],
-            writer_ref::Base.RefValue{Union{Nothing, Arrow.Writer}} = Ref{Union{Nothing, Arrow.Writer}}(nothing))
+            writer_ref::Base.RefValue{Union{Nothing, Arrow.Writer}} = Ref{Union{Nothing, Arrow.Writer}}(nothing),
+            quant_col_ms1::Union{Nothing, Symbol} = nothing)   # DIA MS1 quantification: also abundance_ms1
     
     # Use eager DataFrame loading (allows editing for filtering)
     prot = load_arrow_dataframe(file_path(prot_ref))
@@ -819,6 +820,15 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             :total_peak_area => Vector{Union{Missing, Float32}}(missing, nrows),
             :n_precursors_quantified => Vector{Union{Missing, UInt32}}(missing, nrows),
         )
+        # MS1: a second MaxLFQ per group on the MS1 areas. Its rows line up with the MS2 call (one per run of the
+        # group, same order); only the abundance columns are kept, the rest go to scratch.
+        ms1 = quant_col_ms1 !== nothing && hasproperty(subdf, quant_col_ms1)
+        scr = ms1 ? Dict(k => copy(v) for (k, v) in out) : out
+        if ms1
+            out[:log2_abundance_ms1] = Vector{Union{Missing, Float32}}(missing, nrows)
+            out[:total_peak_area_ms1] = Vector{Union{Missing, Float32}}(missing, nrows)
+            out[:n_precursors_quantified_ms1] = Vector{Union{Missing, UInt32}}(missing, nrows)
+        end
 
         output_row = 1
         for (group_idx, (protein, data)) in enumerate(pairs(gpsms))
@@ -869,6 +879,14 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
                                 out[:n_precursors_quantified];
                                 quantification_method=quantification_method
                             )
+            ms1 && getProtAbundance(protein_name, output_row, protein[:target], protein[:entrapment_group_id],
+                                    species_agg, data[!,:precursor_idx], data[!,:ms_file_idx],
+                                    data[!,:use_for_protein_quant], data[!,quant_col_ms1], data[!,:global_pg_qval],
+                                    data[!,:pg_qval], data[!,:pg_pep], data[!,:pg_score], data[!,:global_pg_score],
+                                    scr[:target], scr[:entrap_id], scr[:species], scr[:protein], scr[:peptides],
+                                    scr[:experiments], out[:log2_abundance_ms1], scr[:global_qval], scr[:qval],
+                                    scr[:pg_pep], scr[:pg_score], scr[:global_pg_score], out[:total_peak_area_ms1],
+                                    out[:n_precursors_quantified_ms1]; quantification_method=quantification_method)
             output_row += group_run_counts[group_idx]
         end
         out = DataFrame(out)
@@ -891,6 +909,7 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
         end
         filter!(x->(!ismissing(x.n_peptides)), out);#&(x.n_peptides>=min_peptides), out);
         out[!,:abundance] = get_linear_abundance(out[!,:log2_abundance])
+        ms1 && (out[!,:abundance_ms1] = get_linear_abundance(out[!,:log2_abundance_ms1]))
         output_cols = enabled_output_columns(output_schema_policy, :protein_groups, Symbol[
             :file_name,
             :target,
@@ -910,6 +929,9 @@ function LFQ(prot_ref,  # PSMFileReference - using Any to avoid dependency issue
             :total_peak_area,
             :abundance,
         ])
+        ms1 && append!(output_cols, enabled_output_columns(output_schema_policy, :protein_groups,
+                                                           Symbol[:n_precursors_quantified_ms1, :total_peak_area_ms1,
+                                                                  :abundance_ms1]))
 
         if isnothing(writer_ref[])
             isfile(protein_quant_path) && rm(protein_quant_path)
@@ -953,7 +975,8 @@ function LFQ_chunked(
     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
     batch_size::Int = 100000,
     quantification_method::Symbol = :maxlfq,
-    protein_group_names::Vector{String} = String[]
+    protein_group_names::Vector{String} = String[],
+    quant_col_ms1::Union{Nothing, Symbol} = nothing
 )
     n_chunks = length(chunk_refs)
     # Skip progress bar when there's only one chunk — ProgressBars shows
@@ -973,7 +996,8 @@ function LFQ_chunked(
                 output_schema_policy=output_schema_policy,
                 batch_size=batch_size, writer_ref=writer_ref,
                 quantification_method=quantification_method,
-                protein_group_names=protein_group_names)
+                protein_group_names=protein_group_names,
+                quant_col_ms1=quant_col_ms1)
             pbar !== nothing && update(pbar)
         end
     finally

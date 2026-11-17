@@ -20,26 +20,25 @@ const MS1_DIAG_TOL_K_MAD  = 5.0f0
 # Inlined minimal most-intense-peak finder. Uses Julia's searchsortedfirst rather
 # than the perf-tuned bsearch_hybrid since this only runs once per file on a
 # bounded PSM set. Ties keep the first (lowest m/z) peak.
-function _ms1_diag_find_peak(mz::Vector{Float32}, intensity::Vector{Float32}, mz_target::Float32, tol_ppm::Float32)
+# Index of the most intense peak within ±tol_ppm of `mz_target`, or 0.
+function _ms1_diag_find_peak_idx(mz::Vector{Float32}, intensity::Vector{Float32}, mz_target::Float32, tol_ppm::Float32)
     half_tol = mz_target * tol_ppm * 1f-6
     lo = mz_target - half_tol
     hi = mz_target + half_tol
     n = length(mz)
-    n == 0 && return (false, 0f0)
+    n == 0 && return 0
     i0 = searchsortedfirst(mz, lo)
     best_int = -Inf32
-    best_mz  = 0f0
-    found = false
+    best = 0
     @inbounds for j in i0:n
         m = mz[j]
         m > hi && break
         if intensity[j] > best_int
             best_int = intensity[j]
-            best_mz  = m
-            found = true
+            best = j
         end
     end
-    return found, best_mz
+    return best
 end
 
 # Strip Union{Missing, Float32} into dense sorted-by-m/z vectors (m/z, intensity; missing intensity -> 0).
@@ -58,37 +57,33 @@ function _ms1_diag_clean_peaks!(out_mz::Vector{Float32}, out_int::Vector{Float32
 end
 
 """
-    collect_ms1_residuals(spectra, psms, search_context, ms_file_idx) -> Vector{Float32}
+    collect_ms1_samples(spectra, psms, search_context, ms_file_idx) -> Vector{MassErrSample}
 
-For each (scan_idx, precursor_idx) row in `psms` (typically the MS2-accepted
-PSMs from ParameterTuningSearch), find the nearest MS1 scan by RT and record
-the ppm residual of the most intense peak near the precursor's M+0, M+1, M+2 isotopes
-within ±MS1_DIAG_WINDOW_PPM. Returns a flat vector of signed ppm residuals
-(positive = observed peak above theoretical m/z). Optional `qc_coordinates` receives
-matching theoretical m/z and scan RT values for within-file residual checks;
-`qc_precursor_ids` receives precursor IDs for grouping whole peptide sequences.
+For each (scan_idx, precursor_idx) row in `psms`, find the nearest MS1 scan (nearest MS1 frame at the row's own
+mobility on ion-mobility data) and, for the precursor's M+0, M+1, M+2 isotopes, the most intense peak within
+±MS1_DIAG_WINDOW_PPM. One sample per matched isotope: theoretical m/z, observed m/z, peak intensity (0 when the
+spectrum has none), MS1 scan RT and precursor. The input of `collect_ms1_residuals` and of the intensity-aware
+MS1 model fitted for DDA MS1 quantification.
 """
-function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file_idx::Integer;
-    qc_coordinates::Union{Nothing,Tuple{Vector{Float32},Vector{Float32}}}=nothing,
-    qc_precursor_ids::Union{Nothing,Vector{UInt32}}=nothing)
+function collect_ms1_samples(spectra, psms::DataFrame, search_context, ms_file_idx::Integer)
     n = nrow(psms)
-    n == 0 && return Float32[]
+    samples = MassErrSample[]
+    n == 0 && return samples
 
     # Nearest MS1 scan per scan (nearest MS1 frame at the row's own mobility on ion-mobility data);
     # shared with MainSearch's add_ms1_lookup_features!.
     scan_to_ms1 = build_scan_to_ms1(spectra)
-    all(iszero, scan_to_ms1) && return Float32[]
+    all(iszero, scan_to_ms1) && return samples
 
     precursors  = getPrecursors(getSpecLib(search_context))
     prec_mzs     = getMz(precursors)
     prec_charges = getCharge(precursors)
-
-    residuals = Float32[]
-    sizehint!(residuals, n * 3)
+    sizehint!(samples, n * 3)
 
     cached_mz::Vector{Float32} = Float32[]
     cached_int::Vector{Float32} = Float32[]
     cached_ms1_idx::Int = -1
+    cached_rt::Float32 = 0f0
     decode_buf = PeakDecodeBuffer()
 
     @inbounds for i in 1:n
@@ -96,6 +91,7 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
         if ms1_idx != cached_ms1_idx
             cached_ms1_idx = ms1_idx
             _ms1_diag_clean_peaks!(cached_mz, cached_int, getPeaks!(decode_buf, spectra, ms1_idx)...)
+            cached_rt = Float32(getRetentionTime(spectra, ms1_idx))
         end
         pid = UInt32(psms.precursor_idx[i])
         prec_mz  = Float32(prec_mzs[pid])
@@ -103,17 +99,35 @@ function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file
 
         for iso in 0:2
             target = prec_mz + Float32(iso) * C13_C12_MASS_DIFF_F32 / Float32(prec_chg)
-            hit, obs_mz = _ms1_diag_find_peak(cached_mz, cached_int, target, MS1_DIAG_WINDOW_PPM)
-            if hit
-                push!(residuals, (obs_mz - target) / target * 1f6)
-                if qc_coordinates !== nothing
-                    push!(qc_coordinates[1], target)
-                    push!(qc_coordinates[2], Float32(getRetentionTime(spectra, ms1_idx)))
-                end
-                qc_precursor_ids !== nothing && push!(qc_precursor_ids, pid)
-            end
+            j = _ms1_diag_find_peak_idx(cached_mz, cached_int, target, MS1_DIAG_WINDOW_PPM)
+            j == 0 && continue
+            push!(samples, MassErrSample(target, cached_mz[j], cached_int[j], cached_rt, pid))
         end
     end
+    return samples
+end
+
+"""
+    collect_ms1_residuals(spectra, psms, search_context, ms_file_idx) -> Vector{Float32}
+
+For each (scan_idx, precursor_idx) row in `psms` (typically the MS2-accepted
+PSMs from ParameterTuningSearch), find the nearest MS1 scan by RT and record
+the ppm residual of the most intense peak near the precursor's M+0, M+1, M+2 isotopes
+within ±MS1_DIAG_WINDOW_PPM (`collect_ms1_samples`). Returns a flat vector of signed ppm residuals
+(positive = observed peak above theoretical m/z). Optional `qc_coordinates` receives
+matching theoretical m/z and scan RT values for within-file residual checks;
+`qc_precursor_ids` receives precursor IDs for grouping whole peptide sequences.
+"""
+function collect_ms1_residuals(spectra, psms::DataFrame, search_context, ms_file_idx::Integer;
+    qc_coordinates::Union{Nothing,Tuple{Vector{Float32},Vector{Float32}}}=nothing,
+    qc_precursor_ids::Union{Nothing,Vector{UInt32}}=nothing)
+    samples = collect_ms1_samples(spectra, psms, search_context, ms_file_idx)
+    residuals = Float32[(s.observed_mz - s.theoretical_mz) / s.theoretical_mz * 1f6 for s in samples]
+    if qc_coordinates !== nothing
+        append!(qc_coordinates[1], (s.theoretical_mz for s in samples))
+        append!(qc_coordinates[2], (s.rt for s in samples))
+    end
+    qc_precursor_ids !== nothing && append!(qc_precursor_ids, (s.precursor_idx for s in samples))
     return residuals
 end
 

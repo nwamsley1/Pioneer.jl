@@ -717,18 +717,21 @@ Orchestrator: fit_intensity_mass_error_model
 ==========================================================#
 
 """
-    fit_intensity_mass_error_model(fragments, old_model; k, conservative_k)
+    fit_intensity_mass_error_model(fragments, old_model; k, conservative_k, coverage)
 
 Fit an IntensityMassErrorModel from matched fragment data.
 Bias is fit in Da space with m/z, intensity, and RT components. Spread is fit
 in mDa space from binned Laplace scale estimates, with an m/z-dependent spread
-correction and empirical coverage multiplier.
+correction and empirical coverage multiplier: k is set so the window covers the `coverage` fraction of the
+bias-corrected training residuals (default EMPK_QUANTILE, the fragment setting), clamped below at the Gaussian k for
+that coverage.
 """
 function fit_intensity_mass_error_model(
     samples::AbstractVector{MassErrSample},
     old_model::AbstractMassErrorModel;
     k::Float32 = 3.7f0,
-    conservative_k::Float32 = 6.0f0
+    conservative_k::Float32 = 6.0f0,
+    coverage::Float64 = EMPK_QUANTILE,
 )
     n = length(samples)
     if n < 50
@@ -894,8 +897,9 @@ function fit_intensity_mass_error_model(
         σ_per_frag_mda[i] = σ_base * mz_corr
     end
     normalized_residuals = abs.(full_residuals_mda) ./ σ_per_frag_mda
-    k_emp = Float32(quantile(normalized_residuals, EMPK_QUANTILE))
-    k = clamp(k_emp, EMPK_MIN_K, EMPK_CLAMP_HI)
+    k_emp = Float32(quantile(normalized_residuals, coverage))
+    k_min = coverage == EMPK_QUANTILE ? EMPK_MIN_K : Float32(quantile(Normal(), (1.0 + coverage) / 2.0))
+    k = clamp(k_emp, k_min, EMPK_CLAMP_HI)
 
     # Conservative tolerance in Da = collection tolerance from the SimpleMassErrorModel.
     # SimpleMassErrorModel stores tolerance in ppm; convert to Da at max training m/z.

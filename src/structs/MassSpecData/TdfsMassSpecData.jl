@@ -181,3 +181,7 @@ getImSlope(d::TdfsMassSpecData) = d.im_slope
 getImCalibration(d::TdfsMassSpecData) = d.im_cal
 getFrameIds(d::TdfsMassSpecData) = d.frame_id
 getCollisionEnergyEvs(d::TdfsMassSpecData) = d.collision_energy_ev
+
+"File-level metadata a converter recorded in the `.tdfs` meta.json (e.g. `acquisition_mode`), as strings."
+getAcquisitionMetadata(d::TdfsMassSpecData) =
+    Dict{String, String}(k => string(v) for (k, v) in d.file.meta if v isa Union{AbstractString, Number, Bool})

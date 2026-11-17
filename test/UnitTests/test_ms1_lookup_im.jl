@@ -39,6 +39,24 @@ _base(n) = DataFrame(mz_array = [Union{Missing,Float32}[500f0] for _ in 1:n], in
     end
 end
 
+@testset "build_scan_to_ms1 — segmented MS1: nearest MS1 covering the window centre" begin
+    mktempdir() do d
+        # each cycle: MS1 100-600, MS1 600-1700, then MS2 windows centred at 500 / 650
+        df = _base(8)
+        df.retentionTime = Float32[1.00, 1.01, 1.05, 1.06, 1.95, 2.00, 2.01, 2.05]
+        df.msOrder = UInt8[1, 1, 2, 2, 2, 1, 1, 2]
+        df.lowMz = Float32[100, 600, 100, 100, 100, 100, 600, 100]
+        df.highMz = Float32[600, 1700, 1700, 1700, 1700, 600, 1700, 1700]
+        df.centerMz = Vector{Union{Missing,Float32}}([missing, missing, 500f0, 650f0, 650f0, missing, missing, 500f0])
+        df.isolationWidthMz = Vector{Union{Missing,Float32}}([missing, missing, 25f0, 25f0, 25f0, missing, missing, 25f0])
+        df.cycle_idx = Int32[1, 1, 1, 1, 1, 2, 2, 2]
+        m = build_scan_to_ms1(_write_ms(joinpath(d, "segmented.arrow"), df))
+        # 3: nearest (row 2) misses 500 -> row 1; 4: row 2 covers 650; 5 (RT 1.95, 650): row 6 misses -> row 7
+        # (0.06 min) over row 2 (0.94 min); 8 (500): row 7 misses -> row 6
+        @test m == Int32[1, 2, 1, 2, 7, 6, 7, 6]
+    end
+end
+
 @testset "build_scan_to_ms1 — packet file: nearest MS1 frame at the nearest IM scan" begin
     mktempdir() do d
         # frame 1 = MS1 with slices at scans 0, 8, 16, 24; frame 2 = MS2 window rows at scans 5, 13, 21;

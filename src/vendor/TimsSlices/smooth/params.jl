@@ -58,7 +58,10 @@ struct LevelParams
     max_half::Int           # footprint walk limit (bins)
     min_scans::Int          # persistence cull (1 = off)
     max_peaks::Int          # keep only the N most intense centroids of a slice (0 = off)
+    window_sum::Bool        # one slice per window: flat sum over all its scans (MS2 mode :sum)
 end
+LevelParams(im_sigma, kernel_extent, stride, sum_scale, mz_sigma, centroid, max_half, min_scans, max_peaks) =
+    LevelParams(im_sigma, kernel_extent, stride, sum_scale, mz_sigma, centroid, max_half, min_scans, max_peaks, false)
 
 Base.@kwdef struct ConvertParams
     # IM scale: targets in 1/K0, converted to scans per run (resolve_im_scale). `stride` / `im_sigma` (scans), when
@@ -80,6 +83,10 @@ Base.@kwdef struct ConvertParams
     # culls
     min_scans::Int = 1
     max_peaks::Int = 1500            # per slice, MS2: keep the N most intense centroids (0 = off)
+    # MS2 spectrum generation per quad window / DDA-PASEF isolation event: :slice (IM slices every `stride` scans,
+    # Gaussian IM kernel; the diaPASEF default), :scan (every IM scan its own spectrum, no IM smoothing), :sum (one
+    # spectrum per window: flat sum over its scans, then m/z smoothing + centroiding). MS1 is always :slice.
+    ms2_mode::Symbol = :slice
     ms1_max_peaks::Int = 0           # per slice, MS1 (0 = off)
     # format
     bin_scale::Int = 1
@@ -157,13 +164,15 @@ function validate(p::ConvertParams)
     p.int_scale > 0 || throw(ArgumentError("int_scale must be > 0"))
     1 <= p.zstd_level <= 22 || throw(ArgumentError("zstd_level must be in 1:22"))
     p.format in (:tdfs, :arrow, :both) || throw(ArgumentError("format must be :tdfs, :arrow or :both"))
+    p.ms2_mode in (:slice, :scan, :sum) || throw(ArgumentError("ms2_mode must be :slice, :scan or :sum"))
     p
 end
 
 # `p` must be resolved (resolve_im_scale, resolve_mz_scale): the scale fields are converted to concrete Float64 / Int here.
 level_params(p::ConvertParams, ms1::Bool) = ms1 ?
     LevelParams(p.ms1_im_sigma, p.kernel_extent, p.ms1_stride, p.sum_scale, p.mz_sigma, p.centroid, p.max_half, p.min_scans, p.ms1_max_peaks) :
-    LevelParams(p.im_sigma, p.kernel_extent, p.stride, p.sum_scale, p.mz_sigma, p.centroid, p.max_half, p.min_scans, p.max_peaks)
+    LevelParams(p.ms2_mode === :scan ? 0.0 : p.im_sigma, p.kernel_extent, p.ms2_mode === :scan ? 1 : p.stride, p.sum_scale,
+                p.mz_sigma, p.centroid, p.max_half, p.min_scans, p.max_peaks, p.ms2_mode === :sum)
 
 """
 Output base name from the source name and the (resolved) parameters (same convention as the prototype sweeps).
@@ -181,6 +190,7 @@ function output_name(source::AbstractString, p::ConvertParams)
     p.ms1_max_peaks > 0 && (name *= "_ms1top$(p.ms1_max_peaks)")
     p.bin_scale != 1 && (name *= "_b$(p.bin_scale)")
     p.int_scale != 1 && (name *= "_i$(fmt(p.int_scale))")
+    p.ms2_mode !== :slice && (name *= "_ms2$(p.ms2_mode)")
     name
 end
 

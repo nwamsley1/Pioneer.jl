@@ -197,6 +197,8 @@ function SearchDIA(params_path::String)
                 250000 # Default temp array batch size
             )
             setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
+            # DDA or DIA, per file, before any search phase (converter label, else the data rule)
+            detect_acquisition_modes!(SEARCH_CONTEXT, params)
 
             # Ensure temporary files are written to the results directory
             ENV["TMPDIR"] = params.paths[:results]

@@ -11,6 +11,7 @@ on:
           - all
           - fast
           - fastest
+          - MS1_quant
           - APMS_Astral
           - EWZ_2P_MBR_Exploris
           - KEAP1KO_Eclipse

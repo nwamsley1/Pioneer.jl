@@ -231,6 +231,8 @@ function importScripts()
     include_files!(joinpath(package_root, "src", "Routines", "SearchDIA", "ZT"),
                    ["geometry.jl", "transmission_model.jl"])
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
+    # Per-file acquisition mode (DDA / DIA), decided at search start; uses SearchContext.
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "acquisition_mode.jl"))
 
     # Include remaining files using safe import for directories
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils"))
@@ -327,7 +329,9 @@ function importScripts()
     include_files!(joinpath(search_methods_dir, "IntegrateChromatogramsSearch"), [
         "integrate_chrom.jl",
         "IntegrateChromatogramsSearch.jl",
-        "utils.jl"
+        "utils.jl",
+        "ms1_quant.jl",                # MS1-level quantitation for DDA (MS1CHROM build_chromatograms)
+        "ms1_mass_model.jl"            # per-file intensity-aware MS1 mass model for DDA MS1 quantification
     ])
 
     # Include remaining SearchMethods files (excluding explicitly loaded directories)

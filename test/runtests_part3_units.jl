@@ -66,6 +66,8 @@ include("./UnitTests/test_fragment_correlation_summaries.jl")
 include("./UnitTests/test_chromatogram_integration_trace_order.jl")
 include("./UnitTests/test_chromatogram_integration_bounds.jl")
 include("./UnitTests/test_chromatogram_integration_diagnostics.jl")
+include("./UnitTests/test_dda_ms1_calibration.jl")
+include("./UnitTests/test_dia_ms1_quant.jl")
 include("./UnitTests/test_huber_tuning_global.jl")
 include("./UnitTests/test_tuning_tier_limits.jl")
 
