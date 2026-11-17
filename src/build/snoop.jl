@@ -340,6 +340,26 @@ end
 
 
 ##########################################
+# Orbitrap-family acquisition files: SpectrumDecoder
+##########################################
+# Synthetic files from write_synthetic_acquisition (no download): one with centroid scans, one with ion-trap
+# profile-only MS1 scans that are centroided on write. Compiles the reader, the consistency checks, the threaded
+# `.arrow` writer and Pioneer's loading of its output.
+maybe_run("SpectrumDecoder") do
+    SD = Pioneer.SpectrumDecoder
+    dir = mktempdir()
+    for profile in (false, true)
+        raw = SD.write_synthetic_acquisition(joinpath(dir, "synthetic_$(profile).raw"); ms1_profile = profile)
+        f = SD.open_acquisition(raw)
+        SD.check_consistency(f)
+        out = SD.write_pioneer_arrow(f, joinpath(dir, "synthetic_$(profile).arrow"))
+        length(Pioneer.loadMassSpecData(out)) == length(f) || error("SpectrumDecoder: written scan count differs")
+    end
+    rm(dir; recursive = true, force = true)
+end
+
+
+##########################################
 # ConvertMzML
 ##########################################
 maybe_run("convertMzML") do
