@@ -42,6 +42,7 @@ export const SEARCH_OWNED_PATHS = [
   'optimization.chromatogram_integration.trace_mode',
   'proteinScoring.min_peptides',
   'maxLFQ.run_to_run_normalization',
+  'maxLFQ.ms1_quantification',
   'logging.debug_console_level',
 ]
 
@@ -71,7 +72,7 @@ export function buildSearchJsonBase(s: SearchParams): Json {
     // run at IntegrateChromatogramsSearch.
     optimization: { chromatogram_integration: { trace_mode: 'combined' } },
     proteinScoring: { min_peptides: num(s.minPeptides, 1) },
-    maxLFQ: { run_to_run_normalization: s.runToRunNorm },
+    maxLFQ: { run_to_run_normalization: s.runToRunNorm, ms1_quantification: s.ms1Quant },
     // Console verbosity only. The debug *file* level is left alone: Pioneer
     // defaults it to 1 because the log is useful after the fact whether or not
     // the console was noisy at the time.
@@ -437,6 +438,9 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
   }
   if (isObj(obj.maxLFQ) && 'run_to_run_normalization' in obj.maxLFQ) {
     set.runToRunNorm = !!obj.maxLFQ.run_to_run_normalization
+  }
+  if (isObj(obj.maxLFQ) && 'ms1_quantification' in obj.maxLFQ) {
+    set.ms1Quant = !!obj.maxLFQ.ms1_quantification
   }
   return set
 }

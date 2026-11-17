@@ -293,15 +293,20 @@ function ToggleRow({
   on,
   fieldKey,
   onToggle,
+  info,
 }: {
   title: string
   on: boolean
   fieldKey: string
   onToggle: (key: string) => void
+  info?: string
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
-      <div style={LABEL_TIGHT}>{title}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={LABEL_TIGHT}>{title}</div>
+        {info && <InfoDot text={info} />}
+      </div>
       <Toggle on={on} fieldKey={fieldKey} onClick={() => onToggle(fieldKey)} />
     </div>
   )
@@ -595,6 +600,15 @@ export function SearchDiaForm({
         >
           <NumField fieldKey="nIsotopes" value={params.nIsotopes} onChange={onParam} />
           <NumField fieldKey="minPeptides" value={params.minPeptides} onChange={onParam} />
+        </div>
+        <div style={{ marginTop: 16 }}>
+          <ToggleRow
+            title="MS1 quantification (DIA)"
+            on={params.ms1Quant}
+            fieldKey="ms1Quant"
+            onToggle={onToggle}
+            info="Also quantify DIA runs from MS1, next to MS2. Intended for low-input (250 pg–1 ng) runs."
+          />
         </div>
       </section>
     </div>
