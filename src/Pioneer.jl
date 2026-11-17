@@ -703,6 +703,8 @@ Random.seed!(1776);
 include(joinpath("vendor", "TimsSlices", "TimsSlices.jl"))
 # SCIEX .wiff/.wiff.scan reader and .wiff -> .scxs conversion (folded in from SciexWiff.jl, source commit e4d9097).
 include(joinpath("vendor", "SciexWiff", "SciexWiff.jl"))
+# Orbitrap-family acquisition reader and Pioneer `.arrow` writer, as the submodule Pioneer.SpectrumDecoder.
+include(joinpath("vendor", "SpectrumDecoder", "SpectrumDecoder.jl"))
 
 include("importScripts.jl")
 files_loaded = importScripts()
