@@ -13,7 +13,7 @@ import {
 } from "../lib/releases";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-const { latest, previous, isSample } = await getReleases();
+const { latest, isSample } = await getReleases();
 
 const byPlatform = new Map<string, Asset[]>();
 for (const a of latest?.assets ?? []) {
@@ -90,28 +90,17 @@ const platforms = platformOrder.filter((p) => byPlatform.has(p));
                 ))}
                 <li class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-line px-5 py-5">
                   <div class="min-w-0">
-                    <p class="font-[620] text-ink">Source code</p>
+                    <p class="font-[620] text-ink">Source code and earlier versions</p>
                     <p class="mt-1 text-sm text-muted">
                       Pioneer {latest.version} source.{" "}
                       <a class="underline hover:text-ink" href={latest.sourceTree}>Browse on GitHub</a>
                     </p>
                   </div>
                   <div class="flex flex-wrap gap-2">
-                    <a href={latest.sourceZip} class="rounded-lg px-4 py-2.5 text-[0.95rem] font-[600] text-ink no-underline shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]">Download .zip</a>
-                    <a href={latest.sourceTarGz} class="rounded-lg px-4 py-2.5 text-[0.95rem] font-[600] text-ink no-underline shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]">Download .tar.gz</a>
+                    <a href={latest.sourceZip} class="rounded-lg px-4 py-2.5 text-[0.95rem] font-[600] text-ink no-underline shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]">Download source</a>
+                    <a href={`https://github.com/${site.repo}/releases`} class="rounded-lg px-4 py-2.5 text-[0.95rem] font-[600] text-ink no-underline shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]">All releases</a>
                   </div>
                 </li>
-                {previous.length > 0 && (
-                  <li class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-line px-5 py-5">
-                    <div class="min-w-0">
-                      <p class="font-[620] text-ink">Earlier versions</p>
-                      <p class="mt-1 text-sm text-muted">Installers and source for previous releases.</p>
-                    </div>
-                    <div class="flex flex-wrap gap-2">
-                      <a href={`https://github.com/${site.repo}/releases`} class="rounded-lg px-4 py-2.5 text-[0.95rem] font-[600] text-ink no-underline shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]">All releases on GitHub</a>
-                    </div>
-                  </li>
-                )}
               </ul>
               <div class="mt-8">
                 <h2 class="text-lg font-[650]">License</h2>
