@@ -145,5 +145,5 @@ Avoid:
 ## Questions?
 
 Feel free to open a discussion on GitHub or contact the maintainers:
-- Nathan Wamsley (wamsleynathan@gmail.com)
-- Dennis Goldfarb (dennis.goldfarb@wustl.edu)
+- Nathan Wamsley (n.t.wamsley@wustl.edu)
+- Dennis Goldfarb (d.goldfarb@wustl.edu)

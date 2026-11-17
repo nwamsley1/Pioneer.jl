@@ -125,7 +125,7 @@ const features = [
   <section class="mx-auto max-w-6xl px-4 pt-20 sm:px-6">
     <h2 class="text-2xl font-[650] tracking-tight">Citing Pioneer</h2>
     <p class="mt-4 max-w-[70ch] text-muted">
-      {site.paper.authors.join(", ")} "{site.paper.title}." <em>{site.paper.venue}</em> ({site.paper.year}).
+      {site.paper.authors.slice(0, -1).join(", ")}, &amp; {site.paper.authors.at(-1)} "{site.paper.title}." <em>{site.paper.venue}</em> ({site.paper.year}).
       <a class="text-action underline" href={site.paper.url}>doi:{site.paper.doi}</a>
     </p>
   </section>

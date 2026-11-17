@@ -115,11 +115,15 @@ pioneer --threads=8 search search_params.json
 
 ## Docker
 
-Pioneer is also published as a Docker image. Mount the data folder (here the current folder, as `/work`) and run any subcommand:
+Pioneer is also published as a Docker image, tagged by release (`latest` is the newest release). Mount the data folder (here the current folder, as `/work`) and run any subcommand:
 
+````@eval
+using Markdown, Pioneer
+tag = "dennisgoldfarb/pioneer:v" * string(pkgversion(Pioneer))
+Markdown.parse("""
 ```bash
-docker pull dennisgoldfarb/pioneer:latest
-docker run --rm -it -v $(pwd):/work -w /work dennisgoldfarb/pioneer:latest pioneer --help
+docker pull $tag
+docker run --rm -it -v \$(pwd):/work -w /work $tag pioneer --help
 ```
-
-Images are tagged by release (for example `dennisgoldfarb/pioneer:v0.12.0`).
+""")
+````

@@ -4,7 +4,7 @@ CurrentModule = Pioneer
 
 # Pioneer
 
-Pioneer is a fast and scalable solution for the analysis of protein mass spectrometry data. It runs through both a graphical and a command-line interface and scales to thousands of runs on standard desktop hardware. Pioneer includes routines for searching data-independent acquisition (DIA) experiments from Thermo Fisher, SCIEX, and Bruker instruments and for building *in silico* spectral libraries using the [Koina](https://koina.wilhelmlab.org/) interface. Prebuilt libraries for several proteomes are downloadable through Pioneer. Given a spectral library of precursor fragment ion intensities and retention time estimates, Pioneer identifies and quantifies peptides and protein groups from the library in the data.
+Pioneer identifies and quantifies peptides and proteins from data-independent acquisition (DIA) experiments. It runs through both a graphical and a command-line interface and scales to thousands of runs on standard desktop hardware. Pioneer searches DIA experiments from Thermo Fisher, SCIEX, and Bruker instruments against spectral libraries of predicted fragment ion intensities and retention times. It builds *in silico* libraries using the [Koina](https://koina.wilhelmlab.org/) interface, and prebuilt libraries for several proteomes are downloadable through Pioneer.
 
 ## Key Features
 
@@ -14,7 +14,7 @@ Pioneer is a fast and scalable solution for the analysis of protein mass spectro
 - **Fast:** Searches runs against whole-proteome *in silico* libraries 5–30× faster than the data are acquired
 - **Scalable:** Processes experiments with hundreds to thousands of runs on standard desktop hardware (32–64 GB of RAM)
 - **Deep Proteome Coverage:** Delivers high sensitivity, quantitative precision, and accuracy on diverse benchmark datasets
-- **Regression Testing and FDR Control:** Maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers searches on the benchmark datasets, which include entrapment false discovery rate and false transfer rate analyses. [Browse regression reports](https://nwamsley1.github.io/Pioneer.jl/reports/).
+- **Regression Testing and FDR Control:** Maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers searches on the benchmark datasets, which include entrapment false discovery rate and false transfer rate analyses. [Browse the benchmarks](https://pioneeromics.bio/reports/).
 
 ## Graphical User Interface
 
@@ -31,7 +31,7 @@ Pioneer is a fast and scalable solution for the analysis of protein mass spectro
 
 Please cite the following when using Pioneer or Altimeter in published research:
 
-> Wamsley, N. T., Wilkerson, E. M., Major, M., & Goldfarb, D. "Pioneer and Altimeter: Fast Analysis of DIA Proteomics Data Optimized for Narrow Isolation Windows." *bioRxiv* (2026). [https://www.biorxiv.org/content/10.64898/2026.02.16.706201](https://www.biorxiv.org/content/10.64898/2026.02.16.706201)
+> Wamsley, N. T., Wilkerson, E. M., Major, M., & Goldfarb, D. "Pioneer and Altimeter: Fast Analysis of DIA Proteomics Data Optimized for Narrow Isolation Windows." *bioRxiv* (2026). [doi:10.64898/2026.02.16.706201](https://doi.org/10.64898/2026.02.16.706201)
 
 ## License
 
@@ -47,7 +47,7 @@ YOU AGREE THAT THE SOFTWARE PROVIDED HEREUNDER IS EXPERIMENTAL AND IS PROVIDED �
 
 Report problems on the [Issues page](https://github.com/nwamsley1/Pioneer.jl/issues) and ask questions or suggest features on the [Discussions page](https://github.com/nwamsley1/Pioneer.jl/discussions).
 
-Pioneer is developed in the [Major Lab](https://majorlab.wustl.edu/) and [Goldfarb Lab](https://goldfarblab.wustl.edu/) at Washington University in St. Louis by:
+Pioneer is developed in the [Goldfarb Lab](https://goldfarblab.wustl.edu/) and [Major Lab](https://majorlab.wustl.edu/) at Washington University in St. Louis by:
 
-- Nathan Wamsley (wamsleynathan@gmail.com)
-- Dennis Goldfarb (dennis.goldfarb@wustl.edu)
+- Nathan Wamsley (n.t.wamsley@wustl.edu)
+- Dennis Goldfarb (d.goldfarb@wustl.edu)
