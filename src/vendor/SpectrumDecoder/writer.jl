@@ -211,10 +211,13 @@ The writer's message channel is bounded to one batch (`ntasks = 1`; Arrow.jl's d
 has been handed over, batch b-2 is fully written: peak buffers come from a ring of three sets and are reused, never
 reallocated. Peak memory ≈ 3 × batch buffers + the mapped pages not yet released (`release_pages`, every 64 MiB).
 `centroid_profile`: profile-only scans (ion-trap MS1, packet type 19) are written with centroids of their profile.
+`acquisition_label`: the acquisition mode stated by the embedded method (`acquisition_metadata`) is written as schema
+metadata; files whose method states none get no metadata.
 """
 function write_pioneer_arrow(f::Acquisition, out_path::AbstractString; auxiliary::Bool = false,
                              batch_peaks::Int = ARROW_BATCH_PEAKS, centroid_profile::Bool = true,
-                             release_pages::Bool = true, threads::Int = default_threads())
+                             release_pages::Bool = true, threads::Int = default_threads(),
+                             acquisition_label::Bool = true)
     auxiliary && write_auxiliary(f, out_path)
     S = scans(f); nt = max(1, threads)
     cycles = pioneer_cycle_idxs([s.ms_order for s in S], [s.center_mz for s in S], [s.isolation_width for s in S])
@@ -223,7 +226,8 @@ function write_pioneer_arrow(f::Acquisition, out_path::AbstractString; auxiliary
     est(i) = centroid_profile && S[i].packet_type == 0x00000013 ? 1024 : counts[i]
     ring = [(Float32[], Float32[], Int32[]) for _ in 1:3]
     bufs = [_ScanBufs() for _ in 1:nt]
-    writer = open(Arrow.Writer, String(out_path); ntasks = 1)
+    meta = acquisition_label ? acquisition_metadata(f) : nothing
+    writer = open(Arrow.Writer, String(out_path); ntasks = 1, metadata = meta)
     try
         lo = 1; b = 0
         while lo <= length(S) || (b == 0 && isempty(S))

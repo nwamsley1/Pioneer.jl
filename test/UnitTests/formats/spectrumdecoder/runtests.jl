@@ -20,6 +20,7 @@ const RAW_FILES = isdir(DATA_DIR) ? filter(p -> endswith(lowercase(p), ".raw"), 
     include("test_centroid.jl")
     include("test_synthetic.jl")
     include("test_pioneer_input.jl")
+    include("test_acquisition.jl")
     if isempty(RAW_FILES)
         @info "No .raw files in PIONEER_FORMATS_TEST_DATA; skipping SpectrumDecoder real-data tests"
     else

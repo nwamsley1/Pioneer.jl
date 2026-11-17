@@ -161,6 +161,13 @@ function SearchDIA(params_path::String)
                 @user_error "No .arrow files or .tdfs / .scxs directories found in ms_data directory: " * MS_DATA_DIR
                 return
             end
+            n_found = length(MS_TABLE_PATHS)
+            MS_TABLE_PATHS = drop_not_searchable(MS_TABLE_PATHS)
+            if isempty(MS_TABLE_PATHS)
+                @user_error "None of the $n_found MS files in $MS_DATA_DIR can be searched: all are labelled " *
+                            "not_searchable (their methods request no MS2 scans)"
+                return
+            end
             check_ms_data_vendors(MS_TABLE_PATHS)
             warn_slow_storage(MS_TABLE_PATHS, SPEC_LIB_DIR, params.paths[:results])
 

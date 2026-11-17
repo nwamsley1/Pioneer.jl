@@ -20,7 +20,7 @@ module SpectrumDecoder
 using Mmap
 using Arrow
 
-export open_acquisition, scans, peaks, profile, features, traces, status_logs, scan_extras, instrument_status, read_auxiliary, method_text, method_windows, centroid!, Centroid, ScanInfo, Acquisition, write_pioneer_arrow, check_consistency, write_synthetic_acquisition
+export open_acquisition, scans, peaks, profile, features, traces, status_logs, scan_extras, instrument_status, read_auxiliary, method_text, method_windows, acquisition_mode, centroid!, Centroid, ScanInfo, Acquisition, write_pioneer_arrow, check_consistency, write_synthetic_acquisition
 
 include("layout.jl")
 include("reader.jl")
@@ -29,6 +29,7 @@ include("writer.jl")
 include("checks.jl")
 include("devices.jl")
 include("method.jl")
+include("acquisition.jl")
 include("synthetic.jl")
 
 end # module
