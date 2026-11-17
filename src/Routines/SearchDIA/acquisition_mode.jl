@@ -7,12 +7,14 @@
 #==========================================================
 Acquisition mode (DDA / DIA) of each MS file, decided once at search start.
 
-A converter may record the decision in the file metadata (`acquisition_mode` = dda | dia | targeted | unknown, with
-`acquisition_mode_source` = vendor | inferred and `acquisition_mode_evidence`). Files without a usable label are
-classified here from the data: coverage of the MS2 m/z range per MS1 cycle (`infer_acquisition_mode`).
+A converter may record the decision in the file metadata (`acquisition_mode` = dda | dia | targeted | not_searchable |
+unknown, with `acquisition_mode_source` = vendor | inferred and `acquisition_mode_evidence`). Files without a usable
+label are classified here from the data: coverage of the MS2 m/z range per MS1 cycle (`infer_acquisition_mode`).
+`not_searchable` files (the method requests no MS2 scans: MS1-only or SIM methods) are left out of the search
+(`drop_not_searchable`).
 ==========================================================#
 
-const ACQUISITION_MODES = ("dda", "dia", "targeted", "unknown")
+const ACQUISITION_MODES = ("dda", "dia", "targeted", "not_searchable", "unknown")
 const ACQUISITION_MODE_VERSION = "1"
 # data rule constants
 const ACQ_N_PROBES = 400
@@ -131,6 +133,35 @@ function file_acquisition_mode(spectra::MassSpecData)
           "converter recorded \"$recorded\"" * (haskey(meta, "acquisition_mode_evidence") ?
                                                  " ($(meta["acquisition_mode_evidence"]))" : "")
     return mode, "inferred from the data, $why: $ev"
+end
+
+"""
+    drop_not_searchable(paths) -> Vector{String}
+
+`paths` without the `.arrow` files whose converter label is `not_searchable` (the method requests no MS2 scans), each
+reported with a warning and the recorded evidence. Other files, including `.tdfs` / `.scxs` runs, are kept.
+"""
+function drop_not_searchable(paths::AbstractVector{<:AbstractString})
+    keep = String[]
+    for path in paths
+        meta = nothing
+        if isfile(path) && endswith(lowercase(path), ".arrow")
+            meta = try
+                Arrow.getmetadata(Arrow.Table(path))
+            catch
+                nothing
+            end
+        end
+        label = meta === nothing ? "" : lowercase(strip(string(get(meta, "acquisition_mode", ""))))
+        if label == "not_searchable"
+            ev = get(meta, "acquisition_mode_evidence", "")
+            @user_warn "$(basename(path)) is not searched: labelled not_searchable at conversion" *
+                       (isempty(ev) ? "" : " ($ev)")
+        else
+            push!(keep, String(path))
+        end
+    end
+    return keep
 end
 
 """Configured `search.acquisition_mode`: `auto` (default; per file, from the label or the data), `dda` or `dia`."""

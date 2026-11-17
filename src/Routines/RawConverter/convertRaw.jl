@@ -59,7 +59,9 @@ function convertRaw(path::AbstractString; output_dir::AbstractString = "", skip_
                 mv(partial, dest; force = true)
             end
             n = length(SpectrumDecoder.scans(f))
-            println("$tag: $n scans in $(round(t; digits = 1)) s")
+            a = SpectrumDecoder.acquisition_mode(f)
+            mode = a === nothing ? "not stated (classified from the data at search time)" : "$(a.mode) ($(a.evidence))"
+            println("$tag: $n scans in $(round(t; digits = 1)) s; acquisition mode: $mode")
             push!(written, dest)
         catch e
             rm(partial; force = true)

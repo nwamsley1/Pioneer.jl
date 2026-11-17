@@ -113,6 +113,7 @@ _acq_mode(cycles; kw...) = first(Pioneer.infer_acquisition_mode(_acq_scans(cycle
     @test Pioneer.acquisition_mode_label(Dict("acquisition_mode" => "unknown")) === nothing
     @test Pioneer.acquisition_mode_label(Dict("acquisition_type" => "swath")) === nothing
     @test Pioneer.acquisition_mode_label(nothing) === nothing
+    @test Pioneer.acquisition_mode_label(Dict("acquisition_mode" => "not_searchable")) === nothing
     mktempdir() do d
         o, c, w = _acq_scans([[(381 + 2.0k, 2.0) for k in 0:299] for _ in 1:30])
         n = length(o)
@@ -128,6 +129,12 @@ _acq_mode(cycles; kw...) = first(Pioneer.infer_acquisition_mode(_acq_scans(cycle
         @test first(Pioneer.file_acquisition_mode(Pioneer.BasicMassSpecData(joinpath(d, "unlabelled.arrow")))) == "dia"
         mode, why = Pioneer.file_acquisition_mode(Pioneer.BasicMassSpecData(joinpath(d, "unknown.arrow")))
         @test mode == "dia" && occursin("converter recorded", why)
+        Arrow.write(joinpath(d, "sim.arrow"), df; metadata = Dict("acquisition_mode" => "not_searchable",
+                                                                   "acquisition_mode_evidence" => "method: no MS2 experiment"))
+        mkpath(joinpath(d, "run.tdfs"))
+        paths = joinpath.(d, ["labelled.arrow", "sim.arrow", "unlabelled.arrow", "run.tdfs"])
+        @test Pioneer.drop_not_searchable(paths) == joinpath.(d, ["labelled.arrow", "unlabelled.arrow", "run.tdfs"])
+        @test isempty(Pioneer.drop_not_searchable([joinpath(d, "sim.arrow")]))
     end
 end
 
