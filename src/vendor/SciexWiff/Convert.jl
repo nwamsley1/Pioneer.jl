@@ -146,6 +146,8 @@ function convert_run(wiff::AbstractString, out_dir::AbstractString; params::Conv
     # the acquisition facts (e.g. `acquisition_type = zt_scan_dia`) go into both outputs, so a search can tell
     # the acquisition from the file alone
     merge!(meta, acq)
+    @printf(log, "acquisition mode: %s (%s: %s)\n", acq["acquisition_mode"], acq["acquisition_mode_source"],
+            acq["acquisition_mode_evidence"])
     aw = want_arrow ? PioneerArrowWriter(arrow_path; metadata = merge(Dict("source" => basename(wiff), "converter" => meta["converter"],
         "centroid" => string(cp), "bin_scale" => string(p.bin_scale), "int_scale" => string(p.int_scale)), acq)) : nothing
     sw = want_scxs ? ScxsWriter(scxs_path, meta) : nothing

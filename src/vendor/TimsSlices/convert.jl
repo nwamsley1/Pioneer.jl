@@ -98,6 +98,8 @@ function convert_run(dir::AbstractString, out_dir::AbstractString; params::Conve
         "bin_scale" => p.bin_scale, "int_scale" => p.int_scale, "zstd_level" => p.zstd_level,
         "converter" => "Pioneer.jl $(pkgversion(parentmodule(@__MODULE__))) (TimsSlices, from b3e6d12)", "converted_at" => string(now_utc()))
     merge!(meta, acquisition_mode_meta(f))
+    @printf(log, "acquisition mode: %s (%s: %s)\n", meta["acquisition_mode"], meta["acquisition_mode_source"],
+            meta["acquisition_mode_evidence"])
     mkpath(out_dir)
     want_tdfs = p.format in (:tdfs, :both); want_arrow = p.format in (:arrow, :both)
     tdfs_path = want_tdfs ? joinpath(out_dir, name * ".tdfs") : nothing

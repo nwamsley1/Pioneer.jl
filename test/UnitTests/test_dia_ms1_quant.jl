@@ -74,8 +74,8 @@ end
 
 @testset "MS1 coverage: filter-string boxes, segmented ranges, M0/M1 candidacy" begin
     lo = Float32[]; hi = Float32[]
-    @test Pioneer.parse_filter_ranges!(lo, hi, "FTMS + p NSI Full msx ms [400.0000-416.3000, 441.2000-454.2000]") == 2
-    @test lo == Float32[400.0, 441.2] && hi == Float32[416.3, 454.2]
+    @test Pioneer.parse_filter_ranges!(lo, hi, "FTMS + p NSI Full msx ms [500.0000-510.0000, 530.0000-540.0000]") == 2
+    @test lo == Float32[500.0, 530.0] && hi == Float32[510.0, 540.0]
     @test Pioneer.parse_filter_ranges!(empty!(lo), empty!(hi), "FTMS + p NSI Full ms [300.0000-1650.0000]") == 1
     @test Pioneer.parse_filter_ranges!(empty!(lo), empty!(hi), "") == 0
 
@@ -85,12 +85,12 @@ end
         df = DataFrame(mz_array = [Union{Missing,Float32}[500f0] for _ in 1:n],
                        intensity_array = [Union{Missing,Float32}[1f0] for _ in 1:n],
                        scanHeader = ["FTMS + p NSI Full ms [300.0000-1650.0000]",
-                                     "FTMS + p NSI Full msx ms [400.0000-416.3000, 441.2000-454.2000]",
+                                     "FTMS + p NSI Full msx ms [500.0000-510.0000, 530.0000-540.0000]",
                                      "FTMS + p NSI Full ms [650.0000-1400.0000]",
                                      "FTMS + p NSI d Full ms2 473.2155@hcd27.00 [65.6667-985.0000]"],
                        scanNumber = Int32.(1:n), packetType = zeros(Int32, n),
                        retentionTime = Float32[1.0, 1.01, 1.02, 1.03],
-                       lowMz = Float32[300, 400, 650, 65.67], highMz = Float32[1650, 454.2, 1400, 985],
+                       lowMz = Float32[300, 500, 650, 65.67], highMz = Float32[1650, 540, 1400, 985],
                        TIC = ones(Float32, n), msOrder = UInt8[1, 1, 1, 2],
                        centerMz = Vector{Union{Missing,Float32}}([missing, missing, missing, 473.2f0]),
                        isolationWidthMz = Vector{Union{Missing,Float32}}([missing, missing, missing, 1.4f0]),
@@ -99,17 +99,17 @@ end
         Arrow.write(joinpath(d, "cov.arrow"), df)
         cov = Pioneer.Ms1Coverage(Pioneer.BasicMassSpecData(joinpath(d, "cov.arrow")))
         @test !cov.uniform
-        @test Pioneer.covers(cov, 1, 1600f0) && Pioneer.covers(cov, 2, 410f0) && !Pioneer.covers(cov, 2, 430f0)
+        @test Pioneer.covers(cov, 1, 1600f0) && Pioneer.covers(cov, 2, 505f0) && !Pioneer.covers(cov, 2, 520f0)
         @test Pioneer.covers(cov, 3, 700f0) && !Pioneer.covers(cov, 3, 600f0)
         @test !Pioneer.covers(cov, 4, 500f0)                                     # MS2 scans measure no MS1 range
-        mzs = Float32[410.0, 416.0, 430.0, 700.0]; charges = UInt8[2, 1, 2, 2]
-        # BoxCar scan: 410 (M0 in box 1), 416.0 z=1 (M0 in box 1, M1 417.0 outside), 430 (both outside) dropped
+        mzs = Float32[505.0, 509.5, 520.0, 700.0]; charges = UInt8[2, 1, 2, 2]
+        # BoxCar scan: 505 (M0 in box 1), 509.5 z=1 (M0 in box 1, M1 510.5 outside) kept; 520 (both outside) dropped
         precs = UInt32[1, 2, 3, 4]
         k = Pioneer.keep_ms1_covered!(precs, 4, mzs, charges, cov, 2)
         @test precs[1:k] == UInt32[1, 2]
-        # 440.8 z=2: M0 outside box 2 (441.2-454.2), M1 441.30 inside -> kept
+        # 529.6 z=2: M0 outside box 2 (530-540), M1 530.10 inside -> kept
         precs = UInt32[1]
-        @test Pioneer.keep_ms1_covered!(precs, 1, Float32[440.8], UInt8[2], cov, 2) == 1
+        @test Pioneer.keep_ms1_covered!(precs, 1, Float32[529.6], UInt8[2], cov, 2) == 1
         # a file whose MS1 scans all measure the same range is uniform
         df2 = df[[1, 4], :]
         Arrow.write(joinpath(d, "plain.arrow"), df2)

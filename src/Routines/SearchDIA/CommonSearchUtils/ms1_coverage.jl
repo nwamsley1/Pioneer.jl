@@ -10,7 +10,7 @@
 The precursor m/z ranges each MS1 scan of a file measures. Normally one range per scan, [lowMz, highMz]. Two cases
 need more: segmented MS1 (consecutive MS1 scans covering different parts of the precursor range) and multiplexed
 MS1 (BoxCar / msx), where one scan holds several narrow boxes listed in its filter string,
-`FTMS + p NSI Full msx ms [400.0000-416.3000, 441.2000-454.2000, ...]`. Ranges of scan `s` are
+`FTMS + p NSI Full msx ms [500.0000-510.0000, 530.0000-540.0000, ...]`. Ranges of scan `s` are
 `starts[s]:starts[s + 1] - 1` in `lo` / `hi`; MS2 scans have none. `uniform` is true when every MS1 scan covers the
 same ranges, i.e. no scan selection by m/z is needed.
 """

@@ -32,14 +32,12 @@ ratios. Off by default.
 When a file's MS1 scans measure different m/z ranges, a precursor's MS1 trace only uses the scans that measure its
 M0 or M1 (`CommonSearchUtils/ms1_coverage.jl`, `Ms1Coverage`), and the per-PSM MS1 features read the nearest MS1 scan
 that measures the isolation centre. A scan measures [lowMz, highMz], or for a multiplexed (BoxCar / msx) scan the
-boxes listed in its filter string (`Full msx ms [400.0000-416.3000, 441.2000-454.2000, ...]`). Files whose MS1 scans
+boxes listed in its filter string (`Full msx ms [500.0000-510.0000, 530.0000-540.0000, ...]`). Files whose MS1 scans
 all measure the same range are unchanged. On simulated segmented Astral data (MS1 split in two) the MS1 areas equal
 those of the original data; on BoxCar (PXD006109 HeLa/E. coli) the E. coli ratio is 2.64 log2 (expected 2.58), with
 lower CV than the standard runs of the same samples.
 
 ## Known limitations
-- The converter writes a BoxCar scan's overall range only (`Full msx ms [400.0000-1200.0000]`); the boxes are in the
-  instrument method (`Multiinj_massrange_` per scan event, matched by the trailer `Scan Event`). Until the converter
-  writes them, BoxCar files need the scan headers rewritten (as done for the PXD006109 test); otherwise each BoxCar
-  scan counts as measuring its whole range and the MS1 areas are wrong.
+- convertRaw does not yet write the boxes of a BoxCar scan into its scan header. Until it does, each BoxCar scan
+  counts as measuring its whole range and BoxCar MS1 areas are wrong.
 - The 2D (timsTOF) integrator has no withheld-area rule, so `quant_withheld_ms1` is always false there.
