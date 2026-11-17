@@ -98,11 +98,7 @@ runs:
         # DDA_RECORD holds dda_raw_fixture.zip (dda_raw/*.arrow: two trimmed Astral DDA runs) for the SearchDIA_dda
         # snoop target (see snoop.jl). Same rule: bump cache-key with it.
         if [ "${{ inputs.include-dda }}" = "true" ]; then
-          DDA_RECORD=TODO_UPLOAD
-          if [ "$DDA_RECORD" = "TODO_UPLOAD" ]; then
-            echo "::error::dda_raw_fixture.zip is not on Zenodo yet: upload it and set DDA_RECORD"
-            exit 1
-          fi
+          DDA_RECORD=24325728
           fetch "https://zenodo.org/records/${DDA_RECORD}/files/dda_raw_fixture.zip" dda_raw_fixture.zip
           unzip -q -o dda_raw_fixture.zip
           rm dda_raw_fixture.zip
