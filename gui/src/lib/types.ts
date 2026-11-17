@@ -81,6 +81,10 @@ export interface SearchParams {
    *  absent, and the GUI did not emit it before this field existed — so on is
    *  what every GUI run has done to date, and is the default here. */
   matchBetweenRuns: boolean
+  /** maxLFQ.ms1_quantification: DIA runs are also quantified from MS1, giving MS1
+   *  abundance columns next to the MS2 ones. Off by default, as in Pioneer. DDA runs
+   *  are always quantified from MS1, so it changes nothing for them. */
+  ms1Quant: boolean
   /** logging.debug_console_level: 0 off, 1 on. Pioneer's own default is 0. */
   debugLogging: boolean
 }
@@ -100,6 +104,7 @@ export const SEARCH_DEFAULTS: SearchParams = {
   minPeptides: '1',
   runToRunNorm: true,
   matchBetweenRuns: true,
+  ms1Quant: false,
   debugLogging: false,
 }
 
