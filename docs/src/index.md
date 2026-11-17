@@ -4,7 +4,7 @@ CurrentModule = Pioneer
 
 # Pioneer
 
-Pioneer identifies and quantifies peptides and proteins from data-independent acquisition (DIA) experiments. It runs through both a graphical and a command-line interface and scales to thousands of runs on standard desktop hardware. Pioneer searches DIA experiments from Thermo Fisher, SCIEX, and Bruker instruments against spectral libraries of predicted fragment ion intensities and retention times. It builds *in silico* libraries using the [Koina](https://koina.wilhelmlab.org/) interface, and prebuilt libraries for several proteomes are downloadable through Pioneer.
+Pioneer identifies and quantifies peptides and proteins from data-independent (DIA) and data-dependent (DDA) acquisition experiments. It runs through both a graphical and a command-line interface and scales to thousands of runs on standard desktop hardware. Pioneer searches DIA and DDA experiments from Thermo Fisher, SCIEX, and Bruker instruments against spectral libraries of predicted fragment ion intensities and retention times. It builds *in silico* libraries using the [Koina](https://koina.wilhelmlab.org/) interface, and prebuilt libraries for several proteomes are downloadable through Pioneer.
 
 ## Key Features
 

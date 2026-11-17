@@ -64,6 +64,8 @@ Open **Search**:
 4. Check the common parameters. The defaults suit most experiments, including the 1% FDR (q-value 0.01) threshold.
 5. Click **Run Search**.
 
+By default, Pioneer quantifies precursors from MS1 scans in DDA runs and from MS2 scans in DIA runs. For low-input (250 pg–1 ng) DIA runs, **MS1 quantification (DIA)** under **Advanced parameters** adds MS1-based quantification alongside the MS2 results.
+
 All files in the folder are searched together, sharing false discovery rate control and match-between-runs. Turn on **Search each file separately** to run each file as its own search instead.
 
 ## 4. Results

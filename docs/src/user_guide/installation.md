@@ -21,7 +21,7 @@ Download the installer for the operating system from the [download page](https:/
 Then run it:
 
 * **Windows:** double-click the setup file and follow the wizard. It can add a desktop shortcut, and its last page offers **Launch Pioneer**. Pioneer also appears in the Start Menu.
-* **macOS:** double-click the `.pkg` and follow the installer; it shows the license agreement and asks for an administrator password. The app is installed as **Pioneer v&lt;version&gt;** in `/Applications`. The installer is signed and notarized; the first launch can take about a minute while macOS verifies it.
+* **macOS:** double-click the `.pkg` and follow the installer; it shows the license agreement and asks for an administrator password. The app is installed as `Pioneer v<version>` in `/Applications`. The installer is signed and notarized; the first launch can take about a minute while macOS verifies it.
 * **Linux:** install the package with `sudo apt install ./Pioneer-v<version>-linux-x64.deb`. Pioneer appears in the applications menu.
 
 The installer also adds the `pioneer` command for the [Command Line](@ref).

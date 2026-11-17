@@ -62,8 +62,8 @@ Most parameters should remain at their defaults for most experiments, but a few 
 | `maxLFQ.max_chunk_size_mb` | Int | `1024` | Maximum chunk size (MB) for the chunked merge during protein quantification. |
 | `maxLFQ.ms1_quantification` | Bool | `false` | DIA only: also quantify every precursor from MS1, next to the MS2 quantification (see below). |
 
-**MS1 quantification for DIA (`maxLFQ.ms1_quantification = true`).** Intended for low-input (single-cell-level)
-samples, where MS2 signal can be sparse. After the MS2 peaks are integrated, each MS1 scan is explained as a sum of the
+**MS1 quantification for DIA (`maxLFQ.ms1_quantification = true`).** In the app: **Advanced parameters → MS1
+quantification (DIA)**. Intended for low-input (250 pg–1 ng) runs, where MS2 signal can be sparse. After the MS2 peaks are integrated, each MS1 scan is explained as a sum of the
 isotope patterns (M0-M2) of the precursors that elute there, and every precursor's MS1 trace is integrated with the same
 window, mobility band and smoothing as its MS2 trace. MS2 results are unchanged; MS1 values are added alongside:
 
@@ -75,6 +75,8 @@ window, mobility band and smoothing as its MS2 trace. MS2 results are unchanged;
 * `precursors_wide_ms1` and `protein_groups_wide_ms1` (`.arrow`, and `.tsv` with `output.write_csv`): the wide tables
   built from the MS1 values;
 * `run_summary.tsv`: `precursors_quantified_ms1`, `total_peak_area_ms1`, `protein_groups_quantified_ms1`.
+
+See [Search Results](outputs.md) for every output column.
 
 DDA files are always quantified from MS1 (`peak_area`), so the flag has no effect on them.
 
