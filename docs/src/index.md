@@ -18,7 +18,7 @@ Pioneer identifies and quantifies peptides and proteins from data-independent ac
 
 ## Graphical User Interface
 
-![The Pioneer app on the SearchDIA screen](assets/gui/searchdia.png)
+![The Pioneer app on the Search screen](assets/gui/searchdia.png)
 
 ## Get Started
 

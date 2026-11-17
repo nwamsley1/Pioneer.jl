@@ -155,7 +155,7 @@ export function msDataNote(value: string, info: PathInfo): Note {
     // SearchDIA reads Arrow; .raw still needs converting first.
     return {
       level: 'warn',
-      msg: `${info.raw_count} .raw file${info.raw_count > 1 ? 's' : ''} found and no .arrow. Convert them with ConvertRAW first.`,
+      msg: `${info.raw_count} .raw file${info.raw_count > 1 ? 's' : ''} found and no .arrow. Convert them on the Convert screen first.`,
     }
   }
   return NONE

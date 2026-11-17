@@ -52,7 +52,7 @@ if [ -z "$JULIA_NUM_THREADS" ]; then
 fi
 
 # Valid subcommands
-VALID_COMMANDS="search predict download params-search params-predict convert-raw convert-mzml convert-bruker convert-sciex"
+VALID_COMMANDS="search build predict download params-search params-build params-predict convert-raw convert-mzml convert-bruker convert-sciex"
 # empirical params-empirical 
 
 show_help() {
@@ -70,14 +70,14 @@ show_help() {
     echo ""
     echo "Subcommands:"
     echo "  search <params.json>                        Perform DIA search analysis"
-    echo "  predict <params.json>                       Predict spectral library"
+    echo "  build <params.json>                         Build a spectral library (alias: predict)"
     echo "  download [<library>] --dest <dir> [--list]  Download a prebuilt spectral library"
     #echo "  empirical <params.json>                     Parse spectral library"
     echo "  params-search <library_path> <ms_data_path> <results_path> [--params-path <params_out_path>]"
     echo "                                              Generate search parameter template."
     echo "                                              Default params output path: ./search_parameters.json"
-    echo "  params-predict <library_outpath> <fasta_path> [--params-path <params_out_path>]"
-    echo "                                              Generate library build parameter template."
+    echo "  params-build <library_outpath> <fasta_path> [--params-path <params_out_path>]"
+    echo "                                              Generate library build parameter template (alias: params-predict)."
     echo "                                              Default params output path: ./buildspeclib_params.json"
     #echo "  params-empirical <empirical_lib_path> <library_outpath> [--params-path <params_out_path>]"
     #echo "                                              Generate parse parameter template"
@@ -92,8 +92,8 @@ show_help() {
     echo "                                              Convert SCIEX .wiff/.wiff.scan runs to .scxs"
     echo ""
     echo "Examples:"
-    echo "  pioneer params-predict yeast.poin fasta/ --params-path predict_params.json"
-    echo "  pioneer predict predict_params.json"
+    echo "  pioneer params-build yeast.poin fasta/ --params-path build_params.json"
+    echo "  pioneer build build_params.json"
     echo "  pioneer params-search yeast.poin data/ results/ --params-path search_params.json"
     echo "  pioneer search search_params.json                                        # Use auto threading"
     echo "  pioneer --threads=8 search search_params.json                            # Use 8 threads"
@@ -218,7 +218,7 @@ if [ "$_GC_MARK_THREADS" -lt 1 ]; then
 fi
 # Library builds run without the concurrent sweep thread: with it, large builds intermittently crashed
 # (SIGSEGV) in the threaded fragment-index builder, and it gives no measurable speedup.
-if [[ "$SUBCOMMAND" == "predict" ]]; then
+if [[ "$SUBCOMMAND" == "predict" || "$SUBCOMMAND" == "build" ]]; then
     _GC_SWEEP_THREADS=0
 else
     _GC_SWEEP_THREADS=1
@@ -238,7 +238,7 @@ case "$SUBCOMMAND" in
     search)
         SUBCOMMAND="SearchDIA"
         ;;
-    predict)
+    predict|build)
         SUBCOMMAND="BuildSpecLib"
         ;;
     download)
@@ -247,7 +247,7 @@ case "$SUBCOMMAND" in
     params-search)
         SUBCOMMAND="GetSearchParams"
         ;;
-    params-predict)
+    params-predict|params-build)
         SUBCOMMAND="GetBuildLibParams"
         ;;
     convert-raw)

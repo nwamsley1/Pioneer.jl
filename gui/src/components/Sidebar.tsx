@@ -128,10 +128,10 @@ function rowTitle(j: Job): string {
 const HISTORY_WINDOW = 60
 
 const CMD_TEXT: Record<CommandId, string> = {
-  searchdia: 'SearchDIA',
-  buildspeclib: 'BuildSpecLib',
-  downloadspeclib: 'DownloadSpecLib',
-  convertraw: 'ConvertRAW',
+  searchdia: 'Search',
+  buildspeclib: 'Build',
+  downloadspeclib: 'Download',
+  convertraw: 'Convert',
 }
 
 const STATUS_TEXT: Record<Job['status'], string> = {
@@ -995,7 +995,7 @@ export function Sidebar({
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '0 12px' }}>
         <NavItem
           id="convertraw"
-          title="ConvertRAW"
+          title="Convert"
           subtitle=".raw → .arrow"
           active={selected === 'convertraw'}
           collapsed={collapsed}
@@ -1025,7 +1025,7 @@ export function Sidebar({
         />
         <NavItem
           id="buildspeclib"
-          title="BuildSpecLib"
+          title="Build"
           subtitle="FASTA → library"
           active={selected === 'buildspeclib'}
           collapsed={collapsed}
@@ -1044,7 +1044,7 @@ export function Sidebar({
         />
         <NavItem
           id="downloadspeclib"
-          title="DownloadSpecLib"
+          title="Download"
           subtitle="Fetch a prebuilt library"
           active={selected === 'downloadspeclib'}
           collapsed={collapsed}
@@ -1064,7 +1064,7 @@ export function Sidebar({
         />
         <NavItem
           id="searchdia"
-          title="SearchDIA"
+          title="Search"
           subtitle="Identify & quantify proteins"
           active={selected === 'searchdia'}
           collapsed={collapsed}

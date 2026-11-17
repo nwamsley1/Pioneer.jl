@@ -264,7 +264,7 @@ export function ConvertRawForm({
             <>
               Convert <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.raw</code> and{' '}
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.mzML</code> files to
-              Arrow, which is what SearchDIA reads. The list can mix the two. Each format goes to
+              Arrow, which is what Pioneer searches. The list can mix the two. Each format goes to
               its own converter, as its own run.
             </>
           ) : isBruker ? (
@@ -272,7 +272,7 @@ export function ConvertRawForm({
               Convert Bruker timsTOF diaPASEF{' '}
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.d</code> folders to{' '}
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.tdfs</code> runs, which
-              is what SearchDIA reads for timsTOF data. Search them with a library built with the
+              is what Pioneer searches for timsTOF data. Search them with a library built with the
               timsTOF option on.
             </>
           ) : isSciex ? (
@@ -283,14 +283,14 @@ export function ConvertRawForm({
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.wiff.scan</code> beside it)
               to{' '}
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.scxs</code> runs, which
-              SearchDIA reads directly. Runs that have only a{' '}
+              Pioneer searches directly. Runs that have only a{' '}
               <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.wiff2</code> are not
               supported; convert those to mzML with msConvert.
             </>
           ) : isMzml ? (
             <>
               Convert <code style={{ fontFamily: "'IBM Plex Mono'", fontSize: 12 }}>.mzML</code>{' '}
-              files to Arrow, which is what SearchDIA reads. Runs Pioneer&rsquo;s own converter, so
+              files to Arrow, which is what Pioneer searches. Runs Pioneer&rsquo;s own converter, so
               it works on any platform. The data must be centroided. Profile-mode spectra are
               skipped.
             </>
@@ -570,7 +570,7 @@ export function ConvertRawForm({
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
                       Include scan headers
                     </div>
-                    <InfoDot text="Carry each scan's header into the Arrow file. SearchDIA does not read them and they roughly double the output. Leave off unless something else needs them." />
+                    <InfoDot text="Carry each scan's header into the Arrow file. Searches do not read them and they roughly double the output. Leave off unless something else needs them." />
                   </div>
                   <Toggle
                     on={params.includeScanHeader}

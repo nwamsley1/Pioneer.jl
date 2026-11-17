@@ -23,7 +23,7 @@ if not defined PIONEER_VERSION set "PIONEER_VERSION=unknown"
 
 set SUBCOMMAND=
 set SUBCOMMAND_ARGS=
-set VALID_COMMANDS=search predict params-search params-predict convert-raw convert-mzml convert-bruker convert-sciex
+set VALID_COMMANDS=search build predict params-search params-build params-predict convert-raw convert-mzml convert-bruker convert-sciex
 rem empirical params-empirical 
 
 :parse_args
@@ -121,13 +121,13 @@ echo   --license          Show the license
 echo.
 echo Subcommands:
 echo   search ^<params.json^>                       Perform DIA search analysis
-echo   predict ^<params.json^>                      Predict spectral library
+echo   build ^<params.json^>                        Build a spectral library (alias: predict)
 rem echo   empirical ^<params.json^>                    Parse spectral library
 echo   params-search ^<library_path^> ^<ms_data_path^> ^<results_path^> [--params-path ^<params_out_path^>]
 echo                                                 Generate search parameter template
 echo                                                 Default params output path: ./search_parameters.json
-echo   params-predict ^<library_outpath^> ^<fasta_path^> [--params-path ^<params_out_path^>]
-echo                                                 Generate library build parameter template
+echo   params-build ^<library_outpath^> ^<fasta_path^> [--params-path ^<params_out_path^>]
+echo                                                 Generate library build parameter template (alias: params-predict)
 echo                                                 Default params output path: ./buildspeclib_params.json
 rem echo   params-empirical ^<empirical_lib_path^> ^<library_outpath^> [--params-path ^<params_out_path^>]
 rem echo                                                 Generate parse parameter template
@@ -142,8 +142,8 @@ echo   convert-sciex ^<wiff_path^> [--output-dir ^<dir^>]
 echo                                                 Convert SCIEX .wiff/.wiff.scan runs to .scxs
 echo.
 echo Examples:
-echo   pioneer params-predict yeast.poin fasta/ --params-path predict_params.json
-echo   pioneer predict predict_params.json
+echo   pioneer params-build yeast.poin fasta/ --params-path build_params.json
+echo   pioneer build build_params.json
 echo   pioneer params-search yeast.poin data/ results/ --params-path search_params.json
 echo   pioneer search search_params.json                    # Use auto threading
 echo   pioneer --threads=8 search search_params.json        # Use 8 threads
@@ -224,15 +224,18 @@ rem Library builds run without the concurrent sweep thread: with it, large build
 rem (SIGSEGV) in the threaded fragment-index builder, and it gives no measurable speedup.
 set _GC_SWEEP_THREADS=1
 if /I "%SUBCOMMAND%"=="predict" set _GC_SWEEP_THREADS=0
+if /I "%SUBCOMMAND%"=="build" set _GC_SWEEP_THREADS=0
 set JULIA_NUM_GC_THREADS=%_GC_MARK_THREADS%,%_GC_SWEEP_THREADS%
 
 rem Map aliases to canonical executable names
 if /I "%SUBCOMMAND%"=="search" set SUBCOMMAND=SearchDIA
 if /I "%SUBCOMMAND%"=="predict" set SUBCOMMAND=BuildSpecLib
+if /I "%SUBCOMMAND%"=="build" set SUBCOMMAND=BuildSpecLib
 rem if /I "%SUBCOMMAND%"=="empirical" set SUBCOMMAND=ParseSpecLib
 rem if /I "%SUBCOMMAND%"=="params-empirical" set SUBCOMMAND=GetParseSpecLibParams
 if /I "%SUBCOMMAND%"=="params-search" set SUBCOMMAND=GetSearchParams
 if /I "%SUBCOMMAND%"=="params-predict" set SUBCOMMAND=GetBuildLibParams
+if /I "%SUBCOMMAND%"=="params-build" set SUBCOMMAND=GetBuildLibParams
 if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
 if /I "%SUBCOMMAND%"=="convert-bruker" set SUBCOMMAND=convertBruker
 if /I "%SUBCOMMAND%"=="convert-sciex" set SUBCOMMAND=convertSciex

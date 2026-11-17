@@ -225,10 +225,10 @@ function loadHistory(): Job[] {
 }
 
 const TITLES: Record<CommandId, string> = {
-  searchdia: 'SearchDIA',
-  buildspeclib: 'BuildSpecLib',
-  downloadspeclib: 'DownloadSpecLib',
-  convertraw: 'ConvertRAW',
+  searchdia: 'Search',
+  buildspeclib: 'Build',
+  downloadspeclib: 'Download',
+  convertraw: 'Convert',
 }
 
 /** What the overwrite confirmation says, per workflow.
@@ -1826,7 +1826,7 @@ export default function App() {
     if (isSearchConfig(obj)) {
       const patch = searchConfigToState(obj)
       if (!patch) return 'Unrecognized configuration.'
-      if (!switchCommand && !isSearch) return 'That is a SearchDIA config, not a BuildSpecLib one.'
+      if (!switchCommand && !isSearch) return 'That is a Search config, not a Build one.'
       setSearch((p) => ({ ...p, ...patch }))
       setExtras((e) => ({ ...e, searchdia: computeExtras(obj, SEARCH_OWNED_PATHS) }))
       if (switchCommand) setCommand('searchdia')
@@ -1837,7 +1837,7 @@ export default function App() {
     if (isBuildConfig(obj)) {
       const patch = buildConfigToState(obj)
       if (!patch) return 'Unrecognized configuration.'
-      if (!switchCommand && isSearch) return 'That is a BuildSpecLib config, not a SearchDIA one.'
+      if (!switchCommand && isSearch) return 'That is a Build config, not a Search one.'
       // A loaded config is outside the mod editor entirely, and older or
       // hand-written ones carry carbamidomethyl as variable, or not at all.
       setBuild((p) => {
@@ -1851,7 +1851,7 @@ export default function App() {
       return null
     }
 
-    return 'Unrecognized configuration. Expected a SearchDIA or BuildSpecLib config.'
+    return 'Unrecognized configuration. Expected a Search or Build config.'
   }
 
   const applyLoad = (draft: string): string | null => {
