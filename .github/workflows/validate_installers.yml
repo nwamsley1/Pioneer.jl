@@ -182,7 +182,7 @@ jobs:
             --threads-per-file 2
           find "$SMOKE_DIR/raw_arrow" -name '*.arrow' -print -quit | grep -q .
 
-          "$PIONEER" params-predict \
+          "$PIONEER" params-build \
             "$SMOKE_DIR/generated_from_cli" \
             "$GITHUB_WORKSPACE/data/precompile/ecoli.fasta" \
             --params-path "$SMOKE_DIR/build_template.json"
@@ -200,7 +200,7 @@ jobs:
             --output-dir "$SMOKE_DIR/mzml_arrow"
           find "$SMOKE_DIR/mzml_arrow" -name '*.arrow' -print -quit | grep -q .
 
-          "$PIONEER" predict "$SMOKE_DIR/build_predict.json"
+          "$PIONEER" build "$SMOKE_DIR/build_predict.json"
           test -f "$SMOKE_DIR/predicted_library.poin/config.json"
 
           "$PIONEER" search "$SMOKE_DIR/search.json"
@@ -335,7 +335,7 @@ jobs:
             throw 'convert-raw did not produce any .arrow output'
           }
 
-          & $pioneer params-predict `
+          & $pioneer params-build `
             (Join-Path $smokeDir 'generated_from_cli') `
             (Join-Path $env:GITHUB_WORKSPACE 'data\precompile\ecoli.fasta') `
             --params-path (Join-Path $smokeDir 'build_template.json')
@@ -360,7 +360,7 @@ jobs:
             throw 'convert-mzml did not produce any .arrow output'
           }
 
-          & $pioneer predict (Join-Path $smokeDir 'build_predict.json')
+          & $pioneer build (Join-Path $smokeDir 'build_predict.json')
           if (-not (Test-Path (Join-Path $smokeDir 'predicted_library.poin\config.json'))) {
             throw 'predict did not create the expected library output'
           }
@@ -459,7 +459,7 @@ jobs:
             --threads-per-file 2
           find "$SMOKE_DIR/raw_arrow" -name '*.arrow' -print -quit | grep -q .
 
-          "$PIONEER" params-predict \
+          "$PIONEER" params-build \
             "$SMOKE_DIR/generated_from_cli" \
             "$GITHUB_WORKSPACE/data/precompile/ecoli.fasta" \
             --params-path "$SMOKE_DIR/build_template.json"
@@ -477,7 +477,7 @@ jobs:
             --output-dir "$SMOKE_DIR/mzml_arrow"
           find "$SMOKE_DIR/mzml_arrow" -name '*.arrow' -print -quit | grep -q .
 
-          "$PIONEER" predict "$SMOKE_DIR/build_predict.json"
+          "$PIONEER" build "$SMOKE_DIR/build_predict.json"
           test -f "$SMOKE_DIR/predicted_library.poin/config.json"
 
           "$PIONEER" search "$SMOKE_DIR/search.json"
@@ -616,7 +616,7 @@ jobs:
             --threads-per-file 2
           find "$SMOKE_DIR/raw_arrow" -name '*.arrow' -print -quit | grep -q .
 
-          "$PIONEER" params-predict \
+          "$PIONEER" params-build \
             "$SMOKE_DIR/generated_from_cli" \
             "$GITHUB_WORKSPACE/data/precompile/ecoli.fasta" \
             --params-path "$SMOKE_DIR/build_template.json"
@@ -634,7 +634,7 @@ jobs:
             --output-dir "$SMOKE_DIR/mzml_arrow"
           find "$SMOKE_DIR/mzml_arrow" -name '*.arrow' -print -quit | grep -q .
 
-          "$PIONEER" predict "$SMOKE_DIR/build_predict.json"
+          "$PIONEER" build "$SMOKE_DIR/build_predict.json"
           test -f "$SMOKE_DIR/predicted_library.poin/config.json"
 
           "$PIONEER" search "$SMOKE_DIR/search.json"

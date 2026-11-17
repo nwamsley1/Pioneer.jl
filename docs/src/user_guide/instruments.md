@@ -4,7 +4,7 @@ Instruments whose raw files have been converted and searched with Pioneer, using
 
 ## Thermo Fisher
 
-`.raw` files, converted with **ConvertRAW** (`pioneer convert-raw`).
+`.raw` files, converted with **Convert** (`pioneer convert-raw`).
 
 | Instrument | Mass analyzer (MS2) | Acquisition tested |
 |---|---|---|
@@ -17,7 +17,7 @@ Instruments whose raw files have been converted and searched with Pioneer, using
 
 ## Bruker
 
-`.d` folders, converted with **ConvertRAW** (`pioneer convert-bruker`).
+`.d` folders, converted with **Convert** (`pioneer convert-bruker`).
 
 | Instrument | Mass analyzer (MS2) | Acquisition tested |
 |---|---|---|
@@ -33,7 +33,7 @@ Bruker data must be searched with a library built with the **Bruker timsTOF libr
 
 ## SCIEX
 
-`.wiff` files with their `.wiff.scan` files, converted with **ConvertRAW** (`pioneer convert-sciex`).
+`.wiff` files with their `.wiff.scan` files, converted with **Convert** (`pioneer convert-sciex`).
 
 | Instrument | Mass analyzer (MS2) | Acquisition tested |
 |---|---|---|
@@ -43,8 +43,8 @@ Bruker data must be searched with a library built with the **Bruker timsTOF libr
 | TripleTOF 5600+ | QTOF | SWATH |
 | TripleTOF 5600 | QTOF | SWATH |
 
-`.wiff2` files are not supported; convert them to mzML with msConvert and use **ConvertRAW** with the mzML format.
+`.wiff2` files are not supported; convert them to mzML with msConvert and use **Convert** with the mzML format.
 
 ## Other Instruments
 
-Centroided `.mzML` files from other instruments can be converted with **ConvertRAW** (`pioneer convert-mzml`).
+Centroided `.mzML` files from other instruments can be converted with **Convert** (`pioneer convert-mzml`).

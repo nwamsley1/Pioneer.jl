@@ -1,6 +1,6 @@
 # Search Results
 
-SearchDIA writes its results to the folder chosen under **Results folder** (`paths.results` in the parameter file).
+A search writes its results to the folder chosen under **Results folder** (`paths.results` in the parameter file).
 
 ## Output Files
 
