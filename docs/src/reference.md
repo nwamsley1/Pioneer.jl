@@ -5,6 +5,7 @@ These functions run Pioneer from the Julia REPL or a Julia script. Load the pack
 ## Converting Raw Files
 
 ```@docs
+convertRaw
 convertBruker
 convertSciex
 convertMzML

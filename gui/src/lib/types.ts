@@ -317,12 +317,12 @@ export const BUILD_DEFAULTS: BuildParams = {
 
 /** Which converter the page drives.
  *
- *  Two different programs reach the same destination: Thermo `.raw` goes
- *  through PioneerConverter (a .NET binary), `.mzML` through Pioneer's own
- *  `convertMzML` (Julia). They share the input/output/skip-existing shape but
- *  nothing else -- PioneerConverter's batching and scan-chunk knobs have no
- *  counterpart in the Julia converter, which instead exposes files-at-a-time
- *  and whether to carry scan headers into the Arrow file.
+ *  Different programs reach the same destination: Thermo `.raw` goes through
+ *  `convertRaw`, `.mzML` through `convertMzML`, Bruker `.d` through
+ *  `convertBruker` and SCIEX `.wiff` through `convertSciex`. The `.raw` and
+ *  `.mzML` converters share the input/output/skip-existing shape; convertRaw
+ *  adds the tasks per file, convertMzML files-at-a-time and whether to carry
+ *  scan headers into the Arrow file.
  *
  *  Held as an explicit field rather than sniffed from the input path, because
  *  in Folder mode the path says nothing about what is inside it, and a folder
@@ -354,19 +354,14 @@ export interface ConvertParams {
    *  'yes' writes <name>.zt.scxs marked zt_scan_dia, 'no' plain .scxs. */
   ztScan: '' | 'yes' | 'no'
   skipExisting: boolean
-  /** Scan-reader threads within the single file being converted.
+  /** Tasks used to convert the single file being converted.
    *
-   *  PioneerConverter processes files sequentially and parallelises scan reads
-   *  within the current file. This is separate from the sidebar thread count: that
-   *  drives JULIA_NUM_THREADS, and the converter is a .NET program that never
-   *  reads it.
+   *  convertRaw processes files sequentially and splits each file's reading and
+   *  writing over this many tasks, capped by the sidebar thread count (which
+   *  sets JULIA_NUM_THREADS).
    *
    *  RAW only — convertMzML has no equivalent. */
   threadsPerFile: string
-  /** RAW only. */
-  batchSize: string
-  /** RAW only. */
-  scanChunkSize: string
   /** mzML only: files converted at the same time. RAW conversion is always
    *  sequential across files. */
   concurrentFiles: string
@@ -384,9 +379,7 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   outputDir: '',
   ztScan: '',
   skipExisting: false,
-  threadsPerFile: '3',
-  batchSize: '1000',
-  scanChunkSize: '128',
+  threadsPerFile: '4',
   concurrentFiles: '2',
   includeScanHeader: false,
 }
@@ -463,8 +456,8 @@ export interface Job {
   /** Serialized params, held so the job can be started when it reaches the
    *  front of the queue rather than at enqueue time. */
   paramsJson: string
-  /** How to invoke: a params file for the Julia commands, argv for the .NET
-   *  converter, which has no params file. */
+  /** How to invoke: a params file for SearchDIA and BuildSpecLib, argv for
+   *  the converters, which have no params file. */
   invocation: Invocation
   /** Paths needed to open this run's output in the viewer. */
   viewerPaths: { results: string; msData: string; library: string } | null

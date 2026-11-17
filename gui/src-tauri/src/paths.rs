@@ -344,18 +344,7 @@ pub fn stage_files(job_id: &str, subdir: &str, files: &[String]) -> Result<Strin
             seen.push(name);
             continue;
         }
-        let hard = link_file(&src, &dst)?;
-        if !hard && name.to_ascii_lowercase().ends_with(".raw") {
-            // Only a symlink was possible, which for a .raw means the converter
-            // would read nothing and still report success. Say so now, with the
-            // reason, rather than after a batch has silently produced no output.
-            let _ = std::fs::remove_file(&dst);
-            return Err(format!(
-                "{name} is on a different volume from the temporary folder, so it can only be \
-                 linked in a way the Thermo reader cannot open. Convert that folder on its own \
-                 in Folder mode, or copy the file alongside the others first."
-            ));
-        }
+        link_file(&src, &dst)?;
         seen.push(name);
     }
     Ok(dir.display().to_string())
@@ -363,23 +352,15 @@ pub fn stage_files(job_id: &str, subdir: &str, files: &[String]) -> Result<Strin
 
 /// Link `src` into place at `dst`.
 ///
-/// A hard link first, on every platform. It is not a portability nicety: the
-/// Thermo reader PioneerConverter uses memory-maps the file it is given, and
-/// through a symlink it maps the *link* — a few dozen bytes — then reads past
-/// the end of it and dies with `System.OverflowException` out of
-/// `MemMapReader.ReadBytes`. Worse, PioneerConverter still exits 0, so a whole
-/// batch converts to nothing while reporting success. A hard link is a second
-/// name for the same inode and is indistinguishable from the original to
-/// anything that opens it.
-///
-/// The symlink fallback covers the one case a hard link cannot express, a
-/// source on another volume. `stage_files` refuses to use it for `.raw`, since
-/// for those it is the broken path above rather than a fallback.
-fn link_file(src: &Path, dst: &Path) -> Result<bool, String> {
+/// A hard link first, on every platform: it needs no special privilege on
+/// Windows and is indistinguishable from the original to anything that opens
+/// it. The symlink fallback covers the one case a hard link cannot express, a
+/// source on another volume.
+fn link_file(src: &Path, dst: &Path) -> Result<(), String> {
     if std::fs::hard_link(src, dst).is_ok() {
-        return Ok(true);
+        return Ok(());
     }
-    symlink_file(src, dst).map(|()| false)
+    symlink_file(src, dst)
 }
 
 #[cfg(unix)]

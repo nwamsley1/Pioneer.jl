@@ -90,9 +90,6 @@ Last updated 2026-08-12 (third pass).
         reserved strip is gated on user-agent, so Windows and Linux should show
         ordinary decorations with no dead space. Untested.
 
-- [ ] **`PioneerConverter` is missing from `build/Pioneer_local`**, so the
-      ConvertRAW tab cannot be exercised against the local distribution.
-
 ---
 
 ## Done

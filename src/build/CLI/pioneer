@@ -83,8 +83,7 @@ show_help() {
     #echo "                                              Generate parse parameter template"
     #echo "                                              Default params output path: ./parsespeclib_params.json"
     echo "  convert-raw <data_path> [--output-dir <dir>] [--skip-existing] [--threads-per-file N]"
-    echo "                                              Convert Thermo RAW files via PioneerConverter"
-    echo "                                              For additional converter options, run: pioneer convert-raw --help"
+    echo "                                              Convert Thermo .raw files to .arrow"
     echo "  convert-mzml <data_path> [options]"
     echo "                                              Convert mzML files"
     echo "  convert-bruker <d_path> [--output-dir <dir>]"
@@ -252,7 +251,7 @@ case "$SUBCOMMAND" in
         SUBCOMMAND="GetBuildLibParams"
         ;;
     convert-raw)
-        SUBCOMMAND="PioneerConverter"
+        SUBCOMMAND="convertRaw"
         ;;
     convert-mzml)
         SUBCOMMAND="convertMzML"

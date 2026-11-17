@@ -64,10 +64,8 @@ export const NUM_SPECS: Record<string, NumSpec> = {
   maxCharge: { label: 'Max charge', min: 1, max: 4, step: 1, int: true },
   missedCleav: { label: 'Missed cleav.', min: 0, max: 9, step: 1, int: true },
   maxVarMods: { label: 'Max var. mods', min: 0, max: 5, step: 1, int: true },
-  // PioneerConverter's own defaults are 3 / 1000 / 128.
+  // convertRaw's own default is min(4, Julia threads).
   threadsPerFile: { label: 'Threads per file', min: 1, max: null, step: 1, int: true },
-  batchSize: { label: 'Batch size (scans)', min: 1, max: null, step: 1000, int: true },
-  scanChunkSize: { label: 'Scan chunk size', min: 1, max: null, step: 16, int: true },
   // convertMzML's own default is 2.
   concurrentFiles: {
     label: 'Files at a time',
@@ -79,12 +77,8 @@ export const NUM_SPECS: Record<string, NumSpec> = {
   },
 }
 
-/** The numeric fields PioneerConverter reads. */
-export const CONVERT_NUM_KEYS = [
-  'threadsPerFile',
-  'batchSize',
-  'scanChunkSize',
-] as const
+/** The numeric fields convertRaw reads. */
+export const CONVERT_NUM_KEYS = ['threadsPerFile'] as const
 
 /** The numeric fields convertMzML reads. Deliberately disjoint from
  *  CONVERT_NUM_KEYS: the two converters share no tuning parameter, and

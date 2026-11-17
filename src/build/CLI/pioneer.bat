@@ -133,8 +133,7 @@ rem echo   params-empirical ^<empirical_lib_path^> ^<library_outpath^> [--params
 rem echo                                                 Generate parse parameter template
 rem echo                                                 Default params output path: ./parsespeclib_params.json
 echo   convert-raw ^<data_path^> [--output-dir ^<dir^>] [--skip-existing] [--threads-per-file N]
-echo                                                 Convert Thermo RAW files via PioneerConverter
-echo                                                 For additional converter options, run: pioneer convert-raw --help
+echo                                                 Convert Thermo .raw files to .arrow
 echo   convert-mzml ^<data_path^> [options]
 echo                                                 Convert mzML files
 echo   convert-bruker ^<d_path^> [--output-dir ^<dir^>]
@@ -237,7 +236,7 @@ if /I "%SUBCOMMAND%"=="params-predict" set SUBCOMMAND=GetBuildLibParams
 if /I "%SUBCOMMAND%"=="convert-mzml" set SUBCOMMAND=convertMzML
 if /I "%SUBCOMMAND%"=="convert-bruker" set SUBCOMMAND=convertBruker
 if /I "%SUBCOMMAND%"=="convert-sciex" set SUBCOMMAND=convertSciex
-if /I "%SUBCOMMAND%"=="convert-raw" set SUBCOMMAND=PioneerConverter
+if /I "%SUBCOMMAND%"=="convert-raw" set SUBCOMMAND=convertRaw
 
 
 :run_pioneer

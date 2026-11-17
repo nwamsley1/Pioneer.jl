@@ -447,14 +447,17 @@ export function searchConfigToState(obj: unknown): Partial<SearchParams> | null 
 
 /** Build the argv for whichever converter the format selects.
  *
- *  Neither converter has a params file; both take a positional input path plus
- *  flags, and the two flag sets only partly overlap:
+ *  No converter has a params file; each takes a positional input path plus
+ *  flags, and the flag sets only partly overlap:
  *
- *    PioneerConverter RAW_PATH  [-o DIR] [--skip-existing]
- *                     [-t PER_FILE] [-b BATCH] [--scan-chunk-size N]
+ *    convertRaw    RAW_PATH  [-o DIR] [--skip-existing] [-t PER_FILE]
  *
- *    convertMzML      MZML_PATH [-o DIR] [--skip-existing]
- *                     [-n CONCURRENT] [--skip-header | --include-scan-header]
+ *    convertMzML   MZML_PATH [-o DIR] [--skip-existing]
+ *                  [-n CONCURRENT] [--skip-header | --include-scan-header]
+ *
+ *    convertBruker D_PATH    [-o DIR]
+ *
+ *    convertSciex  WIFF_PATH [-o DIR] [--zt | --no-zt]
  *
  *  Flags equal to a converter's own defaults are still emitted, so the logged
  *  command line is an exact, re-runnable record of what was executed.
@@ -480,10 +483,8 @@ export function buildConvertArgs(s: ConvertParams): string[] {
     return args
   }
 
-  // PioneerConverter processes one file at a time with this many scan readers.
+  // convertRaw converts one file at a time with this many tasks.
   args.push('--threads-per-file', String(Math.max(1, parseInt(s.threadsPerFile, 10) || 1)))
-  args.push('--batch-size', s.batchSize.trim())
-  args.push('--scan-chunk-size', s.scanChunkSize.trim())
   return args
 }
 
@@ -526,7 +527,7 @@ export function convertCommandLine(s: ConvertParams): string {
         ? 'convertBruker'
         : s.format === 'sciex'
           ? 'convertSciex'
-          : 'PioneerConverter'
+          : 'convertRaw'
   return [exe, ...buildConvertArgs(s).map(quote)].join(' ')
 }
 
@@ -554,14 +555,11 @@ export interface ConvertGroup {
  *  One run per format present. `.raw` first when both are present, matching the
  *  order of the format toggle.
  *
- *  What happens *inside* a run differs by format, because the two converters
- *  do. convertMzML reads a directory of links happily and parallelises across
- *  files, so its group is one invocation over a staging folder. PioneerConverter
- *  cannot: its Thermo reader memory-maps the file it is given and gets the size
- *  of the link rather than the target, so a linked `.raw` dies with an
- *  arithmetic overflow with older converter builds. The `.raw` group uses one
- *  invocation per file, on real paths, run in sequence as a single job. This
- *  matches PioneerConverter's sequential directory conversion.
+ *  What happens *inside* a run differs by format. convertMzML parallelises
+ *  across files, so its group is one invocation over a staging folder of links.
+ *  The `.raw` group is one convertRaw invocation per file, on real paths, run
+ *  in sequence as a single job; convertRaw also converts a folder one file at a
+ *  time.
  *
  *  Anything neither converter reads is left out entirely; validateConvertRun
  *  refuses the run rather than letting it be silently dropped here.
