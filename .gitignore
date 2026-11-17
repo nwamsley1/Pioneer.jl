@@ -82,6 +82,8 @@ data/precompile/ecoli_altimeter_results/
 data/precompile/ecoli_altimeter_results_OOM/
 data/precompile/ecoli_prosit_results/
 data/precompile/yeast_altimeter_results/
+data/precompile/yeast_altimeter_ms1_results/
+data/precompile/dda_altimeter_results/
 data/precompile/arrow_out/
 
 # Yeast precompile fixture, fetched from Zenodo by .github/actions/precompile-data.
