@@ -374,7 +374,8 @@ maybe_run("convertRaw") do
     for path in out
         length(Pioneer.loadMassSpecData(path)) == 55 || error("convertRaw: written scan count differs in $path")
     end
-    rm(dir; recursive = true, force = true)
+    # The temporary directory is removed when Julia exits; the loaded .arrow files are still memory-mapped here,
+    # and Windows does not delete mapped files.
 end
 
 
