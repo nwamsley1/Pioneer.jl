@@ -4,21 +4,24 @@
 export const site = {
   name: "Pioneer",
   // Production URL of this site. Used for canonical links and the sitemap.
-  url: "https://nwamsley1.github.io",
+  url: "https://pioneeromics.bio",
 
   // GitHub repository whose releases appear on the Download page.
   repo: "nwamsley1/Pioneer.jl",
   // Releases older than this are hidden everywhere on the site.
   minVersion: "0.12.0",
 
-  // Existing Documenter build and regression reports. Point these at
-  // docs.pioneer.bio / reports.pioneer.bio once those subdomains exist.
-  docsUrl: "https://nwamsley1.github.io/Pioneer.jl/docs/stable/",
+  // Documenter build and regression reports, served from the same domain.
+  docsUrl: "https://pioneeromics.bio/docs/stable/",
   installGuideUrl:
-    "https://nwamsley1.github.io/Pioneer.jl/docs/stable/user_guide/installation/",
-  reportsUrl: "https://nwamsley1.github.io/Pioneer.jl/reports/",
+    "https://pioneeromics.bio/docs/stable/user_guide/installation/",
+  reportsUrl: "https://pioneeromics.bio/reports/",
 
   dockerImage: "dennisgoldfarb/pioneer",
+
+  // Receives the Download page form. While empty, the form only logs the
+  // details to the browser console.
+  downloadFormEndpoint: "https://forms.pioneeromics.bio",
 
   // Commercial licensing goes through WashU OTM until the startup license
   // is in place.

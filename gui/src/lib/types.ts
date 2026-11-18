@@ -81,6 +81,10 @@ export interface SearchParams {
    *  absent, and the GUI did not emit it before this field existed — so on is
    *  what every GUI run has done to date, and is the default here. */
   matchBetweenRuns: boolean
+  /** maxLFQ.ms1_quantification: DIA runs are also quantified from MS1, giving MS1
+   *  abundance columns next to the MS2 ones. Off by default, as in Pioneer. DDA runs
+   *  are always quantified from MS1, so it changes nothing for them. */
+  ms1Quant: boolean
   /** logging.debug_console_level: 0 off, 1 on. Pioneer's own default is 0. */
   debugLogging: boolean
 }
@@ -100,6 +104,7 @@ export const SEARCH_DEFAULTS: SearchParams = {
   minPeptides: '1',
   runToRunNorm: true,
   matchBetweenRuns: true,
+  ms1Quant: false,
   debugLogging: false,
 }
 
@@ -145,7 +150,8 @@ export interface ModEntry {
 export interface PredictionModel {
   id: string
   label: string
-  note: string
+  /** Short citation shown beside the label in the model menu. */
+  cite?: string
   peptideLength: { min: number; max: number } | null
 }
 
@@ -153,25 +159,24 @@ export const PREDICTION_MODELS: PredictionModel[] = [
   {
     id: 'altimeter',
     label: 'Altimeter',
-    note: 'Spline coefficients across collision energies; instrument-aware.',
+    cite: 'Wamsley et al., 2026',
     peptideLength: null,
   },
   {
     id: 'prosit_2020_hcd',
     label: 'Prosit 2020 HCD',
-    note: 'Fixed collision energy, no PTM support beyond the defaults.',
+    cite: 'Wilhelm et al., 2021',
     peptideLength: { min: 7, max: 30 },
   },
   {
     id: 'prosit_2024_ptm',
     label: 'Prosit 2024 PTM',
-    note: 'Fixed collision energy, HCD, with PTM support.',
     peptideLength: { min: 7, max: 30 },
   },
   {
     id: 'prosit_2025_40ptm',
     label: 'Prosit 2025 40-PTM',
-    note: 'As 2024 PTM, with a wider (40) modification vocabulary.',
+    cite: 'Gabriel et al., 2025',
     peptideLength: { min: 7, max: 30 },
   },
 ]
@@ -270,7 +275,6 @@ export interface BuildParams {
   maxVarMods: string
   addDecoys: boolean
   includeContaminants: boolean
-  predictFragments: boolean
   variableMods: ModEntry[]
   fixedMods: ModEntry[]
   /** logging.debug_console_level: 0 off, 1 on. */
@@ -282,7 +286,7 @@ export const BUILD_DEFAULTS: BuildParams = {
   fastaFiles: [],
   libPath: '',
   predictionModel: 'altimeter',
-  timsTOF: false,
+  timsTOF: true,
   rtModel: DEFAULT_RT_MODEL,
   calibrationFile: '',
   // Mirrors assets/example_config/defaultBuildLibParams.json, so an untouched
@@ -309,7 +313,6 @@ export const BUILD_DEFAULTS: BuildParams = {
   maxVarMods: '1',
   addDecoys: true,
   includeContaminants: true,
-  predictFragments: true,
   // Built from the catalogue so the starting rows are exactly what the picker
   // would add; hand-written copies drifted (Oxidation was 15.99491).
   variableMods: [modEntry('altimeter', 35)],
@@ -319,12 +322,12 @@ export const BUILD_DEFAULTS: BuildParams = {
 
 /** Which converter the page drives.
  *
- *  Two different programs reach the same destination: Thermo `.raw` goes
- *  through PioneerConverter (a .NET binary), `.mzML` through Pioneer's own
- *  `convertMzML` (Julia). They share the input/output/skip-existing shape but
- *  nothing else -- PioneerConverter's batching and scan-chunk knobs have no
- *  counterpart in the Julia converter, which instead exposes files-at-a-time
- *  and whether to carry scan headers into the Arrow file.
+ *  Different programs reach the same destination: Thermo `.raw` goes through
+ *  `convertRaw`, `.mzML` through `convertMzML`, Bruker `.d` through
+ *  `convertBruker` and SCIEX `.wiff` through `convertSciex`. The `.raw` and
+ *  `.mzML` converters share the input/output/skip-existing shape; convertRaw
+ *  adds the tasks per file, convertMzML files-at-a-time and whether to carry
+ *  scan headers into the Arrow file.
  *
  *  Held as an explicit field rather than sniffed from the input path, because
  *  in Folder mode the path says nothing about what is inside it, and a folder
@@ -356,19 +359,14 @@ export interface ConvertParams {
    *  'yes' writes <name>.zt.scxs marked zt_scan_dia, 'no' plain .scxs. */
   ztScan: '' | 'yes' | 'no'
   skipExisting: boolean
-  /** Scan-reader threads within the single file being converted.
+  /** Tasks used to convert the single file being converted.
    *
-   *  PioneerConverter processes files sequentially and parallelises scan reads
-   *  within the current file. This is separate from the sidebar thread count: that
-   *  drives JULIA_NUM_THREADS, and the converter is a .NET program that never
-   *  reads it.
+   *  convertRaw processes files sequentially and splits each file's reading and
+   *  writing over this many tasks, capped by the sidebar thread count (which
+   *  sets JULIA_NUM_THREADS).
    *
    *  RAW only — convertMzML has no equivalent. */
   threadsPerFile: string
-  /** RAW only. */
-  batchSize: string
-  /** RAW only. */
-  scanChunkSize: string
   /** mzML only: files converted at the same time. RAW conversion is always
    *  sequential across files. */
   concurrentFiles: string
@@ -386,9 +384,7 @@ export const CONVERT_DEFAULTS: ConvertParams = {
   outputDir: '',
   ztScan: '',
   skipExisting: false,
-  threadsPerFile: '3',
-  batchSize: '1000',
-  scanChunkSize: '128',
+  threadsPerFile: '4',
   concurrentFiles: '2',
   includeScanHeader: false,
 }
@@ -465,8 +461,8 @@ export interface Job {
   /** Serialized params, held so the job can be started when it reaches the
    *  front of the queue rather than at enqueue time. */
   paramsJson: string
-  /** How to invoke: a params file for the Julia commands, argv for the .NET
-   *  converter, which has no params file. */
+  /** How to invoke: a params file for SearchDIA and BuildSpecLib, argv for
+   *  the converters, which have no params file. */
   invocation: Invocation
   /** Paths needed to open this run's output in the viewer. */
   viewerPaths: { results: string; msData: string; library: string } | null

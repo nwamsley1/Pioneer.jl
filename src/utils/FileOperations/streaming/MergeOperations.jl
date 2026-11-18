@@ -20,25 +20,6 @@ using Base.Order: Ordering, Forward, Reverse, By, Lt
 Helper Functions for Heap-based Merge
 ==========================================================#
 
-# Create empty DataFrame with same schema as Arrow table
-function _create_empty_dataframe(table::Arrow.Table, n_rows::Int)
-    df = DataFrame()
-    col_names = Tables.columnnames(table)
-    schema_types = Tables.schema(table).types
-    
-    for (col_name, col_type) in zip(col_names, schema_types)
-        # Handle Union types properly
-        if col_type isa Union && Missing <: col_type
-            # Extract the non-missing type
-            non_missing_type = Base.uniontypes(col_type)
-            actual_type = first(t for t in non_missing_type if t !== Missing)
-            df[!, col_name] = Vector{Union{Missing, actual_type}}(undef, n_rows)
-        else
-            df[!, col_name] = Vector{col_type}(undef, n_rows)
-        end
-    end
-    return df
-end
 
 # Fill batch columns from sorted (table, row) locations.
 #
@@ -94,26 +75,6 @@ end
 Type-Stable DataFrame Creation
 ==========================================================#
 
-"""
-    unwrap_array_eltype(col_type)
-
-Unwrap nested array types to get the scalar element type.
-E.g., SubArray{Float32, ...} -> Float32, Vector{Int32} -> Int32
-Strings are not unwrapped as they are valid scalar types.
-"""
-function unwrap_array_eltype(col_type)
-    # Don't unwrap strings - they are valid scalar types
-    if col_type <: AbstractString
-        return col_type
-    end
-
-    # Unwrap array types to get the inner element type
-    while col_type isa DataType && col_type <: AbstractArray
-        col_type = eltype(col_type)
-    end
-
-    return col_type
-end
 
 """
 Create a type-stable empty DataFrame with pre-allocated vectors.

@@ -12,31 +12,32 @@ const { latest } = await getReleases();
 const features = [
   {
     title: "Cross-Platform",
-    body: "Pioneer runs on Linux, macOS, and Windows.",
+    body: "Runs on Linux, macOS, and Windows",
   },
   {
     title: "Multi-Vendor",
-    body: "Supports Thermo Fisher, Sciex, and Bruker instruments.",
+    body: "Supports Thermo Fisher, SCIEX, and Bruker instruments.",
+    link: { href: `${site.docsUrl}user_guide/instruments/`, label: "See supported instruments and configurations" },
   },
   {
     title: "GUI",
-    body: "Releases include a graphical user interface.",
+    body: "Includes a graphical user interface",
   },
   {
     title: "Fast",
-    body: "Pioneer searches files many times faster than data acquisition with whole-proteome in silico libraries, even on the latest fast-scanning TOF instruments.",
+    body: "Searches runs against whole-proteome <i>in silico</i> libraries 5–30× faster than the data are acquired",
   },
   {
     title: "Scalable",
-    body: "Pioneer processes experiments with hundreds to thousands of runs on standard desktop hardware (32–64 GB of RAM).",
+    body: "Processes experiments with hundreds to thousands of runs on standard desktop hardware (32–64 GB of RAM)",
   },
   {
     title: "Deep Proteome Coverage",
-    body: "Pioneer achieves high sensitivity and both quantitative precision and accuracy on benchmark datasets covering a variety of instruments and parameters.",
+    body: "Delivers high sensitivity, quantitative precision, and accuracy on diverse benchmark datasets",
   },
   {
     title: "Regression Testing and FDR Control",
-    body: "Pioneer maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers searches on the benchmark datasets, which include entrapment false discovery rate and false transfer rate analyses.",
+    body: "Maintains a public suite of regression tests across diverse instruments and acquisition schemes. Each tagged release triggers searches on the benchmark datasets, which include entrapment false discovery rate and false transfer rate analyses.",
     link: { href: site.reportsUrl, label: "Browse the benchmarks" },
   },
 ];
@@ -45,12 +46,12 @@ const features = [
   <section class="mx-auto grid max-w-6xl items-center gap-12 px-4 pb-16 pt-14 sm:px-6 lg:grid-cols-[1fr_1.05fr] lg:pt-20">
     <div>
       <h1 class="max-w-[17ch] text-[2.5rem] font-[680] leading-[1.06] tracking-[-0.025em] text-ink sm:text-[3.4rem]">
-        Ultra-fast analysis of protein mass spectrometry data
+        Rapid Analysis for Bottom-Up Proteomics
       </h1>
       <p class="mt-6 max-w-[54ch] text-lg leading-relaxed text-muted">
-        Pioneer identifies and quantifies precursors and proteins from data-independent
-        acquisition (DIA) experiments. Pioneer runs through both a graphical and a command-line interface,
-        and it scales to thousands of runs on standard desktop hardware.
+        Pioneer identifies and quantifies peptides and proteins from data-independent
+        acquisition (DIA) experiments. It runs through both a graphical and a command-line interface
+        and scales to thousands of runs on standard desktop hardware.
       </p>
       <div class="mt-9 flex flex-wrap items-center gap-3">
         <a
@@ -67,11 +68,20 @@ const features = [
         >
           Read the documentation
         </a>
+        <a
+          href={`https://github.com/${site.repo}`}
+          target="_blank"
+          rel="noopener"
+          class="inline-flex items-center gap-2 rounded-lg px-5 py-3 font-[600] text-ink no-underline shadow-[inset_0_0_0_1.5px_var(--line)] hover:shadow-[inset_0_0_0_1.5px_var(--muted)]"
+        >
+          <svg aria-hidden="true" viewBox="0 0 16 16" width="18" height="18" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          View source on GitHub
+        </a>
       </div>
       {
         latest && (
           <p class="mt-4 text-sm text-muted">
-            Released {formatDate(latest.date)} for macOS, Windows and Linux.
+            Released {formatDate(latest.date)} for macOS, Windows, and Linux.
           </p>
         )
       }
@@ -88,11 +98,11 @@ const features = [
             <div class="border-t border-line py-5">
               <dt class="font-[620] text-ink">{f.title}</dt>
               <dd class="mt-1.5 max-w-[60ch] text-muted">
-                {f.body}
+                <Fragment set:html={f.body} />
                 {f.link && (
                   <>
                     {" "}
-                    <a class="text-action underline" href={f.link.href}>{f.link.label}</a>
+                    <a class="text-action underline" href={f.link.href}>{f.link.label}</a>.
                   </>
                 )}
               </dd>
@@ -105,7 +115,7 @@ const features = [
             If seeking a commercial license, please contact Washington University's Office of
             Technology Management:
             <a class="text-ink underline" href={`mailto:${site.commercialContact}?subject=Pioneer%20commercial%20license`}>{site.commercialContact}</a>.
-            <a class="text-action underline" href={`${base}/license/`}>Read the license</a>
+            <a class="text-action underline" href={`${base}/license/`}>Read the license</a>.
           </dd>
         </div>
       </dl>
@@ -115,7 +125,7 @@ const features = [
   <section class="mx-auto max-w-6xl px-4 pt-20 sm:px-6">
     <h2 class="text-2xl font-[650] tracking-tight">Citing Pioneer</h2>
     <p class="mt-4 max-w-[70ch] text-muted">
-      {site.paper.authors.join(", ")} "{site.paper.title}." <em>{site.paper.venue}</em> ({site.paper.year}).
+      {site.paper.authors.slice(0, -1).join(", ")}, &amp; {site.paper.authors.at(-1)} "{site.paper.title}." <em>{site.paper.venue}</em> ({site.paper.year}).
       <a class="text-action underline" href={site.paper.url}>doi:{site.paper.doi}</a>
     </p>
   </section>

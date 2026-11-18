@@ -995,14 +995,6 @@ function buildFragmentIndex!(
     return 
 end
 
-"""
-    Helper function to decide if the fragment should be filtered out. Filters based on maximum rank or
-        a constant multiple of the peptide length, whichever is least 
-"""
-function filterFrag(rank::Int64, prec_len::UInt8, max_frag_rank::UInt8, length_to_frag_count_multiple::AbstractFloat)
-    return rank > min(max_frag_rank, round((prec_len)*length_to_frag_count_multiple)+1)
-end
-
 
 """
     getDetailedFrags(

@@ -10,8 +10,6 @@ struct PeptideMod
     mod_name::String
 end
 
-getPosition(mod::PeptideMod) = mod.position
-getAA(mod::PeptideMod) = mod.aa
 getModName(mod::PeptideMod) = mod.mod_name
 getModString(mod::PeptideMod) = join(['(', string(mod.position), ',', mod.aa, ',', mod.mod_name, ')'])
 getModString(mods::Vector{PeptideMod}) = join([getModString(mod) for mod in mods])

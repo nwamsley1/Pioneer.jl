@@ -28,15 +28,3 @@ function ensure_directory_exists(file_path::String)
     return dir
 end
 
-"""
-    get_file_size_mb(file_path::String) -> Float64
-
-Get file size in megabytes.
-"""
-function get_file_size_mb(file_path::String)
-    if !isfile(file_path)
-        return 0.0
-    end
-    
-    return filesize(file_path) / (1024 * 1024)
-end

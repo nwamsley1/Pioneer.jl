@@ -212,7 +212,7 @@ function zt_mainsearch_best_partitioned!(parts::Vector{String}, results::MainSea
     end
     foreach(safeRm, parts)                            # Windows: chunks may still be memory-mapped
     n_total = sum(n_rows)
-    @user_info "ZT main search: merged $(length(parts)) chunk files into $(length(featured)) " *
+    @user_info "Main search (on disk): merged $(length(parts)) chunk files into $(length(featured)) " *
                "precursor-complete parts in $(round(t_merge; digits = 1))s " *
                "(features $(round(t_prepare + t_ms1; digits = 1))s)"
 

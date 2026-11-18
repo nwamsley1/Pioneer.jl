@@ -37,17 +37,6 @@ function is_sorted_by(ref::FileReference, keys::Symbol...)
     return sorted_by(ref) == keys
 end
 
-"""
-    ensure_sorted!(ref::FileReference, keys::Symbol...)
-
-Ensure a file is sorted by the specified keys, sorting if necessary.
-"""
-function ensure_sorted!(ref::FileReference, keys::Symbol...)
-    if !is_sorted_by(ref, keys...)
-        sort_file_by_keys!(ref, keys...)
-    end
-    return ref
-end
 
 """
     Base.sort!(ref::FileReference, cols::Vector{Symbol}; kwargs...)

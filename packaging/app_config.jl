@@ -18,6 +18,7 @@ const PIONEER_APP_EXECUTABLES = Pair{String,String}[
     "convertMzML" => "main_convertMzML",
     "convertBruker" => "main_convertBruker",
     "convertSciex" => "main_convertSciex",
+    "convertRaw" => "main_convertRaw",
 ]
 
 # HostCPUFeatures-free code can safely participate in Julia's target cloning.

@@ -125,7 +125,8 @@ jobs:
       - name: Precompile data (cache & download)
         uses: ./.github/actions/precompile-data
         with:
-          cache-key: precompile-data-v3-yeast-formats
+          cache-key: precompile-data-v4-yeast-formats-dda
+          include-dda: "true"
 
       - name: Compile application
         run: |
@@ -137,32 +138,9 @@ jobs:
             packaging/build_app.jl \
             "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/"
 
-      - name: Download PioneerConverter
+      - name: Check for .NET and Thermo Fisher files
         shell: bash
-        run: |
-          mkdir -p converter
-          PATTERN="${{ matrix.identifier }}"
-          ASSET=$(curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            https://api.github.com/repos/nwamsley1/PioneerConverter/releases/latest \
-            | jq -r --arg PATTERN "$PATTERN" '.assets[]
-              | select(.name|test("PioneerConverter-"+$PATTERN+".*\\.zip"))
-              | .name' | head -n1)
-
-          if [[ -z "$ASSET" ]]; then
-            echo "Error: ASSET not found"
-            exit 1
-          fi
-
-          curl -L "https://github.com/nwamsley1/PioneerConverter/releases/latest/download/$ASSET" \
-            -o converter.zip
-          unzip -q converter.zip -d converter
-          cp -r "converter/PioneerConverter-${PATTERN}/bin/"* \
-            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/bin/"
-          mkdir -p "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib"
-          cp -r "converter/PioneerConverter-${PATTERN}/lib/"* \
-            "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer/lib/"
+        run: julia --startup-file=no packaging/check_no_dotnet.jl "build/Pioneer_${{ matrix.identifier }}/Applications/Pioneer"
 
       - name: Add wrapper scripts
         shell: bash

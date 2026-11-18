@@ -291,18 +291,18 @@ export function LogDrawer({
             {status === 'interrupted' ? (
               <>
                 This run was still going when Pioneer last closed, so it did not
-                finish. Its parameters were kept — click Run to start it again.
+                finish. Its parameters were kept. Click Run to start it again.
                 {job.target ? ` Anything it had written is in ${job.target}.` : ''}
               </>
             ) : (
               <>
-                Output is not kept between sessions — this run's parameters were
+                Output is not kept between sessions. This run's parameters were
                 restored from history.
                 {targetInfo === null
                   ? ` Its results were written to ${job.target}.`
                   : targetInfo.exists
                     ? ` Its results are still at ${job.target}.`
-                    : ` Its results are no longer at ${job.target} — the folder has been moved or deleted.`}
+                    : ` Its results are no longer at ${job.target}. The folder has been moved or deleted.`}
               </>
             )}
           </span>
@@ -364,7 +364,7 @@ export function LogDrawer({
             <path d="M12 7v6M12 16v.5" stroke="#FCA5A5" strokeWidth="2" strokeLinecap="round" />
           </svg>
           <span style={{ fontSize: 12.5, color: '#FCA5A5', fontWeight: 600 }}>
-            Run failed — {job?.failMsg}
+            Run failed: {job?.failMsg}
           </span>
         </div>
       )}

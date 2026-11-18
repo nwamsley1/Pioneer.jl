@@ -299,41 +299,7 @@ mutable struct FileMapping
     FileMapping() = new(Dictionary{String, String}(), Dictionary{String, String}())
 end
 
-"""
-    add_mapping!(mapping::FileMapping, psm_path::String, pg_path::String)
-
-Add a bidirectional file mapping.
-"""
-function add_mapping!(mapping::FileMapping, psm_path::String, pg_path::String)
-    insert!(mapping.psm_to_pg, psm_path, pg_path)
-    insert!(mapping.pg_to_psm, pg_path, psm_path)
-end
 
 # Conversion utilities for backward compatibility
 
-"""
-    to_protein_key(nt::NamedTuple) -> ProteinKey
 
-Convert old NamedTuple format to ProteinKey.
-"""
-function to_protein_key(nt::NamedTuple{(:protein_name, :target, :entrap_id), Tuple{String, Bool, UInt8}})
-    return ProteinKey(nt.protein_name, nt.target, nt.entrap_id)
-end
-
-"""
-    to_namedtuple(key::ProteinKey) -> NamedTuple
-
-Convert ProteinKey to old NamedTuple format for compatibility.
-"""
-function to_namedtuple(key::ProteinKey)
-    return (protein_name = key.name, target = key.is_target, entrap_id = key.entrap_id)
-end
-
-"""
-    to_peptide_key(nt::NamedTuple) -> PeptideKey
-
-Convert old NamedTuple format to PeptideKey.
-"""
-function to_peptide_key(nt::NamedTuple{(:peptide, :decoy, :entrap_id), Tuple{String, Bool, UInt8}})
-    return PeptideKey(nt.peptide, !nt.decoy, nt.entrap_id)
-end

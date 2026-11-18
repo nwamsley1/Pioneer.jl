@@ -146,5 +146,4 @@ struct MainSearchParameters{P<:PrecEstimation, I<:IsotopeTraceType} <: FragmentI
     end
 end
 
-getIsotopeTraceType(p::MainSearchParameters) = p.isotope_tracetype
 getPrefilterMinScanCount(p::MainSearchParameters) = p.prefilter_min_scan_count

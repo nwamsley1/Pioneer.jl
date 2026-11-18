@@ -50,10 +50,8 @@ const CARD: React.CSSProperties = {
 
 const H2: React.CSSProperties = {
   margin: 0,
-  fontSize: 12,
-  fontWeight: 700,
-  letterSpacing: '0.04em',
-  textTransform: 'uppercase',
+  fontSize: 14,
+  fontWeight: 650,
   color: '#1B2A4A',
 }
 
@@ -182,10 +180,8 @@ function ModTable({
     <>
       <div
         style={{
-          fontSize: 11,
-          fontWeight: 700,
-          letterSpacing: '0.05em',
-          textTransform: 'uppercase',
+          fontSize: 12.5,
+          fontWeight: 600,
           color: '#667085',
           marginBottom: 9,
         }}
@@ -558,7 +554,6 @@ export function BuildSpecLibForm({
 
         {params.fastaFiles.map((f, i) => {
           const note = fastaNotes[i] ?? { level: '' as const, msg: '' }
-          const presetLabel = HEADER_PRESETS[f.presetId].label
           return (
             <div
               key={i}
@@ -691,20 +686,10 @@ export function BuildSpecLibForm({
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'space-between',
+                  justifyContent: 'flex-end',
                   marginTop: 10,
                 }}
               >
-                <span
-                  style={{
-                    fontSize: 11.5,
-                    color: f.auto && f.presetId !== 'custom' ? 'var(--pio-accent)' : '#98A2B3',
-                  }}
-                >
-                  {f.presetId === 'custom'
-                    ? 'Custom header regex'
-                    : `${f.auto ? 'Auto-detected: ' : 'Format: '}${presetLabel}`}
-                </span>
                 <button
                   type="button"
                   className="pio-link-underline"
@@ -779,7 +764,7 @@ export function BuildSpecLibForm({
               marginBottom: 10,
             }}
           >
-            No FASTA files yet — add one to begin.
+            No FASTA files yet. Add one to begin.
           </div>
         )}
 
@@ -814,17 +799,14 @@ export function BuildSpecLibForm({
           key as "optional but recommended" and warns on every build without
           it. */}
       <section style={CARD}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <h2 style={H2}>Reference MS file</h2>
-          <InfoDot text="Any one run from the experiment this library is for. Pioneer reads its scan headers to detect the fragment and precursor m/z bounds, instead of assuming defaults that may not match your method. It is not used for calibration in the retention-time sense, and nothing from it ends up in the library." />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <h2 style={H2}>Reference MS file (recommended)</h2>
+          <InfoDot text="Choose any one run from your experiment. Pioneer reads it to match the library's precursor and fragment m/z ranges to your instrument method." />
         </div>
-        <p style={{ margin: '0 0 12px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
-          Recommended. Without one, set the m/z bounds yourself below.
-        </p>
         {/* The choice comes first: everything under it depends on it, and
             leaving the file field live while it is ignored invites filling it
             in and wondering why nothing changed. */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 3, padding: 3, background: '#EEF1F4', borderRadius: 8, marginBottom: 12 }}>
           <button
             type="button"
             onClick={() => !params.autoDetectFragBounds && onToggle('autoDetectFragBounds')}
@@ -920,7 +902,7 @@ export function BuildSpecLibForm({
               >
                 Fragment ceiling
               </label>
-              <InfoDot text="Thermo instruments in Scan Range Mode = Auto move the MS2 ceiling with the isolation window, so a flat ceiling keeps fragments the instrument never recorded. SCIEX and Bruker hold one fixed range, which is what Constant does. The gain is small — about 0.4% of intensity, and nothing at all at charge 2 — so this is a correctness fix rather than a way to find more peptides." />
+              <InfoDot text="Thermo instruments in Scan Range Mode = Auto move the MS2 ceiling with the isolation window, so a flat ceiling keeps fragments the instrument never recorded. SCIEX and Bruker hold one fixed range, which is what Constant does. The gain is small (about 0.4% of intensity, and nothing at all at charge 2), so this is a correctness fix rather than a way to find more peptides." />
             </div>
             <select
               id="frag-bounds-rule"
@@ -943,8 +925,8 @@ export function BuildSpecLibForm({
                 WebkitAppearance: 'none',
               }}
             >
-              <option value="constant">Constant — the max above, at every precursor</option>
-              <option value="thermo_auto_documented">Thermo Auto — 2.00 × precursor + 10</option>
+              <option value="constant">Constant: the max above, at every precursor</option>
+              <option value="thermo_auto_documented">Thermo Auto: 2.00 × precursor + 10</option>
               {/* Neither the measured variant nor explicit coefficients are
                   offered. Two Thermo rules differing by 2% invites a choice
                   nobody has grounds to make, and the config key still takes
@@ -953,7 +935,7 @@ export function BuildSpecLibForm({
                   re-saving it does not quietly rewrite the rule. */}
               {params.fragBoundsRule === 'thermo_auto' && (
                 <option value="thermo_auto">
-                  Thermo Auto measured — 2.04 × precursor + 24.1
+                  Thermo Auto measured: 2.04 × precursor + 24.1
                 </option>
               )}
               {params.fragBoundsRule === 'custom' && (
@@ -1047,12 +1029,10 @@ export function BuildSpecLibForm({
       </section>
 
       <section style={CARD}>
-        <h2 style={{ ...H2, marginBottom: 5 }}>Fragment prediction</h2>
-        <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
-          Which model predicts fragment intensities. All are served by Koina, so a
-          build needs network access.
-        </p>
+        <h2 style={{ ...H2, marginBottom: 14 }}>Prediction models</h2>
+        <label htmlFor="predictionModel" style={LABEL}>Fragment intensity model</label>
         <select
+          id="predictionModel"
           value={params.predictionModel}
           onChange={(e) => onParam('predictionModel', e.target.value)}
           style={{
@@ -1073,20 +1053,10 @@ export function BuildSpecLibForm({
         >
           {PREDICTION_MODELS.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.label}
+              {m.cite ? `${m.label} (${m.cite})` : m.label}
             </option>
           ))}
         </select>
-        <div style={{ marginTop: 9, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
-          {selectedModel.note}
-          {selectedModel.peptideLength && (
-            <>
-              {' '}
-              Accepts peptides {selectedModel.peptideLength.min}–
-              {selectedModel.peptideLength.max} residues.
-            </>
-          )}
-        </div>
         <div
           style={{
             marginTop: 14,
@@ -1096,22 +1066,17 @@ export function BuildSpecLibForm({
             gap: 14,
           }}
         >
-          <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
               Bruker timsTOF library
             </div>
-            <div style={{ fontSize: 11.5, color: '#98A2B3' }}>
-              Also predict ion mobility (AlphaPeptDeep CCS). Needed to search timsTOF .tdfs data.
-            </div>
+            <InfoDot text="Also predict ion mobility (AlphaPeptDeep CCS). Needed to search timsTOF .tdfs data; other instruments ignore it." />
           </div>
           <Toggle on={params.timsTOF} fieldKey="timsTOF" onClick={() => onToggle('timsTOF')} />
         </div>
-        <h2 style={{ ...H2, margin: '18px 0 5px' }}>Retention time prediction</h2>
-        <p style={{ margin: '0 0 14px', fontSize: 12, color: '#98A2B3', lineHeight: 1.5 }}>
-          Which model predicts retention times. Each knows a different set of
-          modifications, so the choice has to cover every modification below.
-        </p>
+        <label htmlFor="rtModel" style={{ ...LABEL, marginTop: 18 }}>Retention time model</label>
         <select
+          id="rtModel"
           data-key="rtModel"
           value={params.rtModel}
           onChange={(e) => onParam('rtModel', e.target.value)}
@@ -1132,13 +1097,10 @@ export function BuildSpecLibForm({
         >
           {RT_MODELS.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.label}
+              {m.cite ? `${m.label} (${m.cite})` : m.label}
             </option>
           ))}
         </select>
-        <div style={{ marginTop: 9, fontSize: 11.5, color: '#98A2B3', lineHeight: 1.5 }}>
-          {selectedRtModel.note}
-        </div>
         {rtProblems.length > 0 && (
           <div
             style={{
@@ -1178,7 +1140,7 @@ export function BuildSpecLibForm({
                 .
               </>
             ) : (
-              'No retention-time model supports the whole selection — remove them.'
+              'No retention-time model supports the whole selection. Remove them.'
             )}
           </div>
         )}
@@ -1198,26 +1160,30 @@ export function BuildSpecLibForm({
           }}
         >
           <div>
-        <label style={{ ...LABEL }}>Enzyme</label>
+        <label style={LABEL}>Enzyme</label>
         <select
           data-key="enzyme"
+          className="pio-input"
           value={params.customEnzyme ? CUSTOM_ENZYME : (enzymeByPattern(params.cleavageRegex)?.id ?? CUSTOM_ENZYME)}
           onChange={(e) => onEnzyme(e.target.value)}
           style={{
             width: '100%',
-            height: 36,
-            padding: '0 9px',
-            border: '1px solid #D6DAE1',
-            borderRadius: 9,
-            fontSize: 13,
-            color: '#1B2A4A',
-            background: '#fff',
-            boxSizing: 'border-box',
+            padding: '8px 34px 8px 10px',
+            border: '1px solid #D7DBE0',
+            borderRadius: 8,
+            font: "12.5px 'IBM Plex Sans'",
+            color: '#1A2230',
+            background: `#FFFFFF ${CHEVRON}`,
+            backgroundSize: '16px 16px',
+            cursor: 'pointer',
+            outline: 'none',
+            appearance: 'none',
+            WebkitAppearance: 'none',
           }}
         >
           {ENZYMES.map((e) => (
             <option key={e.id} value={e.id}>
-              {e.label} — {e.rule}
+              {e.label}: {e.rule}
             </option>
           ))}
           <option value={CUSTOM_ENZYME}>Custom cleavage rule…</option>
@@ -1226,7 +1192,7 @@ export function BuildSpecLibForm({
           <div>
             <label
               htmlFor="digest-specificity"
-              style={{ display: 'block', fontSize: 11, color: '#667085', marginBottom: 5 }}
+              style={LABEL}
             >
               Specificity
             </label>
@@ -1313,7 +1279,7 @@ export function BuildSpecLibForm({
             {cleavageNote.level === 'error' ? (
               cleavageNote.msg
             ) : !previewPeptides ? null : previewPeptides.length === 0 ? (
-              'No peptides — nothing survives these length limits.'
+              'No peptides. Nothing survives these length limits.'
             ) : (
               <>
                 {previewPeptides.length} peptide{previewPeptides.length === 1 ? '' : 's'} ·{' '}
@@ -1371,13 +1337,11 @@ export function BuildSpecLibForm({
             gap: 14,
           }}
         >
-          <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>
               N-terminal Met excision
             </div>
-            <div style={{ fontSize: 11.5, color: '#98A2B3' }}>
-              Include each protein N-terminal peptide both with and without its initiator Met
-            </div>
+            <InfoDot text="Include each protein N-terminal peptide both with and without its initiator Met." />
           </div>
           <Toggle
             on={params.ntermMetExcision}
@@ -1439,7 +1403,7 @@ export function BuildSpecLibForm({
             }}
           >
             Unmodified cysteine needs a fragment model and a retention-time model
-            trained on it — {freeCysOffenders.join(' and ')} {freeCysOffenders.length > 1 ? 'are' : 'is'} not.
+            trained on it, and {freeCysOffenders.join(' and ')} {freeCysOffenders.length > 1 ? 'are' : 'is'} not.
             {!modelAllowsFreeCys(params.predictionModel) &&
               PREDICTION_MODELS.filter((m) => modelAllowsFreeCys(m.id)).map((m) => (
                 <button
@@ -1505,20 +1469,16 @@ export function BuildSpecLibForm({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
           {(
             [
-              ['addDecoys', 'Add decoys', 'Decoy sequences for FDR control'],
-              ['includeContaminants', 'Include contaminants', 'Append the common contaminants set'],
-              ['predictFragments', 'Predict fragments', 'Deep model for fragment intensities'],
-              ['debugLogging', 'Debug logging', 'Verbose console output'],
+              ['addDecoys', 'Add decoys'],
+              ['includeContaminants', 'Include contaminants'],
+              ['debugLogging', 'Debug logging'],
             ] as const
-          ).map(([key, title, hint]) => (
+          ).map(([key, title]) => (
             <div
               key={key}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}
             >
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>{title}</div>
-                <div style={{ fontSize: 11.5, color: '#98A2B3' }}>{hint}</div>
-              </div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#344054' }}>{title}</div>
               <Toggle on={params[key]} fieldKey={key} onClick={() => onToggle(key)} />
             </div>
           ))}

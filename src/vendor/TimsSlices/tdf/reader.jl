@@ -12,8 +12,10 @@ struct TdfFile
     meta::Dict{String, String}
     frames::FrameTable
     dia::DiaScheme
+    pasef::Vector{Vector{DiaWindow}}   # DDA-PASEF isolation events per frame row (empty for other frames)
     mz_cal::LinearMzCal
     mz_cal_resid_ppm::Vector{Float64}
+    mz_temp_shift_ppm::Float64  # temperature shift (temperature_mz_shift_ppm) already corrected in mz_cal
     timebase_ns::Float64        # digitizer sample length = one TOF bin (MzCalibration.DigitizerTimebase)
     im_cal::LinearImCal
     ce_ramp::CeRamp
@@ -31,16 +33,19 @@ function open_tdf(dir::AbstractString)
     meta = read_global_metadata(db)
     frames = read_frames(db)
     dia = read_dia_scheme(db, frames)
+    pasef = read_pasef_events(db, frames)
     mzcal_id = isempty(frames.mz_calibration) ? 1 : Int(frames.mz_calibration[1])
     cal, resid = regressed_mz_cal(db, mzcal_id)
+    temp_ppm = temperature_mz_shift_ppm(db, mzcal_id)
+    cal = correct_mz_shift(cal, temp_ppm)
     timebase = Float64(first(DBInterface.execute(db, "SELECT DigitizerTimebase FROM MzCalibration WHERE Id=$mzcal_id"))[:DigitizerTimebase])
     imcal = boundary_im_cal(meta, frames)
-    ce = fit_ce_ramp(dia)
+    ce = fit_ce_ramp(dia, pasef)
     close(db)
     compression = parse(Int, get(meta, "TimsCompressionType", "2"))
     compression == 2 || error("only TimsCompressionType 2 is supported (file has $compression)")
     bin = open(joinpath(dir, "analysis.tdf_bin"), "r")
-    TdfFile(String(dir), meta, frames, dia, cal, resid, timebase, imcal, ce, bin, ReentrantLock(), filesize(bin), compression,
+    TdfFile(String(dir), meta, frames, dia, pasef, cal, resid, temp_ppm, timebase, imcal, ce, bin, ReentrantLock(), filesize(bin), compression,
             isempty(frames.num_scans) ? 0 : Int(maximum(frames.num_scans)),
             isempty(frames.num_peaks) ? 0 : Int(maximum(frames.num_peaks)))
 end
@@ -48,12 +53,16 @@ end
 n_frames(f::TdfFile) = length(f.frames)
 is_ms1(f::TdfFile, i::Integer) = f.frames.msms_type[i] == 0
 is_dia(f::TdfFile, i::Integer) = f.frames.msms_type[i] == 9
-"Rows of the frames that are converted: MS1 and diaPASEF MS2 frames, in order."
-valid_frames(f::TdfFile) = [i for i in 1:n_frames(f) if is_ms1(f, i) || is_dia(f, i)]
-"Windows of frame row i (MS1: one window over all scans)."
+is_pasef(f::TdfFile, i::Integer) = f.frames.msms_type[i] == 8
+"Rows of the frames that are converted: MS1, diaPASEF MS2 and DDA-PASEF MS2 frames, in order."
+valid_frames(f::TdfFile) = [i for i in 1:n_frames(f) if is_ms1(f, i) || is_dia(f, i) || is_pasef(f, i)]
+"""Windows of frame row i (MS1: one window over all scans; diaPASEF: the frame's window group; DDA-PASEF: the frame's
+isolation events, one precursor each)."""
 function windows(f::TdfFile, i::Integer)
     if is_ms1(f, i)
         return (DiaWindow(0, f.frames.num_scans[i], 0f0, 0f0, 0f0),)
+    elseif is_pasef(f, i)
+        return f.pasef[i]
     else
         g = f.dia.frame_group[i]
         g == 0 && error("frame $(f.frames.id[i]) has MsMsType 9 but no DiaFrameMsMsInfo row")

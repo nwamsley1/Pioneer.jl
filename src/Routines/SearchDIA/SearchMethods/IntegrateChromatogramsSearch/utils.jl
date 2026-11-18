@@ -91,6 +91,24 @@ function find_nearest_scan(scan_indices::AbstractVector{<:Integer}, target_scan:
     return nearest_idx
 end
 
+"""
+    nearest_im_in_cycle(cycle, im, k, target_im) -> Int
+
+Within the rows sharing row `k`'s cycle (contiguous: rows are sorted by RT), the row whose IM scan is nearest
+`target_im`.
+"""
+function nearest_im_in_cycle(cycle::AbstractVector, im::AbstractVector, k::Int, target_im::Int)
+    c = cycle[k]
+    lo = k; while lo > 1 && cycle[lo - 1] == c; lo -= 1; end
+    hi = k; while hi < length(cycle) && cycle[hi + 1] == c; hi += 1; end
+    best = k; bd = typemax(Int)
+    @inbounds for j in lo:hi
+        d = abs(Int(im[j]) - target_im)
+        d < bd && (bd = d; best = j)
+    end
+    return best
+end
+
 function sort_chromatograms_for_integration!(chromatograms::DataFrame, ::CombineTraces)
     nrow(chromatograms) == 0 && return chromatograms
     fast_df_sort!(chromatograms, [:precursor_idx, :rt])
@@ -122,12 +140,7 @@ compute_chromatogram_isotope_sets(trace_type::IsotopeTraceType) = seperateTraces
 # Explicit debug-only target list for writing a small set of chromatogram plots.
 # Plot generation is still gated by `DEBUG_CONSOLE_LEVEL[] >= 1`.
 const DEBUG_CHROM_TARGET_PRECURSOR_IDXS = Ref{Set{UInt32}}(Set{UInt32}())
-const DEBUG_CHROM_TARGET_PRECURSOR_IDX = DEBUG_CHROM_TARGET_PRECURSOR_IDXS
 
-@inline function debug_should_plot_chromatogram(precursor_idx::Integer)
-    return DEBUG_CONSOLE_LEVEL[] >= 1 &&
-        UInt32(precursor_idx) in DEBUG_CHROM_TARGET_PRECURSOR_IDXS[]
-end
 
 function debug_sanitize_chromatogram_filename(value::AbstractString)
     safe = replace(String(value), r"[^A-Za-z0-9]+" => "_")
@@ -424,6 +437,8 @@ function integrate_precursors(chromatograms::DataFrame,
                              isotopes_captured = nothing,
                              λ::Float32 = 1.0f0,
                              im_half_scans::Int = 0,
+                             rt_scale::Float32 = 0f0,
+                             apex_im = nothing,   # DDA MS1 on mobility data: per-PSM IM scan, seeds the 2D apex
                              )
     n_pad = Int64(0)
     rt_all = chromatograms[!, :rt]::AbstractVector{Float32}
@@ -485,6 +500,12 @@ function integrate_precursors(chromatograms::DataFrame,
                 apex_scan = find_nearest_scan(
                     @view(scan_idx_all[chrom_range]), apex_scan
                 )
+                # DDA MS1: the PSM is an MS2 slice outside this grid, so the nearest scan index only fixes the
+                # frame; take that frame's slice nearest the PSM's mobility as the seed
+                if use_2d && apex_im !== nothing
+                    apex_scan = nearest_im_in_cycle(@view(cycle_all[chrom_range]), @view(im_all[chrom_range]),
+                                                    apex_scan, Int(apex_im[i]))
+                end
 
                 if use_2d
                     peak_area[i], new_best_scan[i], points_integrated[i],
@@ -501,7 +522,8 @@ function integrate_precursors(chromatograms::DataFrame,
                         sc2d,
                         ws,
                         state,
-                        λ,
+                        λ;
+                        rt_scale = rt_scale,
                     )
                     reset!(state)
                     continue
@@ -522,6 +544,7 @@ function integrate_precursors(chromatograms::DataFrame,
                     λ,
                     min_fraction_transmitted = min_fraction_transmitted,
                     n_pad = n_pad,
+                    rt_scale = rt_scale,
                 )
                 reset!(state)
             end
@@ -948,6 +971,10 @@ end
 
 Attach the receiver chromatogram evidence consumed by post-integration MBR.
 The temporal trace is restricted to the exact peak-integration bounds.
+
+`seed_scans` (default `new_best_scan`) locates each PSM's point in the MS2 chromatograms. `apex_rt`, when given,
+sets the apex iRT from these RTs instead of the MS2 seed point. DDA quantifies from MS1, so its `new_best_scan` is an
+MS1 scan that never appears in the MS2 chromatograms: it seeds with the PSM's MS2 scan and takes the apex from MS1.
 """
 function add_mbr_integrated_spectra_to_psms!(
     passing_psms::DataFrame,
@@ -955,6 +982,8 @@ function add_mbr_integrated_spectra_to_psms!(
     rt_to_irt;
     bitvec_rank_table = nothing,
     scan_tic::Union{Nothing, Vector{Float32}} = nothing,
+    seed_scans::AbstractVector = passing_psms.new_best_scan,
+    apex_rt::Union{Nothing, AbstractVector{Float32}} = nothing,
 )
     n = nrow(passing_psms)
     for column in MBR_INTEGRATED_FRAGMENT_SQRT_COLUMNS
@@ -1050,13 +1079,19 @@ function add_mbr_integrated_spectra_to_psms!(
         bitvec_rank_table,
         scan_tic,
         passing_psms.precursor_idx,
-        passing_psms.new_best_scan,
+        seed_scans,
         passing_psms.scan_idx,
         passing_psms.integration_start_scan,
         passing_psms.integration_stop_scan,
         passing_psms.peak_area,
         use_separate_traces ? passing_psms.isotopes_captured : nothing,
     )
+    if apex_rt !== nothing
+        out_apex_irt = getproperty(passing_psms, MBR_INTEGRATED_APEX_IRT_COLUMN)::Vector{Float32}
+        @inbounds for row in 1:n
+            out_apex_irt[row] = isfinite(apex_rt[row]) ? Float32(rt_to_irt(apex_rt[row])) : NaN32
+        end
+    end
     return passing_psms
 end
 
@@ -1571,6 +1606,10 @@ function extract_chromatograms(
     ms_file_idx::Int64,
     chrom_type::CHROMATOGRAM;
     rhs_extended::Set{UInt32} = Set{UInt32}(),
+    ms1_rt_tol::Float32 = 0f0,   # MS1CHROM only: extraction half-width in minutes (0 = default)
+    ms1_rt_binned::Union{Nothing, RTBinnedTolerance} = nothing,   # MS1CHROM only: per-RT-bin half-widths
+    ms1_mass_err_model::Union{Nothing, AbstractMassErrorModel} = nothing,   # MS1CHROM only: nothing = tuning's model
+    ms1_im_window_k0::Float32 = CHROM_IM_WINDOW_K0,   # MS1CHROM only: mobility half-width of a precursor's candidacy
 )
     if typeof(chrom_type)==typeof(MS2CHROM())
         ms_order_select = 2
@@ -1607,15 +1646,29 @@ function extract_chromatograms(
         m
     end
 
+    # DDA MS1 traces on mobility data: a precursor counts in the MS1 slices within the extraction window
+    # (CHROM_IM_WINDOW_K0, as for MS2) around its best PSM's IM scan; the slices are kept for 2D integration.
+    ms1_im_scans = (_im_scans === nothing || precursor_im_map === nothing) ? 0 :
+        im_half_width_scans(ms1_im_window_k0, spectra, search_context, ms_file_idx)
+
     # One entry per scan, shared across threads. partition_scans gives each thread a DISJOINT
     # set of scan indices, so the writes never collide.
     scan_tic = zeros(Float32, length(spectra))
+    # MS1: the m/z ranges each MS1 scan measures (segmented / BoxCar MS1), shared read-only across threads
+    ms1_coverage = chrom_type isa MS1CHROM ? Ms1Coverage(spectra) : nothing
 
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn begin
             thread_id = first(thread_task)
             search_data = getSearchData(search_context)[thread_id]
 
+            if chrom_type isa MS1CHROM
+                return build_chromatograms(
+                    spectra, last(thread_task), precursor_set, precursor_rt_map, rt_index, search_context,
+                    search_data, params, ms_file_idx, chrom_type; ms1_rt_tol = ms1_rt_tol, ms1_rt_binned = ms1_rt_binned,
+                    precursor_im_map = precursor_im_map, im_window_scans = Float32(ms1_im_scans),
+                    ms1_mass_err_model = ms1_mass_err_model, ms1_coverage = ms1_coverage)
+            end
             return build_chromatograms(
                 spectra,
                 last(thread_task),
@@ -1634,6 +1687,8 @@ function extract_chromatograms(
             )
         end
     end
+    # MS1 builds return a DataFrame per thread; MS2 builds return row blocks
+    chrom_type isa MS1CHROM && return reduce(vcat, fetch.(tasks)), scan_tic
     thread_rows = reduce(vcat, fetch.(tasks))     # every thread's blocks, in thread order
     _diag_live("integration extract: $(length(thread_rows)) thread row buffers, $(sum(length, thread_rows)) rows")
     out = rows_to_table(thread_rows)
@@ -2294,6 +2349,12 @@ function process_final_psms!(
     psms[!,:peak_area] = peak_area
     psms[!,:peak_area_normalized] = peak_area_normalized
     psms[!,:charge] = charge
+    # DIA MS1 quantification (maxLFQ.ms1_quantification): an MS1 area that is zero or NaN is missing; it never
+    # drops a row -- MS2 decides which precursors are reported
+    if hasproperty(psms, :peak_area_ms1)
+        psms[!, :peak_area_ms1] = Union{Missing, Float32}[isfinite(x) && x > 0f0 ? Float32(x) : missing
+                                                          for x in psms.peak_area_ms1]
+    end
 
     return nothing
 end

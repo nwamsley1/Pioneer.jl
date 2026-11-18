@@ -37,14 +37,6 @@ Check if a column exists in the schema.
 """
 has_column(schema::FileSchema, col::Symbol) = col in schema.columns
 
-"""
-    get_column_or_default(df::DataFrame, schema::FileSchema, col::Symbol, default)
-
-Get a column from DataFrame or return default values if column doesn't exist.
-"""
-function get_column_or_default(df::DataFrame, schema::FileSchema, col::Symbol, default)
-    has_column(schema, col) ? df[!, col] : fill(default, nrow(df))
-end
 
 """
     validate_required_columns(schema::FileSchema, required::Set{Symbol})

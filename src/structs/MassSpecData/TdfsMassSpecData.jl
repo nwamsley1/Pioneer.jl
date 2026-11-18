@@ -160,7 +160,6 @@ getCenterMz(d::TdfsMassSpecData, i::Integer) = d.center_mz[i]::Union{Missing, Fl
 getIsolationWidthMz(d::TdfsMassSpecData, i::Integer) = d.isolation_width[i]::Union{Missing, Float32}
 getMsOrder(d::TdfsMassSpecData, i::Integer) = d.ms_order[i]::UInt8
 getCycleIdx(d::TdfsMassSpecData, i::Integer) = d.cycle_idx[i]::UInt32
-getPrecursorMz(d::TdfsMassSpecData, i::Integer) = getCenterMz(d, i)
 getCollisionEnergyEv(d::TdfsMassSpecData, i::Integer)::Float32 = d.collision_energy_ev[i]
 getScanHeader(::TdfsMassSpecData, ::Integer) = ""
 getScanNumber(::TdfsMassSpecData, i::Integer) = Int32(i)
@@ -182,3 +181,7 @@ getImSlope(d::TdfsMassSpecData) = d.im_slope
 getImCalibration(d::TdfsMassSpecData) = d.im_cal
 getFrameIds(d::TdfsMassSpecData) = d.frame_id
 getCollisionEnergyEvs(d::TdfsMassSpecData) = d.collision_energy_ev
+
+"File-level metadata a converter recorded in the `.tdfs` meta.json (e.g. `acquisition_mode`), as strings."
+getAcquisitionMetadata(d::TdfsMassSpecData) =
+    Dict{String, String}(k => string(v) for (k, v) in d.file.meta if v isa Union{AbstractString, Number, Bool})

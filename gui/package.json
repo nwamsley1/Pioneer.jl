@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "test:convert-args": "node scripts/test-convert-args.mjs"
+    "test:convert-args": "node scripts/test-convert-args.mjs",
+    "test:search-json": "node scripts/test-search-json.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.1.0",

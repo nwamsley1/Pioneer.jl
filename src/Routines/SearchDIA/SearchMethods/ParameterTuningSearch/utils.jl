@@ -304,7 +304,8 @@ function _pt_mass_err_thread_task(
     ion_list,
     precursor_idxs::Vector{UInt32},
     max_rank::Int64,
-) where {S<:SearchDataStructures, M<:AbstractMassErrorModel}
+    peak_select::PS,
+) where {S<:SearchDataStructures, M<:AbstractMassErrorModel, PS<:PeakSelection}
     thread_id = first(thread_task)
     sd = search_data[thread_id]
     corr_mz   = getScanCorrectedMz(sd)
@@ -329,7 +330,8 @@ function _pt_mass_err_thread_task(
             ion_list,
             precursor_idxs, scan_to_prec_idx[scan_idx],
             mem, scan_mz, scan_int, scan_rt;
-            max_rank = max_rank)
+            max_rank = max_rank,
+            peak_select = peak_select)
     end
 
     @view(getMassErrSamples(sd)[1:sample_idx])
@@ -344,14 +346,16 @@ function mass_error_search(
     search_data::AbstractVector{S},
     mem::M,
     params::P,
-    nce_model::NceModel{Float32}
+    nce_model::NceModel{Float32};
+    peak_select::PeakSelection = NearestPeak()
 ) where {
         M<:AbstractMassErrorModel,
         S<:SearchDataStructures,
         P<:SearchParameters
         }
     return mass_error_search(spectra, scan_idxs, precursor_idxs, ms_file_idx,
-                            spec_lib, search_data, mem, params, nce_model, MS2CHROM())
+                            spec_lib, search_data, mem, params, nce_model, MS2CHROM();
+                            peak_select = peak_select)
 end
 
 function mass_error_search(
@@ -364,7 +368,8 @@ function mass_error_search(
     mem::M,
     params::P,
     nce_model::NceModel{Float32},
-    ::MS2CHROM
+    ::MS2CHROM;
+    peak_select::PeakSelection = NearestPeak()
 ) where {
         M<:AbstractMassErrorModel,
         S<:SearchDataStructures,
@@ -388,7 +393,7 @@ function mass_error_search(
     tasks = map(thread_tasks) do thread_task
         Threads.@spawn _pt_mass_err_thread_task(
             thread_task, search_data, spectra, scan_to_prec_idx,
-            mem, ion_list, precursor_idxs, max_rank)
+            mem, ion_list, precursor_idxs, max_rank, peak_select)
     end
     fetch.(tasks)
 end
@@ -480,7 +485,8 @@ function get_matched_fragments(
     psms::DataFrame,
     search_context::SearchContext,
     params::P,
-    ms_file_idx::Int64
+    ms_file_idx::Int64;
+    peak_select::PeakSelection = NearestPeak()
 ) where {P<:FragmentIndexSearchParameters}
 
     return vcat(mass_error_search(
@@ -493,7 +499,8 @@ function get_matched_fragments(
         getMassErrorModel(search_context, ms_file_idx),
         params,
         getNceModel(search_context, ms_file_idx),
-        MS2CHROM()
+        MS2CHROM();
+        peak_select = peak_select
     )...)
 end
 
@@ -1006,124 +1013,6 @@ end
 
 # Fallback for SimpleMassErrorModel: no intensity plots
 generate_intensity_model_plots(::NamedTuple, ::SimpleMassErrorModel, ::String) = Plots.Plot[]
-
-"""
-    generate_fallback_rt_plot_in_memory(results, fname, search_context, ms_file_idx)
-
-Generates a diagnostic RT plot when no data is available (fallback/borrowed parameters).
-Returns the plot object without saving to disk.
-"""
-function generate_fallback_rt_plot_in_memory(
-    results::ParameterTuningSearchResults,
-    fname::String,
-    search_context::SearchContext,
-    ms_file_idx::Int64
-)
-    # Create an informative plot showing the fallback/borrowed status
-    p = Plots.plot(
-        title = fname * "\n⚠️ Using Fallback/Borrowed Parameters",
-        xlabel = "Retention Time RT (min)",
-        ylabel = "Indexed Retention Time iRT (min)",
-        size = (900, 900),
-        grid = true
-    )
-    
-    # Add identity line if using identity model
-    rt_model = getRtToIrtModel(results)
-    if isa(rt_model, IdentityModel)
-        rt_range = [0, 120]  # Default RT range for visualization
-        Plots.plot!(rt_range, rt_range, 
-                   lw=2, ls=:dash, color=:red,
-                   label="Identity Model (Fallback)")
-    else
-        # If borrowed, show the borrowed model
-        rt_range = LinRange(0, 120, 100)
-        Plots.plot!(rt_range, rt_model.(rt_range),
-                   lw=2, color=:blue,
-                   label="Borrowed RT Model")
-    end
-    
-    # Add text annotation explaining the situation
-    Plots.annotate!(60, 20, 
-                   text("Insufficient PSMs for RT calibration\n" *
-                        "Using conservative parameters", 
-                        :center, 10))
-    
-    return p  # Return plot for collection
-end
-
-"""
-    generate_fallback_mass_error_plot_in_memory(results, fname, search_context, ms_file_idx)
-
-Generates a diagnostic mass error plot when no data is available (fallback/borrowed parameters).
-Returns the plot object without saving to disk.
-"""
-function generate_fallback_mass_error_plot_in_memory(
-    results::ParameterTuningSearchResults,
-    fname::String,
-    search_context::SearchContext,
-    ms_file_idx::Int64
-)
-    mem = getMassErrorModel(results)
-    mass_offset = getMassOffset(mem)
-    left_tol = getLeftTol(mem)
-    right_tol = getRightTol(mem)
-    
-    # Create an informative plot showing the tolerances being used
-    p = Plots.plot(
-        title = fname * "\n⚠️ Using Fallback/Borrowed Parameters",
-        xlabel = "Count",
-        ylabel = "Mass Error (ppm)",
-        size = (900, 900),
-        ylim = (-max(left_tol, right_tol) - 10, max(left_tol, right_tol) + 10),
-        grid = true,
-        yflip = true,
-        orientation = :h
-    )
-    
-    # Draw tolerance boundaries
-    Plots.hline!([mass_offset], color=:black, lw=2, label="Mass Offset: $(round(mass_offset, digits=2)) ppm")
-    Plots.hline!([mass_offset - left_tol], color=:red, lw=1, ls=:dash, label="Lower Bound: -$(round(left_tol, digits=1)) ppm")
-    Plots.hline!([mass_offset + right_tol], color=:red, lw=1, ls=:dash, label="Upper Bound: +$(round(right_tol, digits=1)) ppm")
-    
-    # Add text annotation
-    Plots.annotate!(0, 0,
-                   text("Insufficient fragment matches\n" *
-                        "Tolerance: ±$(round((left_tol+right_tol)/2, digits=1)) ppm",
-                        :center, 10))
-    
-    return p  # Return plot for collection
-end
-
-# Legacy functions that save to disk (kept for backward compatibility)
-function generate_fallback_rt_plot(
-    results::ParameterTuningSearchResults,
-    plot_path::String,
-    fname::String,
-    search_context::SearchContext,
-    ms_file_idx::Int64
-)
-    p = generate_fallback_rt_plot_in_memory(results, fname, search_context, ms_file_idx)
-    savefig(p, plot_path)
-    return p
-end
-
-function generate_fallback_mass_error_plot(
-    results::ParameterTuningSearchResults,
-    plot_path::String,
-    fname::String,
-    search_context::SearchContext,
-    ms_file_idx::Int64
-)
-    p = generate_fallback_mass_error_plot_in_memory(results, fname, search_context, ms_file_idx)
-    savefig(p, plot_path)
-    return p
-end
-
-
-
-
-
 
 
 """

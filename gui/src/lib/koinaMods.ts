@@ -105,7 +105,8 @@ const FREE_CYS_MODELS = new Set(['prosit_2025_40ptm'])
 export interface RtModel {
   id: string
   label: string
-  note: string
+  /** Short citation shown beside the label in the model menu. */
+  cite?: string
   /** What it was trained on, in the same shape as a fragment model's list. */
   mods: KoinaMod[]
   /** Whether an unmodified cysteine is something it can predict. */
@@ -135,7 +136,7 @@ export const RT_MODELS: RtModel[] = [
   {
     id: 'chronologer',
     label: 'Chronologer',
-    note: 'Hydrophobic index (% acetonitrile); 17 common modifications.',
+    cite: 'Wilburn et al., 2023',
     mods: CHRONOLOGER_MODS,
     // Plain C is its own residue token in Chronologer's alphabet.
     freeCys: true,
@@ -143,7 +144,6 @@ export const RT_MODELS: RtModel[] = [
   {
     id: 'prosit_2024_irt_ptm',
     label: 'Prosit 2024 iRT (PTM)',
-    note: 'Prosit iRT scale; the PTM vocabulary of the Prosit PTM fragment models.',
     mods: PTM_MODS,
     freeCys: true,
   },

@@ -33,7 +33,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with `C
    - `setup_transmission!` populates `prec_trans_buf`
    - `frag_isotope_scale` applies per-pass scaling
 3. **Per-fragment loop**: rank filter → `getFragIsotopes!` → conservative half-width
-4. **Per-isotope loop**: `iso_mz_for` → `in_frag_mz_window` → `match_window` → `bsearch_hybrid` → `scan_for_nearest_in_window`
+4. **Per-isotope loop**: `iso_mz_for` → `in_frag_mz_window` → `match_window` → `bsearch_hybrid` → `scan_for_match(peak_select, …)` → `scan_for_nearest_in_window` (default `NearestPeak()`), or `scan_for_most_intense_in_window` for `MostIntensePeak()` (ParameterTuning's wide scout only; see `PeakSelection`)
 5. **Match recording**: `push_match!` / `push_miss!` into `FusedScratch`; `record_match!` (trait-dispatched) updates `unscored_psms`
 6. **Column finalize**: `finalize_column!` flushes the precursor's scratch into `Hs` in CSC order with per-(col,row) deduplication
 

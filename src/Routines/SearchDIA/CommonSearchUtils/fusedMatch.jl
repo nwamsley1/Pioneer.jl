@@ -518,6 +518,113 @@ function prepare_scan_peaks!(corrected::Vector{Float32},
 end
 
 """
+    PeakSelection
+
+Which peak `run_fused!` and `run_fused_masserr!` take when several peaks' windows cover a theoretical m/z. A
+singleton type passed as the `peak_select` keyword, so each choice compiles to its own loop (like `kind`):
+- `NearestPeak()` (default, every search): the peak nearest the theoretical m/z (`scan_for_nearest_in_window`).
+- `MostIntensePeak()`: the most intense peak (`scan_for_most_intense_in_window`). Used only by ParameterTuning's
+  wide scout, where the window is wide (WIDE_SCOUT_TOL_PPM) around an unknown bias: strong timsTOF peaks carry
+  weaker satellite centroids ~40 ppm away, so once the true offset passes ~20 ppm the nearest peak is a satellite
+  and the scout fails (CIC bioGUNE PXD055131 at -34 ppm).
+"""
+abstract type PeakSelection end
+struct NearestPeak <: PeakSelection end
+struct MostIntensePeak <: PeakSelection end
+
+"""
+    scan_for_match(peak_select, corrected_mz, obs_low, obs_high, start_idx, n_peaks, iso_mz,
+                   conservative_high, scan_int) -> (best_peak, best_abs, best_mz)
+
+The matched peak under `peak_select`: `scan_for_nearest_in_window` for `NearestPeak` (which ignores `scan_int`),
+`scan_for_most_intense_in_window` for `MostIntensePeak`.
+"""
+@inline scan_for_match(::NearestPeak, corrected_mz::Vector{Float32}, obs_low::Vector{Float32},
+                       obs_high::Vector{Float32}, start_idx::Int, n_peaks::Int, iso_mz::Float32,
+                       conservative_high::Float32, ::AbstractArray{<:Union{Missing, Float32}}) =
+    scan_for_nearest_in_window(corrected_mz, obs_low, obs_high, start_idx, n_peaks, iso_mz, conservative_high)
+
+@inline scan_for_match(::MostIntensePeak, corrected_mz::Vector{Float32}, obs_low::Vector{Float32},
+                       obs_high::Vector{Float32}, start_idx::Int, n_peaks::Int, iso_mz::Float32,
+                       conservative_high::Float32, scan_int::AbstractArray{<:Union{Missing, Float32}}) =
+    scan_for_most_intense_in_window(corrected_mz, obs_low, obs_high, start_idx, n_peaks, iso_mz,
+                                    conservative_high, scan_int)
+
+"""
+    scan_for_most_intense_in_window(corrected_mz, obs_low, obs_high, start_idx, n_peaks, iso_mz,
+                                    conservative_high, scan_int) -> (best_peak, best_abs, best_mz)
+
+As `scan_for_nearest_in_window` (same SIMD 8-wide scan, match mask and early stop), but among the matching peaks
+returns the most intense one instead of the nearest. A missing intensity counts as 0. Ties go to the first (lowest
+m/z) peak. `best_abs` is that peak's |corrected m/z - iso_mz|. Returns `(0, typemax(Float32), 0f0)` on no match.
+"""
+@inline function scan_for_most_intense_in_window(
+    corrected_mz::Vector{Float32},
+    obs_low::Vector{Float32},
+    obs_high::Vector{Float32},
+    start_idx::Int, n_peaks::Int,
+    iso_mz::Float32, conservative_high::Float32,
+    scan_int::AbstractArray{<:Union{Missing, Float32}})
+
+    best_peak = 0
+    best_int  = -Inf32
+    best_mz   = Float32(0)
+
+    iso_vec  = _fused_vbroadcast8(iso_mz)
+    stop_vec = _fused_vbroadcast8(conservative_high)
+
+    j = start_idx
+    # SIMD main loop — process 8 peaks per iteration.
+    @inbounds while j + 7 <= n_peaks
+        cmz_vec   = _fused_vload8(corrected_mz, j)
+        stop_mask = _fused_vcmple_mask(cmz_vec, stop_vec)
+        stop_mask == 0x00 && return _most_intense_result(best_peak, best_mz, iso_mz)
+
+        lo_vec = _fused_vload8(obs_low, j)
+        hi_vec = _fused_vload8(obs_high, j)
+        lo_mask = _fused_vcmple_mask(lo_vec, iso_vec)
+        hi_mask = _fused_vcmpge_mask(hi_vec, iso_vec)
+        match_mask = stop_mask & lo_mask & hi_mask
+
+        # Iterate set bits (ascending peak index); scalar intensity comparison per match.
+        m = match_mask
+        while m != 0x00
+            bit = trailing_zeros(m)
+            peak = j + bit
+            raw = scan_int[peak]
+            v = ismissing(raw) ? 0f0 : Float32(raw)
+            if v > best_int
+                best_int = v
+                best_peak = peak
+                best_mz = corrected_mz[peak]
+            end
+            m &= (m - UInt8(1))  # clear lowest set bit
+        end
+
+        stop_mask != 0xFF && return _most_intense_result(best_peak, best_mz, iso_mz)
+        j += 8
+    end
+
+    # Scalar tail for the final <8 peaks.
+    @inbounds while j <= n_peaks && corrected_mz[j] <= conservative_high
+        if obs_low[j] <= iso_mz && iso_mz <= obs_high[j]
+            raw = scan_int[j]
+            v = ismissing(raw) ? 0f0 : Float32(raw)
+            if v > best_int
+                best_int = v
+                best_peak = j
+                best_mz = corrected_mz[j]
+            end
+        end
+        j += 1
+    end
+    return _most_intense_result(best_peak, best_mz, iso_mz)
+end
+
+@inline _most_intense_result(best_peak::Int, best_mz::Float32, iso_mz::Float32) =
+    best_peak == 0 ? (0, typemax(Float32), Float32(0)) : (best_peak, abs(best_mz - iso_mz), best_mz)
+
+"""
     scan_for_nearest_in_window(corrected_mz, obs_low, obs_high,
                                 start_idx, n_peaks, iso_mz, conservative_high)
     -> (best_peak, best_abs, best_mz)
@@ -751,7 +858,7 @@ end
                scan_int, scan_irt, irt_tol,
                frag_mz_bounds, n_frag_isotopes, max_frag_rank,
                isotope_err_bounds, prec_estimation;
-               m_rank) -> (nmatches, nmisses)
+               m_rank, peak_select = NearestPeak()) -> (nmatches, nmisses)
 
 Fused per-precursor match+score+build. Replaces classic's
 `selectTransitions!` + `matchPeaks!` + `buildDesignMatrix!` +
@@ -806,8 +913,9 @@ function run_fused!(
     isotope_err_bounds::Tuple{I, I};
     m_rank::Int64 = 3,
     scan_idx::Int64 = 0,   # for blacklist lookup; 0 disables
-    scan_ev::Float32 = 0f0 # scan collision energy (eV) for CE-keyed NCE models; 0 = unknown
-) where {K<:FusedSearchKind, I<:Integer}
+    scan_ev::Float32 = 0f0, # scan collision energy (eV) for CE-keyed NCE models; 0 = unknown
+    peak_select::S = NearestPeak()  # see PeakSelection; MostIntensePeak only in ParameterTuning's wide scout
+) where {K<:FusedSearchKind, I<:Integer, S<:PeakSelection}
 
     reset!(Hs)
 
@@ -905,9 +1013,9 @@ function run_fused!(
                     start_idx = bsearch_hybrid(scan_corrected_mz, conservative_low, iso_anchor, n_peaks)
                     iso_anchor = start_idx  # tighten lo for the next iso
 
-                    best_peak, best_abs, best_mz = scan_for_nearest_in_window(
+                    best_peak, best_abs, best_mz = scan_for_match(peak_select,
                         scan_corrected_mz, scan_obs_low, scan_obs_high,
-                        start_idx, n_peaks, iso_mz, conservative_high)
+                        start_idx, n_peaks, iso_mz, conservative_high, scan_int)
 
                     if best_peak > 0
                         nmatches += 1
@@ -983,7 +1091,7 @@ Filter (matches classic MassErrEstimationStrategy):
                         ion_list,
                         precursors_passed, prec_range,
                         mem, scan_mz, scan_int;
-                        max_rank, min_ion_position) -> new_samples_idx
+                        max_rank, min_ion_position, peak_select = NearestPeak()) -> new_samples_idx
 
 Walks the filtered fragment set for each precursor in `prec_range`,
 matches the mono peak in `mem`'s window, writes a `MassErrSample`
@@ -1010,7 +1118,8 @@ function run_fused_masserr!(
     scan_int::AbstractArray{<:Union{Missing, Float32}},
     scan_rt::Float32;
     max_rank::Int = 6,
-    min_ion_position::Int = 4)
+    min_ion_position::Int = 4,
+    peak_select::S = NearestPeak()) where {S<:PeakSelection}
 
     fragments = getFragments(ion_list)
     n_peaks = peak_mz_len
@@ -1039,9 +1148,9 @@ function run_fused_masserr!(
 
             start_idx = bsearch_hybrid(scan_corrected_mz, conservative_low, lower, n_peaks)
 
-            best_peak, _, _ = scan_for_nearest_in_window(
+            best_peak, _, _ = scan_for_match(peak_select,
                 scan_corrected_mz, scan_obs_low, scan_obs_high,
-                start_idx, n_peaks, frag_mz, conservative_high)
+                start_idx, n_peaks, frag_mz, conservative_high, scan_int)
 
             if best_peak > 0
                 # Grow output buffer if needed (doubling).

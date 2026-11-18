@@ -64,10 +64,8 @@ export const NUM_SPECS: Record<string, NumSpec> = {
   maxCharge: { label: 'Max charge', min: 1, max: 4, step: 1, int: true },
   missedCleav: { label: 'Missed cleav.', min: 0, max: 9, step: 1, int: true },
   maxVarMods: { label: 'Max var. mods', min: 0, max: 5, step: 1, int: true },
-  // PioneerConverter's own defaults are 3 / 1000 / 128.
+  // convertRaw's own default is min(4, Julia threads).
   threadsPerFile: { label: 'Threads per file', min: 1, max: null, step: 1, int: true },
-  batchSize: { label: 'Batch size (scans)', min: 1, max: null, step: 1000, int: true },
-  scanChunkSize: { label: 'Scan chunk size', min: 1, max: null, step: 16, int: true },
   // convertMzML's own default is 2.
   concurrentFiles: {
     label: 'Files at a time',
@@ -75,16 +73,12 @@ export const NUM_SPECS: Record<string, NumSpec> = {
     max: null,
     step: 1,
     int: true,
-    info: 'How many .mzML files are converted at the same time. Each one is read and written whole, so this is bounded by disk and memory rather than by cores — the default of 2 is a deliberately conservative starting point.',
+    info: 'How many .mzML files are converted at the same time. Each one is read and written whole, so this is bounded by disk and memory rather than by cores. The default of 2 is a deliberately conservative starting point.',
   },
 }
 
-/** The numeric fields PioneerConverter reads. */
-export const CONVERT_NUM_KEYS = [
-  'threadsPerFile',
-  'batchSize',
-  'scanChunkSize',
-] as const
+/** The numeric fields convertRaw reads. */
+export const CONVERT_NUM_KEYS = ['threadsPerFile'] as const
 
 /** The numeric fields convertMzML reads. Deliberately disjoint from
  *  CONVERT_NUM_KEYS: the two converters share no tuning parameter, and
@@ -132,7 +126,7 @@ export function msDataNote(value: string, info: PathInfo): Note {
       ? NONE
       : {
           level: 'error',
-          msg: 'Unsupported type — Pioneer reads .raw, .mzML or .arrow (a folder is fine too).',
+          msg: 'Unsupported type. Pioneer reads .raw, .mzML or .arrow (a folder is fine too).',
         }
   }
   // A .tdfs / .scxs run is a folder, but it is one run, not a folder of them.
@@ -146,13 +140,13 @@ export function msDataNote(value: string, info: PathInfo): Note {
     if (info.d_count > 0) {
       return {
         level: 'error',
-        msg: `${info.d_count} Bruker .d folder${info.d_count > 1 ? 's' : ''} found and no .tdfs — convert them first.`,
+        msg: `${info.d_count} Bruker .d folder${info.d_count > 1 ? 's' : ''} found and no .tdfs. Convert them first.`,
       }
     }
     if (info.wiff_count > 0) {
       return {
         level: 'error',
-        msg: `${info.wiff_count} SCIEX .wiff file${info.wiff_count > 1 ? 's' : ''} found and no .scxs — convert them first.`,
+        msg: `${info.wiff_count} SCIEX .wiff file${info.wiff_count > 1 ? 's' : ''} found and no .scxs. Convert them first.`,
       }
     }
     return { level: 'error', msg: 'No .raw, .mzML, .arrow, .tdfs or .scxs data in this folder.' }
@@ -161,7 +155,7 @@ export function msDataNote(value: string, info: PathInfo): Note {
     // SearchDIA reads Arrow; .raw still needs converting first.
     return {
       level: 'warn',
-      msg: `${info.raw_count} .raw file${info.raw_count > 1 ? 's' : ''} found and no .arrow — convert them with ConvertRAW first.`,
+      msg: `${info.raw_count} .raw file${info.raw_count > 1 ? 's' : ''} found and no .arrow. Convert them on the Convert screen first.`,
     }
   }
   return NONE
@@ -184,7 +178,7 @@ export function pendingLibraryNote(
   if (note.level !== 'error') return note
   if (!isPendingLibrary(value, pendingLibraries)) return note
   if (info.exists) return note
-  return { level: 'warn', msg: 'Being built by a queued run — this search will wait for it.' }
+  return { level: 'warn', msg: 'Being built by a queued run. This search will wait for it.' }
 }
 
 /** Whether `value` names a library a queued or running build/download is about
@@ -216,13 +210,13 @@ export function libraryNote(value: string, info: PathInfo): Note {
   if (!info.is_pion_library) {
     return {
       level: 'error',
-      msg: 'This folder is not a spectral library — no precursors_table or detailed_fragments inside.',
+      msg: 'This folder is not a spectral library: no precursors_table or detailed_fragments inside.',
     }
   }
   if (info.extension !== 'poin') {
     return {
       level: 'warn',
-      msg: `Spectral libraries are normally named .poin — this one ends in .${info.extension || '(none)'}.`,
+      msg: `Spectral libraries are normally named .poin, but this one ends in .${info.extension || '(none)'}.`,
     }
   }
   return NONE
@@ -233,12 +227,12 @@ export function resultsNote(value: string, info: PathInfo): Note {
   if (info.error) return { level: 'error', msg: info.error }
   if (!info.exists) return NONE // created on demand
   if (info.is_file) {
-    return { level: 'error', msg: 'A file exists at this path — choose a folder.' }
+    return { level: 'error', msg: 'A file exists at this path. Choose a folder.' }
   }
   if (info.entry_count > 0) {
     return {
       level: 'warn',
-      msg: "This folder already exists and isn't empty — existing files may be overwritten.",
+      msg: "This folder already exists and isn't empty. Existing files may be overwritten.",
     }
   }
   return NONE
@@ -270,7 +264,7 @@ export function calibrationNote(value: string, info: PathInfo): Note {
   if (!value.trim()) {
     return {
       level: 'warn',
-      msg: 'No reference MS file — m/z bounds fall back to defaults (fragment 150–2020, precursor 390–1010) instead of being detected from your data.',
+      msg: 'No reference MS file, so m/z bounds fall back to defaults (fragment 150–2020, precursor 390–1010) instead of being detected from your data.',
     }
   }
   if (info.error) return { level: 'error', msg: info.error }
@@ -346,7 +340,7 @@ export function libPathNote(value: string, targetInfo: PathInfo): Note {
   if (targetInfo.exists && targetInfo.entry_count > 0) {
     return {
       level: 'warn',
-      msg: `${libraryTargetPath(value)} already exists — it will be overwritten.`,
+      msg: `${libraryTargetPath(value)} already exists and will be overwritten.`,
     }
   }
   return NONE
@@ -397,7 +391,7 @@ export function validateSearchRun(
         if (seen.has(name)) {
           return {
             key: 'msData',
-            msg: `Two of these files are named ${name}. Searched together they would share one folder — rename one, or search each file separately.`,
+            msg: `Two of these files are named ${name}. Searched together they would share one folder. Rename one, or search each file separately.`,
           }
         }
         seen.add(name)
@@ -553,7 +547,7 @@ export function modelSupportBlock(p: BuildParams): RunBlock | null {
     if (offenders.length) {
       return {
         key: modelAllowsFreeCys(p.predictionModel) ? 'rtModel' : 'fixedMods',
-        msg: `Unmodified cysteine needs a fragment model and a retention-time model trained on it — ${offenders.join(' and ')} ${offenders.length > 1 ? 'are' : 'is'} not. Add Carbamidomethyl on C, or switch model.`,
+        msg: `Unmodified cysteine needs a fragment model and a retention-time model trained on it, and ${offenders.join(' and ')} ${offenders.length > 1 ? 'are' : 'is'} not. Add Carbamidomethyl on C, or switch model.`,
       }
     }
   }
@@ -705,12 +699,12 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
   const other = mzml ? info.raw_count : info.mzml_count
   const otherLabel = mzml ? '.raw' : '.mzML'
 
-  if (info.is_file) return { level: 'error', msg: 'That is a file — switch to Files mode.' }
+  if (info.is_file) return { level: 'error', msg: 'That is a file. Switch to Files mode.' }
   if (count === 0) {
     return {
       level: 'error',
       msg: other
-        ? `No ${label} files in this folder, but ${other} ${otherLabel} file${other > 1 ? 's' : ''} — switch the format to ${otherLabel}.`
+        ? `No ${label} files in this folder, but ${other} ${otherLabel} file${other > 1 ? 's' : ''}. Switch the format to ${otherLabel}.`
         : `No ${label} files in this folder.`,
     }
   }
@@ -725,12 +719,12 @@ export function convertInputNote(p: ConvertParams, info: PathInfo): Note {
  *  in the folder. */
 export function convertOutputNote(p: ConvertParams, info: PathInfo): Note {
   if (!p.outputDir.trim()) return NONE // converter defaults to <input_dir>/arrow_out
-  if (info.is_file) return { level: 'error', msg: 'A file exists at this path — choose a folder.' }
+  if (info.is_file) return { level: 'error', msg: 'A file exists at this path. Choose a folder.' }
   if (p.format === 'sciex') {
     return info.scxs_count > 0
       ? {
           level: 'warn',
-          msg: `This folder already holds ${info.scxs_count} .scxs run${info.scxs_count > 1 ? 's' : ''} — a run of the same name will be overwritten.`,
+          msg: `This folder already holds ${info.scxs_count} .scxs run${info.scxs_count > 1 ? 's' : ''}. A run of the same name will be overwritten.`,
         }
       : NONE
   }
@@ -738,7 +732,7 @@ export function convertOutputNote(p: ConvertParams, info: PathInfo): Note {
     return info.tdfs_count > 0
       ? {
           level: 'warn',
-          msg: `This folder already holds ${info.tdfs_count} .tdfs run${info.tdfs_count > 1 ? 's' : ''} — a run of the same name will be overwritten.`,
+          msg: `This folder already holds ${info.tdfs_count} .tdfs run${info.tdfs_count > 1 ? 's' : ''}. A run of the same name will be overwritten.`,
         }
       : NONE
   }
@@ -754,7 +748,7 @@ export function convertOutputNote(p: ConvertParams, info: PathInfo): Note {
     }
     return {
       level: 'warn',
-      msg: `This folder already holds ${info.arrow_count} .arrow file${info.arrow_count > 1 ? 's' : ''} — they may be overwritten. Enable "Skip existing" to keep them.`,
+      msg: `This folder already holds ${info.arrow_count} .arrow file${info.arrow_count > 1 ? 's' : ''}. They may be overwritten. Enable "Skip existing" to keep them.`,
     }
   }
   return NONE
@@ -772,7 +766,7 @@ export function validateDownloadRun(p: DownloadParams, targetExists: boolean): R
   if (targetExists && !p.force) {
     return {
       key: 'downloadDest',
-      msg: `${p.selected} already exists in that folder. Turn on “Replace an existing copy”, or choose another folder.`,
+      msg: `${p.selected} already exists in that folder. Turn on “Overwrite if already downloaded”, or choose another folder.`,
     }
   }
   return null

@@ -680,15 +680,24 @@ function applyNormalization!(
         # readers assume every file carries the same schema.
         correction_spline = get(corrections, fpath, nothing)
         if correction_spline === nothing
-            psms[!, norm_quant_col] = Float64.(psms[!, quant_col])
+            vals = psms[!, quant_col]
+            psms[!, norm_quant_col] = any(ismissing, vals) ?
+                Union{Missing, Float64}[ismissing(x) ? missing : Float64(x) for x in vals] : Float64.(vals)
             writeArrow(fpath, psms)
             continue
         end
         n = size(psms, 1)
-        norm_vals = Vector{Float64}(undef, n)
+        vals = psms[!, quant_col]
+        # MS1 areas (peak_area_ms1) are missing where there was no MS1 signal; keep them missing
+        norm_vals = any(ismissing, vals) ? Vector{Union{Missing, Float64}}(undef, n) : Vector{Float64}(undef, n)
         for i in range(1, n)
+            x = vals[i]
+            if ismissing(x)
+                norm_vals[i] = missing
+                continue
+            end
             hc = correction_spline(psms[i, :irt_obs])
-            norm_vals[i] = 2^(log2(max(psms[i, quant_col], 0.0)) - hc)
+            norm_vals[i] = 2^(log2(max(x, 0.0)) - hc)
         end
         psms[!, norm_quant_col] = norm_vals
         writeArrow(fpath, psms)

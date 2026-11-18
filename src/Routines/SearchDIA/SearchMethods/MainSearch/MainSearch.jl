@@ -429,7 +429,8 @@ function _mainsearch_best_in_memory!(
         @alloc_bucket "train_lgbm_for_irt_refinement" train_lgbm_for_irt_refinement(
             psms,
             results.lgbm_buffers;
-            features = model_features(PRESCORE_FEATURES, has_ion_mobility(search_context)),
+            features = model_features(PRESCORE_FEATURES, has_ion_mobility(search_context);
+                                      dda = is_dda_file(search_context, ms_file_idx)),
         )
     t_lgbm_end = time()
 

@@ -1,7 +1,6 @@
 //! Locating the packaged Pioneer distribution and running its executables.
 //!
-//! The distribution layout we expect (as produced by PackageCompiler, plus the
-//! .NET converter added at packaging time):
+//! The distribution layout we expect (as produced by PackageCompiler):
 //!
 //! ```text
 //! <pioneer_home>/
@@ -10,8 +9,8 @@
 //!     bin/BuildSpecLib
 //!     bin/GetSearchParams
 //!     bin/GetBuildLibParams
-//!     bin/convertMzML         Julia, ships with the CLI tools
-//!     bin/PioneerConverter    separate .NET 8 repo
+//!     bin/convertMzML
+//!     bin/convertRaw
 //!     lib/
 //! ```
 
@@ -30,12 +29,12 @@ pub enum Command {
     SearchDia,
     BuildSpecLib,
     DownloadSpecLib,
+    /// Thermo `.raw` files to `.arrow` runs: Pioneer's Julia `convertRaw`
+    /// (SpectrumDecoder).
     ConvertRaw,
     /// The other half of the ConvertRAW page. Same destination as ConvertRaw --
-    /// an Arrow file SearchDIA can read -- but a different program: Thermo
-    /// `.raw` needs the .NET converter, `.mzML` is handled by Pioneer's own
-    /// Julia one. The page picks between them; they are separate here because
-    /// they are separate binaries with separate flags and separate environments.
+    /// an Arrow file SearchDIA can read -- from `.mzML` input, through Pioneer's
+    /// Julia `convertMzML`. A separate binary with its own flags.
     ConvertMzml,
     /// Bruker timsTOF `.d` bundles to `.tdfs` runs: Pioneer's Julia
     /// `convertBruker` (TimsSlices). A third converter because it is a third
@@ -53,7 +52,7 @@ impl Command {
             Command::SearchDia => "SearchDIA",
             Command::BuildSpecLib => "BuildSpecLib",
             Command::DownloadSpecLib => "DownloadSpecLib",
-            Command::ConvertRaw => "PioneerConverter",
+            Command::ConvertRaw => "convertRaw",
             Command::ConvertMzml => "convertMzML",
             Command::ConvertBruker => "convertBruker",
             Command::ConvertSciex => "convertSciex",
@@ -71,13 +70,6 @@ impl Command {
             Command::ConvertBruker => "convert-bruker",
             Command::ConvertSciex => "convert-sciex",
         }
-    }
-
-    /// Julia-based executables need JULIA_NUM_THREADS; the .NET converter does
-    /// not. `convertMzML` is Julia, so it does -- it is the one converter that
-    /// honours the sidebar thread count.
-    pub fn is_julia(self) -> bool {
-        !matches!(self, Command::ConvertRaw)
     }
 }
 
@@ -176,7 +168,7 @@ fn resolve_home_with_installed(
     Err(format!(
         "No Pioneer distribution found. Looked in: {}. \
          Install Pioneer, or set PIONEER_HOME to an unpacked distribution.",
-        if tried.is_empty() { "nowhere — no candidates configured".into() } else { tried.join("; ") }
+        if tried.is_empty() { "nowhere (no candidates configured)".into() } else { tried.join("; ") }
     ))
 }
 

@@ -38,6 +38,8 @@
   --color-action-ink: var(--action-ink);
   --font-sans: "Schibsted Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Chart text: plain, like a journal figure. */
+  --font-figure: Arial, "Helvetica Neue", Helvetica, sans-serif;
 }
 
 html {

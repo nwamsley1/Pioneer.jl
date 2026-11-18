@@ -164,7 +164,8 @@ function WHSmooth!(ws::WHWorkspace,
                     m::Int,
                     n_pad::Int64,
                     min_fraction_transmitted::Float32,
-                    λ::Float32)
+                    λ::Float32;
+                    rt_scale::Float32 = 0f0)
 
     b  = ws.b
     u2 = ws.u2
@@ -217,8 +218,10 @@ function WHSmooth!(ws::WHWorkspace,
         x[i] = last_rt + (default_spacing * (i - (n_pad + m)))
     end
 
-    # normalize by RT width in-place
-    rt_width = last_rt-start_rt
+    # normalize by RT width in-place. `rt_scale > 0` fixes the divisor instead, so the smoothing
+    # strength is set in RT units and does not grow with the extraction window (the penalty on
+    # k-th differences scales as width^(2k): a 3x wider window is 3^6 = 729x smoother at order 3).
+    rt_width = rt_scale > 0f0 ? rt_scale : last_rt-start_rt
     @inbounds for i in range(1, n)
         x[i] /= rt_width
     end
@@ -601,7 +604,8 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
                                 debug_apex_scan::Union{Nothing, Int64} = nothing,
                                 forced_boundary_start_scan::UInt32 = UInt32(0),
                                 forced_boundary_stop_scan::UInt32 = UInt32(0),
-                                boundary_floor::Int = 2)
+                                boundary_floor::Int = 2,
+                                rt_scale::Float32 = 0f0)
 
     m = length(rt_col)
     # Helper functions (WHSmooth!, fillU2!, getApexScan, getIntegrationBounds!,
@@ -610,7 +614,7 @@ function integrate_chrom(rt_col::AbstractVector{<:AbstractFloat},
 
     # Whittaker-Henderson smoothing. `fraction_col` corrects transmitted
     # precursor signal and controls observation weights.
-    WHSmooth!(ws, intensity_col, fraction_col, rt_col, m, n_pad, min_fraction_transmitted, λ)
+    WHSmooth!(ws, intensity_col, fraction_col, rt_col, m, n_pad, min_fraction_transmitted, λ; rt_scale = rt_scale)
 
     # Local aliases to workspace vectors (concrete Vector{Float32}, no SubArray views)
     n_active = m + 2*n_pad
@@ -919,7 +923,8 @@ function integrate_chrom_2d(
     sc::Chrom2DScratch,
     ws::WHWorkspace,
     state::Chromatogram,
-    λ::Float32,
+    λ::Float32;
+    rt_scale::Float32 = 0f0,   # fixed WH smoothing scale (min) for the RT-bounds picker (DDA MS1); 0 = window-relative
 )
     n = length(rt)
     n == 0 && return (0.0f0, UInt32(0), UInt32(0), UInt32(0), UInt32(0), false)
@@ -992,7 +997,7 @@ function integrate_chrom_2d(
     resize!(sc.local_scan, nrow)
     @inbounds for i in 1:nrow; sc.local_scan[i] = Int32(i); end
     r = integrate_chrom(sc.row_rt, sc.local_scan, sc.marginal, sc.ones_buf, ar, ws, state,
-                        Float32(avg_cycle_time), λ; n_pad = 0)
+                        Float32(avg_cycle_time), λ; n_pad = 0, rt_scale = rt_scale)
     reset!(state)
     lo_r = r[4] == UInt32(0) ? max(1, ar - 2) : Int(r[4])
     hi_r = r[5] == UInt32(0) ? min(nrow, ar + 2) : Int(r[5])

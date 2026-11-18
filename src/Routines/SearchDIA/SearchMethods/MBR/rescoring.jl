@@ -312,14 +312,48 @@ function _mbr_candidate_mask_kernel(
     return candidates
 end
 
-function _mbr_available_feature_sets(frame::DataFrame; ion_mobility::Bool = true)
+"""Testing: transfer-model features left out, from `PIONEER_MBR_DROP_FEATURES` (comma-separated; receiver/shared
+names, or paired stems without the `_true` suffix)."""
+_mbr_env_dropped_features() =
+    Set(filter(!isempty, strip.(split(get(ENV, "PIONEER_MBR_DROP_FEATURES", ""), ","))))
+
+"""
+    _mbr_dump_features(dir, source, candidates, true_features, false_features)
+
+Testing (`PIONEER_MBR_FEATURE_DUMP=<dir>`): write the transfer model's input to `<dir>/mbr_features_<n>.arrow`, one
+row per candidate and pairing block (`block` 0 = the true pairing, 1.. = counterfactuals), columns named as the true
+features, plus `target` and `precursor_idx`.
+"""
+function _mbr_dump_features(dir::AbstractString, source, candidates::DataFrame, true_features, false_features)
+    n = nrow(candidates)
+    mkpath(dir)
+    parts = DataFrame[]
+    for block in 0:length(false_features)
+        m = _mbr_gather_feature_rows(source, true_features, false_features, collect((block * n + 1):((block + 1) * n)), n)
+        d = DataFrame(m, true_features)
+        d[!, :block] = fill(UInt8(block), n)
+        d[!, :target] = Vector{Bool}(candidates.target)
+        hasproperty(candidates, :precursor_idx) && (d[!, :precursor_idx] = Vector{UInt32}(candidates.precursor_idx))
+        push!(parts, d)
+    end
+    path = joinpath(dir, "mbr_features_$(n).arrow")
+    Arrow.write(path, reduce(vcat, parts))
+    @user_info "MBR feature dump: $(n) candidates, $(length(true_features)) features -> $path"
+    return nothing
+end
+
+function _mbr_available_feature_sets(frame::DataFrame; ion_mobility::Bool = true, dda::Bool = false)
     true_features = Symbol[]
     false_features = [
         Symbol[] for _ in 1:MBR_N_COUNTERFACTUALS
     ]
+    dropped = _mbr_env_dropped_features()
     for feature in MBR_FTR_FEATURES_TRUE
         hasproperty(frame, feature) || continue
         ion_mobility || !(feature in MBR_ION_MOBILITY_FEATURES) || continue
+        dda && feature in MBR_DDA_EXCLUDED_FEATURES && continue
+        name = String(feature)
+        (name in dropped || replace(name, r"_true$" => "") in dropped) && continue
         if feature in MBR_RECEIVER_FEATURES ||
            feature in MBR_SHARED_FEATURES
             all_present = all(
@@ -502,19 +536,6 @@ function _mbr_iteration_metrics(
     )
 end
 
-function _mbr_evenly_spaced_sample(
-    rows::Vector{Int},
-    limit::Int,
-)
-    limit >= 0 || throw(ArgumentError("MBR training limit must be nonnegative"))
-    length(rows) <= limit && return copy(rows)
-    limit == 0 && return Int[]
-    n = length(rows)
-    return Int[
-        rows[fld((2 * sample_idx - 1) * n, 2 * limit) + 1]
-        for sample_idx in 1:limit
-    ]
-end
 
 """
     _mbr_sample_positions(n, limit) -> Vector{Int}
@@ -1185,6 +1206,7 @@ function apply_postintegration_mbr_rescoring!(
     frame_is_candidates::Bool = false,
     feature_source::Union{Nothing, _MBRFeatureStore} = nothing,
     ion_mobility::Bool = true,
+    dda::Bool = false,
 )
     n = nrow(frame)
     frame[!, :mbr_recovered] = falses(n)
@@ -1263,8 +1285,12 @@ function apply_postintegration_mbr_rescoring!(
         throw(ArgumentError("Stored MBR features require a candidate-only frame"))
     feature_source === nothing && _mbr_add_hellinger_contrasts!(candidates)
     true_features, false_features = _mbr_available_feature_sets(
-        feature_source === nothing ? candidates : feature_source.schema; ion_mobility)
+        feature_source === nothing ? candidates : feature_source.schema; ion_mobility, dda)
     @debug_l1 "MBR transfer model feature preparation: rows=$(nrow(candidates)), features=$(length(true_features)), elapsed=$(round(time() - preparation_started; digits=2))s"
+    let dump_dir = get(ENV, "PIONEER_MBR_FEATURE_DUMP", "")   # testing: the model's input table
+        isempty(dump_dir) || _mbr_dump_features(dump_dir, feature_source === nothing ? candidates : feature_source,
+                                                candidates, true_features, false_features)
+    end
     best_state, present = _mbr_semisupervised_oof(
         candidates,
         true_features,

@@ -184,7 +184,6 @@ struct ArrowTableReference <: MassSpecDataReference
 end
 
 
-
 """
 Basic search data structure for library searches.
 Contains pre-allocated arrays and intermediate data structures.
@@ -342,6 +341,9 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
     # path so BitVec's adaptive while loop doesn't re-allocate ~50–100 MB per batch.
     frag_index_scratch::FragIndexScratch
 
+    # Per-file DDA acquisition, decided at search start (detect_acquisition_modes!, acquisition_mode.jl).
+    dda_files::Dict{Int64, Bool}
+
     # Constructor
     function SearchContext(
         spec_lib::L,
@@ -381,6 +383,7 @@ mutable struct SearchContext{L<:SpectralLibrary,M<:MassSpecDataReference}
             Dict{Int64, Vector{Bool}}(),  # Initialize bitvec_filter
             Dict{Int64, Vector{UInt16}}(), # Initialize bitvec_excess_rank
             FragIndexScratch(n_threads),  # reusable frag-index scratch buffers
+            Dict{Int64, Bool}(),  # dda_files
         )
     end
 end
@@ -438,9 +441,43 @@ has_ion_mobility(sc::SearchContext) = any(is_tdfs_path, getMSData(sc).file_paths
 # searches without ion mobility leave them out of the LightGBM models.
 const ION_MOBILITY_FEATURES = (:im_error, :n_scans_in_window, :weight_frac_in_cycle)
 
-"`features` as a Vector, without `ION_MOBILITY_FEATURES` unless the search has ion mobility."
-model_features(features, ion_mobility::Bool) =
-    ion_mobility ? collect(features) : filter(f -> !(f in ION_MOBILITY_FEATURES), collect(features))
+# PSM-model features built on a precursor's MS2 elution profile. DDA fragments a precursor in one scan (Orbitrap/Astral)
+# or a few (DDA-PASEF): they are constant on Astral and weak on timsTOF. 250 pg Astral/timsTOF 15/5 min without them:
+# Astral identical, timsTOF +1.2/+4.7% precursors (union), quantification unchanged.
+const DDA_EXCLUDED_SCORE_FEATURES = (
+    :frag_apex_dispersion_irt, :n_correlated_fragments, :n_correlated_fragments_bitvec_rank,
+    :frag_corr_strength, :frag_corr_effective_n, :frag_corr_best_m0,
+    :irt_fwhm, :smoothness, :n_contiguous_scans, :ms1_weight_apex_to_m0_apex_irt,
+)
+
+"""`features` as a Vector, without `ION_MOBILITY_FEATURES` unless the search has ion mobility, without
+`DDA_EXCLUDED_SCORE_FEATURES` on DDA data, and without any named in `PIONEER_SCORE_DROP_FEATURES` (testing;
+comma-separated, applies to both PSM scoring models)."""
+function model_features(features, ion_mobility::Bool; dda::Bool = false)
+    dropped = Set(Symbol.(filter(!isempty, strip.(split(get(ENV, "PIONEER_SCORE_DROP_FEATURES", ""), ",")))))
+    return filter(f -> (ion_mobility || !(f in ION_MOBILITY_FEATURES)) && !(dda && f in DDA_EXCLUDED_SCORE_FEATURES) &&
+                       !(f in dropped), collect(features))
+end
+
+"Whether any file of the search is DDA (`dda_files`, decided at search start)."
+any_dda(sc::SearchContext) = any(values(sc.dda_files))
+
+"""
+    dump_score_features(stage, psms, features)
+
+Testing (`PIONEER_SCORE_FEATURE_DUMP=<dir>`): write a sample (at most 50,000 rows) of a PSM scoring model's input, the
+`features` present in `psms` plus `target`, to `<dir>/<stage>_<rows>_<id>.arrow`.
+"""
+function dump_score_features(stage::AbstractString, psms::DataFrame, features)
+    dir = get(ENV, "PIONEER_SCORE_FEATURE_DUMP", "")
+    (isempty(dir) || nrow(psms) == 0 || !hasproperty(psms, :target)) && return nothing
+    mkpath(dir)
+    cols = unique(vcat(Symbol[f for f in features if hasproperty(psms, f)], [:target]))
+    n = nrow(psms)
+    rows = n <= 50_000 ? collect(1:n) : sort(randperm(MersenneTwister(1), n)[1:50_000])
+    Arrow.write(joinpath(dir, "$(stage)_$(n)_$(time_ns()).arrow"), psms[rows, cols])
+    return nothing
+end
 getParsedFileName(s::ArrowTableReference, ms_file_idx::Int64) = s.file_id_to_name[ms_file_idx]
 
 # Add length method for ArrowTableReference
@@ -453,9 +490,6 @@ end
 
 # Getter methods
 getFileIdToName(ref::ArrowTableReference, index::Int) = ref.file_id_to_name[index]
-getMainSearchPsms(ref::ArrowTableReference, index::Int) = ref.main_search_psms[index]
-getFragmentIndexMatches(ref::ArrowTableReference, index::Int) = ref.fragment_index_matches[index]
-getFilteredFragmentMatches(ref::ArrowTableReference, index::Int) = ref.filtered_fragment_matches[index]
 getSecondPassPsms(ref::ArrowTableReference, index::Int) = ref.second_pass_psms[index]
 
 """
@@ -479,27 +513,16 @@ function getSecondPassPsmsFold(ref::ArrowTableReference, index::Int, fold::UInt8
     return isempty(base) ? "" : "$(base)_fold$(fold).arrow"
 end
 getPassingPsms(ref::ArrowTableReference, index::Int) = ref.passing_psms[index]
-getPassingProteins(ref::ArrowTableReference, index::Int) = ref.passing_proteins[index]
 getRtIndex(ref::ArrowTableReference, index::Int) = ref.rt_index_paths[index]
-getParsedFileNames(ref::ArrowTableReference) = ref.file_id_to_name
 
 getFilePaths(ref::ArrowTableReference) = ref.file_paths
 
 getFileIdToName(ref::ArrowTableReference) = ref.file_id_to_name
-getMainSearchPsms(ref::ArrowTableReference) = ref.main_search_psms
-getFragmentIndexMatches(ref::ArrowTableReference) = ref.fragment_index_matches
-getFilteredFragmentMatches(ref::ArrowTableReference) = ref.filtered_fragment_matches
 getSecondPassPsms(ref::ArrowTableReference) = ref.second_pass_psms
 getPassingPsms(ref::ArrowTableReference) = ref.passing_psms
-getPassingProteins(ref::ArrowTableReference) = ref.passing_proteins
 getRtIndex(ref::ArrowTableReference) = ref.rt_index_paths
 
 
-# Setter methods
-setFileIdToName!(ref::ArrowTableReference, index::Int, value::String) = ref.file_id_to_name[index] = value
-setMainSearchPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.main_search_psms[index] = value
-setFragmentIndexMatches!(ref::ArrowTableReference, index::Int, value::String) = ref.fragment_index_matches[index] = value
-setFilteredFragmentMatches!(ref::ArrowTableReference, index::Int, value::String) = ref.filtered_fragment_matches[index] = value
 setSecondPassPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.second_pass_psms[index] = value
 setPassingPsms!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_psms[index] = value
 setPassingProteins!(ref::ArrowTableReference, index::Int, value::String) = ref.passing_proteins[index] = value
@@ -507,19 +530,13 @@ setRtIndex!(ref::ArrowTableReference, index::Int, value::String) = ref.rt_index_
 
 # SearchParameters interface getters
 getFragErrQuantile(fsp::SearchParameters)      = fsp.frag_err_quantile
-getFragTolPpm(fsp::SearchParameters)           = fsp.frag_tol_ppm
 getIRTTol(fsp::SearchParameters)               = fsp.irt_tol
 getIsotopeErrBounds(fsp::SearchParameters)      = fsp.isotope_err_bounds
-getMinFractionTransmitted(fsp::SearchParameters) = fsp.min_fraction_transmitted
 getMaxBestRank(fsp::SearchParameters)           = fsp.max_best_rank
 getMaxFragRank(fsp::SearchParameters)           = fsp.max_frag_rank
-getMaxPresearchIters(fsp::SearchParameters)    = fsp.max_presearch_iters
-getMaxQVal(fsp::SearchParameters)              = fsp.max_q_val
 getMinIndexSearchScore(fsp::SearchParameters)   = fsp.min_index_search_score
 getPrefilterMinScanCount(::FragmentIndexSearchParameters) = 0
-getMinLog2MatchedRatio(fsp::SearchParameters)   = fsp.min_log2_matched_ratio
 getMinPsms(fsp::SearchParameters)              = fsp.min_psms
-getMinSpectralContrast(fsp::SearchParameters)   = fsp.min_spectral_contrast
 getMinTopNofM(fsp::SearchParameters)            = fsp.min_topn_of_m
 getNFragIsotopes(fsp::SearchParameters)         = fsp.n_frag_isotopes
 getOutlierThreshold(fsp::SearchParameters)     = fsp.spline_fit_outlier_sd
@@ -545,7 +562,6 @@ getTuningUnscoredPsms(s::SearchDataStructures) = s.tuning_unscored_psms
 getTuningScoredPsms(s::SearchDataStructures) = s.tuning_scored_psms
 
 getPrecIds(s::SearchDataStructures) = s.prec_ids
-getWeights(s::SearchDataStructures) = s.weights
 getResiduals(s::SearchDataStructures) = s.residuals
 getIsotopes(s::SearchDataStructures) = s.isotopes
 getPrecursorTransmission(s::SearchDataStructures) = s.precursor_transmission
@@ -555,7 +571,6 @@ getScanCorrectedMz(s::SearchDataStructures) = s.scan_corrected_mz
 getScanObsLow(s::SearchDataStructures) = s.scan_obs_low
 getScanObsHigh(s::SearchDataStructures) = s.scan_obs_high
 getDecodeBuffer(s::SearchDataStructures) = s.decode_buf
-getTuningResults(s::SearchDataStructures) = s.tuning_results
 getTempWeights(s::SimpleLibrarySearch) = s.temp_weights
 getColNorm2(s::SimpleLibrarySearch) = s.colnorm2
 getPrecursorWeights(s::SimpleLibrarySearch) = s.precursor_weights
@@ -567,39 +582,21 @@ SearchContext Getters and Setters
 ==========================================================#
 
 
-# Simple getters
-getNThreads(s::SearchContext) = s.n_threads
-getNPrecursors(s::SearchContext) = s.n_precursors
-getBufferSize(s::SearchContext) = s.buffer_size
 getMassSpecData(s::SearchContext) = s.mass_spec_data_reference
 getSpecLib(s::SearchContext) = s.spec_lib
 getSearchData(s::SearchContext) = s.temp_structures
 getDataOutDir(s::SearchContext) = s.data_out_dir[]
-getQcPlotfolder(s::SearchContext) = s.qc_plot_folder[]
 getRtAlignPlotFolder(s::SearchContext) = s.rt_alignment_plot_folder[]
 getMassErrPlotFolder(s::SearchContext) = s.mass_err_plot_folder[]
-getMs1MassErrPlotFolder(s::SearchContext) = s.ms1_mass_err_plot_folder[]
 getParsedFileName(s::SearchContext, ms_file_idx::Int64) = getParsedFileName(s.mass_spec_data_reference, ms_file_idx)
-getIrtRtMap(s::SearchContext) = s.irt_rt_map
-getRtIrtMap(s::SearchContext) = s.rt_irt_map
-getPrecursorDict(s::SearchContext) = s.precursor_dict[]
-getRtIndexPaths(s::SearchContext) = s.rt_index_paths[]
 getIrtErrors(s::SearchContext) = s.irt_errors
 getRtTolerances(s::SearchContext) = s.rt_tolerances
 getRtTolerance(s::SearchContext, ms_file_idx::Int64) = s.rt_tolerances[ms_file_idx]
 # Per-file ion-mobility lines (see the im_models field); an empty Dict means no IM model.
 getImModel(s::SearchContext, ms_file_idx::Integer) = get(s.im_models, Int64(ms_file_idx), Dict{Int, NTuple{3, Float32}}())
 setImModel!(s::SearchContext, ms_file_idx::Integer, model::Dict{Int, NTuple{3, Float32}}) = (s.im_models[Int64(ms_file_idx)] = model)
-getImCal(s::SearchContext, ms_file_idx::Integer) = get(s.im_cals, Int64(ms_file_idx), nothing)
 setImCal!(s::SearchContext, ms_file_idx::Integer, cal::NTuple{2, Float32}) = (s.im_cals[Int64(ms_file_idx)] = cal)
 getHuberDelta(s::SearchContext) = s.huber_delta[]
-# Use library iRT array directly — O(1) indexing, no Dict overhead
-getPredIrt(s::SearchContext) = getIrt(getPrecursors(getSpecLib(s)))
-getPredIrt(s::SearchContext, prec_idx::Int64) = getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
-getPredIrt(s::SearchContext, prec_idx::UInt32) = getIrt(getPrecursors(getSpecLib(s)))[prec_idx]
-# irt_obs Dict on SearchContext is now unused; setPredIrt! removed
-getLibraryTargetCount(s::SearchContext) = s.n_library_targets
-getLibraryDecoyCount(s::SearchContext) = s.n_library_decoys
 getBitVecFilter(s::SearchContext, ms_file_idx::Int64) = get(s.bitvec_filter, ms_file_idx, nothing)
 getBitVecExcessRanks(s::SearchContext, ms_file_idx::Int64) = get(s.bitvec_excess_rank, ms_file_idx, nothing)
 getFragIndexScratch(s::SearchContext) = s.frag_index_scratch
@@ -692,22 +689,10 @@ end
 
 # More simple setters
 setNceModel!(s::SearchContext, index::I, model::NceModel) where {I<:Integer} = (s.nce_model[index] = model)
-function setIrtRtMap!(s::SearchContext, rcm::RtConversionModel, index::I) where {I<:Integer }
-    s.irt_rt_map[index] = rcm
-end
 function setRtIrtMap!(s::SearchContext, rcm::RtConversionModel, index::I) where {I<:Integer}
     s.rt_irt_map[index] = rcm
 end
-function setPrecursorDict!(s::SearchContext, dict::Dictionary{UInt32, @NamedTuple{best_prob::Float32, best_ms_file_idx::UInt32, best_scan_idx::UInt32, best_irt::Float32, mean_irt::Union{Missing, Float32}, var_irt::Union{Missing, Float32}, n::Union{Missing, UInt16}, mz::Float32}})
-    s.precursor_dict[] = dict
-end
-setRtIndexPaths!(s::SearchContext, paths::Vector{String}) = (s.rt_index_paths[] = paths)
 setHuberDelta!(s::SearchContext, delta::Float32) = (s.huber_delta[] = delta)
-function setIrtErrors!(s::SearchContext, errs::Dictionary{Int64, Float32})
-    for (k,v) in pairs(errs)
-        s.irt_errors[k] = v
-    end
-end
 
 #==========================================================
 Method Results Storage Accessors
@@ -732,11 +717,3 @@ function get_results(ctx::SearchContext, ::Type{T}) where T<:SearchMethod
     return get(ctx.method_results, T, nothing)
 end
 
-"""
-    has_results(ctx::SearchContext, ::Type{T}) where T<:SearchMethod
-
-Check if results exist for a search method.
-"""
-function has_results(ctx::SearchContext, ::Type{T}) where T<:SearchMethod
-    return haskey(ctx.method_results, T)
-end

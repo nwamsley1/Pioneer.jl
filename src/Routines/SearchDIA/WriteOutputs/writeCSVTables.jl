@@ -22,7 +22,7 @@ so it is blanked too. When normalization is *disabled* the column is never compu
 (`ProteinQuantificationSearch` selects `:peak_area` as the quant column); it is then dropped from the output
 by `drop_uncomputed_normalized` rather than emitted as an empty column.
 """
-const OUTPUT_BLANKED_QUANT_COLUMNS = (:peak_area, :peak_area_normalized)
+const OUTPUT_BLANKED_QUANT_COLUMNS = (:peak_area, :peak_area_normalized, :peak_area_ms1, :peak_area_ms1_normalized)
 
 function _blank_unquantified(col::AbstractVector)
     out = Vector{Union{Missing, Float32}}(undef, length(col))
@@ -176,74 +176,6 @@ function getModifiedSequence(
     return "_"*insert_at_indices(sequence, mods)*"_."*string(charge)
 end
 
-"""
-    _n_distinct_precursors(peptide_lists) -> Int
-
-Number of distinct precursor ids across the per-run `peptides` lists of one
-protein group. Missing rows/entries are skipped.
-"""
-function _n_distinct_precursors(peptide_lists::AbstractVector)
-    seen = Set{UInt32}()
-    for pep in peptide_lists
-        ismissing(pep) && continue
-        for pid in pep
-            ismissing(pid) || push!(seen, pid)
-        end
-    end
-    return length(seen)
-end
-
-"""
-    _extend_batch_to_group_end(keys, batch_end_idx, n_rows) -> Int
-
-Walk `batch_end_idx` forward while `keys` keeps repeating, so a batch never splits one precursor
-(or protein group) across two batches -- the wide format needs every row of a group together.
-
-Takes the key column as a plain vector instead of indexing `df[i, :col]` inside the loop. That
-form re-resolves the column by symbol on every iteration and infers `Any`, and this loop can run
-once per row of the table.
-"""
-function _extend_batch_to_group_end(keys::AbstractVector, batch_end_idx::Int, n_rows::Int)
-    @inbounds begin
-        last_key = keys[batch_end_idx]
-        while batch_end_idx < n_rows && isequal(keys[batch_end_idx + 1], last_key)
-            batch_end_idx += 1
-        end
-    end
-    return batch_end_idx
-end
-
-"""
-    _modified_sequence_strings(peptide_lists, sequences, isotope_mods, structural_mods, charges)
-
-Semicolon-joined modified sequences, one string per protein group.
-
-Replaces a per-row loop that indexed `subdf[i, :peptides]` and assigned `subdf[i, :col] = ...`
-(a symbol lookup per row, inferring `Any`), allocated a fresh `Vector{String}` per row, and then
-allocated again in `filter(!isempty, ...)` before joining. Here the per-row scratch is one reused
-buffer and the columns are typed vectors, so the only allocation left is the output string itself.
-"""
-function _modified_sequence_strings(
-    peptide_lists::AbstractVector,
-    sequences::AbstractVector,
-    isotope_mods::AbstractVector,
-    structural_mods::AbstractVector,
-    charges::AbstractVector,
-)
-    out = Vector{String}(undef, length(peptide_lists))
-    buf = String[]
-    for i in eachindex(peptide_lists, out)
-        empty!(buf)
-        for pid in peptide_lists[i]
-            ismissing(pid) && continue
-            mod_seq = getModifiedSequence(
-                sequences[pid], isotope_mods[pid], structural_mods[pid], charges[pid])
-            isempty(mod_seq) || push!(buf, mod_seq)
-        end
-        out[i] = join(buf, ';')
-    end
-    return out
-end
 
 """
     _ensure_typed_missing_file_columns!(df, file_names, T)
@@ -266,197 +198,7 @@ function _ensure_typed_missing_file_columns!(
     end
     return df
 end
-# ---------------------------------------------------------------------------------------------
-# DEAD CODE (commented out, not deleted).
-#
-# `writePrecursorCSV` is the unchunked precursor CSV writer. Nothing calls it: the live path is
-# `writePrecursorCSV_chunked` below (ProteinQuantificationSearch.jl:228), and the only surviving mention of this
-# name is the phrase "Chunked version of writePrecursorCSV" in that function's docstring.
-#
-# It also would not survive being called today -- it does the full-table materialisation the
-# chunked version exists to avoid (`DataFrame(Arrow.Table(long_precursors_path))` over the whole
-# precursors table) and it never received the batch-boundary and column-subset fixes applied to
-# the chunked writer. If it is ever revived, port those first.
-# ---------------------------------------------------------------------------------------------
-# #Assume sorted by protein,peptide keys. Do this in batches and write a long and wide form .csv without
-# #loading the entire table into memory. 
-# function writePrecursorCSV(
-#     long_precursors_path::String,
-#     file_names::Vector{String},
-#     normalized::Bool,
-#     proteins::LibraryProteins;
-#     output_schema_policy::OutputSchemaPolicy = OutputSchemaPolicy(),
-#     write_csv::Bool = true,
-#     batch_size::Int64 = 2000000)
-#
-#     function makeWideFormat(
-#         longdf::DataFrame,
-#         cols::AbstractVector{Symbol},
-#         normalized::Bool)
-#
-#         value_col = normalized ? :peak_area_normalized : :peak_area
-#
-#         return unstack(longdf,
-#                     cols,
-#                     :file_name,
-#                     value_col;
-#                     combine = sum)      # or combine = maximum, first, etc.
-#
-#     end
-#     # Replace empty strings with missing to avoid CSV.write indexing errors on empty Strings
-#     function _sanitize_empty_strings!(df::DataFrame)
-#         for nm in names(df)
-#             col = df[!, nm]
-#             if eltype(col) <: AbstractString
-#                 if any(==(""), col)
-#                     df[!, nm] = replace(col, "" => missing)
-#                 end
-#             elseif eltype(col) <: Union{Missing, AbstractString}
-#                 has_empty = false
-#                 @inbounds for v in col
-#                     if !ismissing(v) && v == ""
-#                         has_empty = true
-#                         break
-#                     end
-#                 end
-#                 if has_empty
-#                     df[!, nm] = replace(col, "" => missing)
-#                 end
-#             end
-#         end
-#         return df
-#     end
-#     precursors_long = DataFrame(Arrow.Table(long_precursors_path))
-#
-#     unique_files_in_data = unique(precursors_long.file_name)
-#
-#     n_rows = size(precursors_long, 1)
-#
-#     out_dir, arrow_path = splitdir(long_precursors_path)
-#     long_precursors_path = joinpath(out_dir,"precursors_long.tsv")
-#     wide_precursors_path = joinpath(out_dir,"precursors_wide.tsv")
-#     wide_precursors_arrow_path = joinpath(out_dir,"precursors_wide.arrow")
-#     if isfile(wide_precursors_arrow_path)
-#         safeRm(wide_precursors_arrow_path)
-#     end
-#     wide_columns = enabled_output_columns(output_schema_policy, :precursors, String[
-#         "species",
-#         "gene_names",
-#         "inferred_protein_group",
-#         "accession_numbers",
-#         "sequence",
-#         "charge",
-#         "structural_mods",
-#         "isotopic_mods",
-#         "prec_mz",
-#         "global_score",
-#         "global_qval",
-#         "use_for_protein_quant",
-#         "precursor_idx",
-#         "target",
-#         "entrapment_group_id",
-#     ])
-#
-#     long_columns_exclude = [:isotopes_captured, :scan_idx, :weight, :ms_file_idx]
-#     select!(precursors_long, Not(long_columns_exclude))
-#
-#     accs = getAccession(proteins)
-#     genes = getGeneName(proteins)
-#     gene_map = Dict(accs[i] => genes[i] for i in eachindex(accs))
-#     precursors_long[!, :gene_names] = _map_accession_vector(precursors_long.accession_numbers, gene_map)
-#     # Build rename pairs dynamically to avoid conflicts
-#     rename_pairs = Pair{Symbol,Symbol}[]
-#     push!(rename_pairs, :new_best_scan => :apex_scan)
-#     push!(rename_pairs, :prec_prob => :score)
-#     push!(rename_pairs, :global_prob => :global_score)
-#     push!(rename_pairs, :isotopes_captured_traces => :isotopes_captured)
-#     push!(rename_pairs, :precursor_fraction_transmitted_traces => :precursor_fraction_transmitted)
-#
-#     # Apply all renames at once
-#     if !isempty(rename_pairs)
-#         rename!(precursors_long, rename_pairs)
-#     end
-#
-#     requested_cols = enabled_output_columns(output_schema_policy, :precursors, Symbol[
-#         :file_name,
-#         :species,
-#         :gene_names,
-#         :inferred_protein_group,
-#         :accession_numbers,
-#         :sequence,
-#         :charge,
-#         :structural_mods,
-#         :isotopic_mods,
-#         :prec_mz,
-#         :missed_cleavage,
-#         :global_score,
-#         :score,
-#         :global_qval,
-#         :qval,
-#         :pep,
-#         :peak_area,
-#         :peak_area_normalized,
-#         :points_integrated,
-#         :precursor_fraction_transmitted,
-#         :isotopes_captured,
-#         :rt,
-#         :apex_scan,
-#         :global_pg_score,
-#         :pg_score,
-#         :use_for_protein_quant,
-#         :precursor_idx,
-#         :target,
-#         :entrapment_group_id,
-#     ])
-#     available_cols = intersect(requested_cols, Symbol.(names(precursors_long)))
-#     select!(precursors_long, available_cols)
-#
-#     sorted_columns = vcat(wide_columns, file_names)
-#     open(long_precursors_path,"w") do io1
-#         open(wide_precursors_path, "w") do io2
-#             #Make file headers
-#             if write_csv
-#                 println(io1,join(names(precursors_long),"\t"))
-#                 println(io2,join(sorted_columns,"\t"))
-#             end
-#             batch_start_idx, batch_end_idx = 1, min(batch_size+1,n_rows)
-#             open(Arrow.Writer, wide_precursors_arrow_path; file=true) do arrow_writer
-#                 while batch_start_idx <= n_rows
-#                     #For the wide format, can't split a precursor between two batches.
-#                     last_pid = precursors_long[batch_end_idx,:precursor_idx]
-#                     while batch_end_idx < n_rows
-#                         if precursors_long[batch_end_idx + 1,:precursor_idx] != last_pid
-#                             break
-#                         end
-#                         batch_end_idx += 1
-#                     end
-#
-#                     subdf =  precursors_long[range(batch_start_idx, batch_end_idx),:]
-#                     batch_start_idx = batch_end_idx + 1
-#                     batch_end_idx = min(batch_start_idx + batch_size, n_rows)
-#                     if write_csv
-#                         _sanitize_empty_strings!(subdf)
-#                         CSV.write(io1, subdf, append=true, header=false, delim='\t')
-#                     end
-#                     subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
-#                     _ensure_typed_missing_file_columns!(subunstack, file_names, Float32)
-#                     if write_csv
-#                         _sanitize_empty_strings!(subunstack)
-#                         CSV.write(io2, subunstack[!,sorted_columns], append=true,header=false,delim='\t')
-#                     end
-#                     # Normalize column types for consistent Arrow schema across batches
-#                     allowmissing!(subunstack)
-#                     Arrow.write(arrow_writer, subunstack[!,sorted_columns])
-#                 end
-#             end
-#         end
-#     end
-#     if write_csv == false
-#         safeRm(long_precursors_path; force = true)
-#         safeRm(wide_precursors_path; force = true)
-#     end
-#     return wide_precursors_arrow_path
-# end
+
 """
     _PRECURSOR_CSV_SOURCE_ALIASES
 
@@ -517,10 +259,10 @@ end
 """
     writePrecursorCSV_chunked(chunk_refs, out_dir, text, normalized, proteins; ...)
 
-Chunked version of writePrecursorCSV that processes merge chunks one at a time,
+Write the precursor tables, processing merge chunks one at a time and
 keeping one input chunk in memory. The workspace budget sizes additional batches
 by input rows and output run columns; one complete wide-row group is the minimum batch.
-Produces identical output files: precursors_long.tsv, precursors_wide.tsv, precursors_wide.arrow.
+Produces precursors_long.tsv, precursors_wide.tsv, precursors_wide.arrow.
 """
 function writePrecursorCSV_chunked(
     chunk_refs::Vector{<:Any},
@@ -540,9 +282,7 @@ function writePrecursorCSV_chunked(
     function makeWideFormat(
         longdf::AbstractDataFrame,
         cols::AbstractVector{Symbol},
-        normalized::Bool)
-
-        value_col = normalized ? :peak_area_normalized : :peak_area
+        value_col::Symbol)
 
         return unstack(longdf,
                     cols,
@@ -584,6 +324,16 @@ function writePrecursorCSV_chunked(
     wide_precursors_path = joinpath(out_dir, "precursors_wide.tsv")
     wide_precursors_arrow_path = joinpath(out_dir, "precursors_wide.arrow")
     isfile(wide_precursors_arrow_path) && safeRm(wide_precursors_arrow_path)
+    # DIA MS1 quantification: precursors_wide_ms1.{tsv,arrow} from peak_area_ms1(_normalized), next to the MS2 tables
+    ms1 = !isempty(chunk_refs) && :peak_area_ms1 in Tables.columnnames(Arrow.Table(file_path(first(chunk_refs))))
+    wide_ms1_path = joinpath(out_dir, "precursors_wide_ms1.tsv")
+    wide_ms1_arrow_path = joinpath(out_dir, "precursors_wide_ms1.arrow")
+    isfile(wide_ms1_arrow_path) && safeRm(wide_ms1_arrow_path)
+    value_col = normalized ? :peak_area_normalized : :peak_area
+    value_col_ms1 = normalized ? :peak_area_ms1_normalized : :peak_area_ms1
+    io_ms1 = ms1 && write_csv ? open(wide_ms1_path, "w") : nothing
+    arrow_ms1_writer = ms1 ? open(Arrow.Writer, wide_ms1_arrow_path; file=true, ntasks=0) : nothing
+    try
 
     wide_columns = enabled_output_columns(output_schema_policy, :precursors, String[
         "species",
@@ -629,6 +379,9 @@ function writePrecursorCSV_chunked(
         :pep,
         :peak_area,
         :peak_area_normalized,
+        :peak_area_ms1,               # DIA MS1 quantification (maxLFQ.ms1_quantification); absent otherwise
+        :peak_area_ms1_normalized,
+        :quant_withheld_ms1,          # MS1 area withheld by the 5x baseline rule
         :points_integrated,
         # True when QUANT_MIN_AREA_SURVIVING_RATIO withheld this row's area -- i.e. the
         # blank peak_area is a withheld measurement rather than a peak that was never found.
@@ -727,6 +480,7 @@ function writePrecursorCSV_chunked(
                     if !headers_written && write_csv
                         println(io1, join(names(precursors_long), "\t"))
                         println(io2, join(sorted_columns, "\t"))
+                        ms1 && println(io_ms1, join(sorted_columns, "\t"))
                         headers_written = true
                     end
 
@@ -742,7 +496,7 @@ function writePrecursorCSV_chunked(
                     _foreach_precursor_wide_batch(
                         precursors_long, Symbol.(wide_columns), length(file_names),
                         memory_budget_bytes, row_limit) do subdf
-                        subunstack = makeWideFormat(subdf, Symbol.(wide_columns), normalized)
+                        subunstack = makeWideFormat(subdf, Symbol.(wide_columns), value_col)
                         _ensure_typed_missing_file_columns!(subunstack, file_names, Float32)
                         if write_csv
                             _sanitize_empty_strings!(subunstack)
@@ -750,6 +504,16 @@ function writePrecursorCSV_chunked(
                         end
                         allowmissing!(subunstack)
                         Arrow.write(arrow_writer, subunstack[!, sorted_columns])
+                        if ms1 && hasproperty(subdf, value_col_ms1)
+                            sub_ms1 = makeWideFormat(subdf, Symbol.(wide_columns), value_col_ms1)
+                            _ensure_typed_missing_file_columns!(sub_ms1, file_names, Float32)
+                            if write_csv
+                                _sanitize_empty_strings!(sub_ms1)
+                                CSV.write(io_ms1, sub_ms1[!, sorted_columns], append=true, header=false, delim='\t')
+                            end
+                            allowmissing!(sub_ms1)
+                            Arrow.write(arrow_ms1_writer, sub_ms1[!, sorted_columns])
+                        end
                     end
 
                     precursors_long = nothing  # Free chunk memory
@@ -758,9 +522,14 @@ function writePrecursorCSV_chunked(
             end
         end
     end
+    finally
+        io_ms1 === nothing || close(io_ms1)
+        arrow_ms1_writer === nothing || close(arrow_ms1_writer)
+    end
     if !write_csv
         safeRm(long_precursors_path; force=true)
         safeRm(wide_precursors_path; force=true)
+        safeRm(wide_ms1_path; force=true)
     end
     return wide_precursors_arrow_path
 end
@@ -830,7 +599,8 @@ function Base.iterate(batches::ProteinExportBatches, row=batches.first_row)
 end
 
 function _spool_protein_export(long_path, dir, group_key, metadata_columns,
-                               gene_map, protein_map, budget, row_limit, write_csv)
+                               gene_map, protein_map, budget, row_limit, write_csv;
+                               spool_columns = [:file_name, :abundance])
     store = DataFrameBlockStore(joinpath(dir, "records.bin"), 2budget)
     catalog = DataFrame()
     seen = Set{Tuple}()
@@ -860,7 +630,7 @@ function _spool_protein_export(long_path, dir, group_key, metadata_columns,
                     if i > segment_start
                         part = view(df, segment_start:i-1, :)
                         for rows in _protein_export_ranges(part, budget, row_limit)
-                            _store_protein_block!(store, view(part, rows, write_csv ? Colon() : [:file_name, :abundance]))
+                            _store_protein_block!(store, view(part, rows, write_csv ? Colon() : spool_columns))
                         end
                     end
                     segment_start = i
@@ -889,7 +659,7 @@ function _spool_protein_export(long_path, dir, group_key, metadata_columns,
             end
             part = view(df, segment_start:nrow(df), :)
             for rows in _protein_export_ranges(part, budget, row_limit)
-                _store_protein_block!(store, view(part, rows, write_csv ? Colon() : [:file_name, :abundance]))
+                _store_protein_block!(store, view(part, rows, write_csv ? Colon() : spool_columns))
             end
         end
         finish_group!()
@@ -942,7 +712,15 @@ function writeProteinGroupsCSV(
     long_columns = enabled_output_columns(output_schema_policy, :protein_groups, Symbol[
         :file_name, :species, :gene_names, :protein_names, :protein, :target, :entrap_id,
         :peptides, :n_precursors, :n_precursors_quantified, :n_modified_peptides, :n_peptides,
-        :global_pg_score, :pg_score, :global_qval, :qval, :pg_pep, :total_peak_area, :abundance])
+        :global_pg_score, :pg_score, :global_qval, :qval, :pg_pep, :total_peak_area, :abundance,
+        :n_precursors_quantified_ms1, :total_peak_area_ms1, :abundance_ms1])   # MS1: DIA ms1_quantification only
+    file_cols = Set(Symbol.(Tables.columnnames(Arrow.Table(long_pg_path))))
+    ms1_cols = (:n_precursors_quantified_ms1, :total_peak_area_ms1, :abundance_ms1)
+    filter!(c -> !(c in ms1_cols) || c in file_cols, long_columns)
+    # DIA MS1 quantification: protein_groups_wide_ms1.{tsv,arrow} from abundance_ms1, next to the MS2 wide tables
+    ms1 = :abundance_ms1 in file_cols
+    wide_ms1_path = joinpath(out_dir, "protein_groups_wide_ms1.tsv")
+    arrow_ms1_path = joinpath(out_dir, "protein_groups_wide_ms1.arrow")
     file_indices = Dict(name => i for (i, name) in enumerate(file_names))
     accs, genes, names = getAccession(proteins), getGeneName(proteins), getProteinName(proteins)
     gene_map = Dict(accs[i] => genes[i] for i in eachindex(accs))
@@ -954,7 +732,8 @@ function writeProteinGroupsCSV(
         store = nothing
         try
             catalog, column_types, abundance_type, store = _spool_protein_export(
-                long_pg_path, dir, group_key, metadata_columns, gene_map, protein_map, budget, batch_size, write_csv)
+                long_pg_path, dir, group_key, metadata_columns, gene_map, protein_map, budget, batch_size, write_csv;
+                spool_columns = ms1 ? [:file_name, :abundance, :abundance_ms1] : [:file_name, :abundance])
             wide = DataFrame()
             for col in metadata_columns
                 T = get(column_types, col, col in (:global_pg_score, :global_qval) ? Float32 :
@@ -965,13 +744,18 @@ function writeProteinGroupsCSV(
                 Symbol(name) in metadata_columns && throw(ArgumentError("Run name conflicts with protein metadata: $name"))
                 wide[!, name] = Vector{Union{Missing, abundance_type}}()
             end
+            wide_ms1 = ms1 ? similar(wide, 0) : nothing
             tmp_long, tmp_wide, tmp_arrow = joinpath.(dir, ("long.tsv", "wide.tsv", "wide.arrow"))
+            tmp_wide_ms1, tmp_arrow_ms1 = joinpath.(dir, ("wide_ms1.tsv", "wide_ms1.arrow"))
             long_io = write_csv ? open(tmp_long, "w") : nothing
             wide_io = write_csv ? open(tmp_wide, "w") : nothing
+            wide_ms1_io = write_csv && ms1 ? open(tmp_wide_ms1, "w") : nothing
+            arrow_ms1_writer = ms1 ? open(Arrow.Writer, tmp_arrow_ms1; file=true, ntasks=0) : nothing
             try
                 if write_csv
                     println(long_io, join(long_columns, '\t'))
                     println(wide_io, join(propertynames(wide), '\t'))
+                    ms1 && println(wide_ms1_io, join(propertynames(wide), '\t'))
                 end
                 open(Arrow.Writer, tmp_arrow; file=true, ntasks=0) do arrow_writer
                     long = DataFrame()
@@ -986,9 +770,15 @@ function writeProteinGroupsCSV(
                         write_csv && CSV.write(wide_io, wide; append=true, header=false, delim='\t')
                         Arrow.write(arrow_writer, wide)
                         wide = similar(wide, 0)
+                        if ms1
+                            write_csv && CSV.write(wide_ms1_io, wide_ms1; append=true, header=false, delim='\t')
+                            Arrow.write(arrow_ms1_writer, wide_ms1)
+                            wide_ms1 = similar(wide_ms1, 0)
+                        end
                     end
                     for group in eachrow(catalog)
                         areas = Vector{Union{Missing, abundance_type}}(missing, length(file_names))
+                        areas_ms1 = ms1 ? Vector{Union{Missing, abundance_type}}(missing, length(file_names)) : nothing
                         occupied = falses(length(file_names))
                         sequence_cache = Dict{UInt32, String}()
                         sequence_lengths = Dict{UInt32, Int}()
@@ -999,6 +789,7 @@ function writeProteinGroupsCSV(
                                 occupied[index] && throw(ArgumentError("Duplicate protein/run observation: $(group.protein), $(df.file_name[i])"))
                                 occupied[index] = true
                                 areas[index] = df.abundance[i]
+                                ms1 && (areas_ms1[index] = df.abundance_ms1[i])
                             end
                             if write_csv
                                 for list in df.peptides, id in list
@@ -1036,6 +827,14 @@ function writeProteinGroupsCSV(
                         for (i, name) in enumerate(file_names)
                             push!(wide[!, name], areas[i])
                         end
+                        if ms1
+                            for col in metadata_columns
+                                push!(wide_ms1[!, col], group[col])
+                            end
+                            for (i, name) in enumerate(file_names)
+                                push!(wide_ms1[!, name], areas_ms1[i])
+                            end
+                        end
                         nrow(wide) >= wide_capacity && flush_wide!()
                     end
                     flush_long!()
@@ -1044,14 +843,19 @@ function writeProteinGroupsCSV(
             finally
                 long_io === nothing || close(long_io)
                 wide_io === nothing || close(wide_io)
+                wide_ms1_io === nothing || close(wide_ms1_io)
+                arrow_ms1_writer === nothing || close(arrow_ms1_writer)
             end
             mv(tmp_arrow, arrow_path; force=true)
+            ms1 && mv(tmp_arrow_ms1, arrow_ms1_path; force=true)
             if write_csv
                 mv(tmp_long, long_path; force=true)
                 mv(tmp_wide, wide_path; force=true)
+                ms1 && mv(tmp_wide_ms1, wide_ms1_path; force=true)
             else
                 safeRm(long_path; force=true)
                 safeRm(wide_path; force=true)
+                safeRm(wide_ms1_path; force=true)
             end
         finally
             store === nothing || close(store)

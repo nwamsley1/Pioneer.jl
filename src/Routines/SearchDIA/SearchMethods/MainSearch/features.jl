@@ -301,16 +301,6 @@ If no MS1 scan is available (file has only MS2), all features are zeroed.
     return found, best_int, best_mz, best_idx, i0
 end
 
-@inline function _ms1_find_peak_bsearch(mz::Vector{Float32}, intens::Vector{Float32},
-                                        mz_target::Float32, ms1_ppm_tol::Float32)
-    half_tol = mz_target * ms1_ppm_tol * 1f-6
-    lo = mz_target - half_tol
-    hi = mz_target + half_tol
-    n_peaks = length(mz)
-    n_peaks == 0 && return (false, 0f0, 0f0, 0, 1)
-    i0 = bsearch_hybrid(mz, lo, 1, n_peaks)
-    return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0, n_peaks)
-end
 
 @inline function _ms1_find_peak_from_cursor(mz::Vector{Float32}, intens::Vector{Float32},
                                             mz_target::Float32, ms1_ppm_tol::Float32,
@@ -377,12 +367,6 @@ end
     return _ms1_find_peak_at_lower_bound(mz, intens, mz_target, hi, i0, last)
 end
 
-@inline function _ms1_find_peak(mz::Vector{Float32}, intens::Vector{Float32},
-                                mz_target::Float32, ms1_ppm_tol::Float32)
-    found, best_int, best_mz, best_idx, _ =
-        _ms1_find_peak_bsearch(mz, intens, mz_target, ms1_ppm_tol)
-    return found, best_int, best_mz, best_idx
-end
 
 @inline function _ms1_sum_window_intensity(mz::Vector{Float32}, intens::Vector{Float32},
                                            low_mz::Float32, high_mz::Float32)
@@ -617,11 +601,15 @@ function _ms1_m0_peak_competition_inputs(psms, prec_mzs)
     )
 end
 
+"""Segmented / BoxCar MS1: MS1 scans searched on each side of the nearest one for a scan covering the window centre."""
+const MS1_SEGMENT_SEARCH = 16
+
 """
     build_scan_to_ms1(spectra) -> Vector{Int32}
 
 The MS1 scan to read for every scan of the file (0 everywhere when the file has no MS1 scans).
-Plain files: the nearest MS1 scan by RT. Ion-mobility packet / slice files (`imScan` column): the
+Plain files: the nearest MS1 scan by RT; with segmented or BoxCar MS1 (MS1 scans measuring different m/z ranges,
+`Ms1Coverage`), the nearest MS1 scan that measures the scan's isolation centre. Ion-mobility packet / slice files (`imScan` column): the
 row of the nearest MS1 frame (by RT) whose IM scan is nearest to the scan's own, so a precursor is
 looked up at its own mobility. The nearest-RT rule on such files lands on whichever slice of the
 previous MS1 frame is last in time, i.e. the wrong mobility for almost every precursor (measured:
@@ -639,8 +627,26 @@ function build_scan_to_ms1(spectra)
     end
     if im_scans === nothing
         rts = Float32[Float32(getRetentionTime(spectra, s)) for s in ms1]
+        # segmented / BoxCar MS1 (MS1 scans measuring different m/z ranges): the nearest MS1 scan that measures the
+        # window centre
+        coverage = Ms1Coverage(spectra)
+        has(k, c) = covers(coverage, ms1[k], c)
         @inbounds for s in 1:n_scans
-            scan_to_ms1[s] = ms1[nearest(rts, Float32(getRetentionTime(spectra, s)), 1, length(ms1))]
+            rt = Float32(getRetentionTime(spectra, s))
+            k = nearest(rts, rt, 1, length(ms1))
+            c = coverage.uniform ? missing : getCenterMz(spectra, s)
+            if !ismissing(c) && isfinite(c) && !has(k, Float32(c))
+                cf = Float32(c)
+                l = k - 1; while l >= max(1, k - MS1_SEGMENT_SEARCH) && !has(l, cf); l -= 1; end
+                r = k + 1; while r <= min(length(ms1), k + MS1_SEGMENT_SEARCH) && !has(r, cf); r += 1; end
+                okl = l >= max(1, k - MS1_SEGMENT_SEARCH); okr = r <= min(length(ms1), k + MS1_SEGMENT_SEARCH)
+                if okl && (!okr || rt - rts[l] <= rts[r] - rt)
+                    k = l
+                elseif okr
+                    k = r
+                end
+            end
+            scan_to_ms1[s] = ms1[k]
         end
         return scan_to_ms1
     end

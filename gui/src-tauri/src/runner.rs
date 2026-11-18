@@ -125,10 +125,10 @@ impl Jobs {
 
 /// How a command is configured on the command line.
 ///
-/// The two Julia executables take a single positional argument: the path to a
-/// params JSON. PioneerConverter is a separate .NET program that takes a
-/// positional RAW path plus flags and has no params file at all — so the
-/// invocation shape, not just the arguments, differs per command.
+/// SearchDIA and BuildSpecLib take a single positional argument: the path to a
+/// params JSON. The converters take a positional input path plus flags and have
+/// no params file at all — so the invocation shape, not just the arguments,
+/// differs per command.
 #[derive(serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Invocation {
@@ -138,10 +138,9 @@ pub enum Invocation {
     Args { args: Vec<String> },
     /// Run the same program once per argument set, in order, as one job.
     ///
-    /// For PioneerConverter over a chosen list of `.raw` files: its Thermo
-    /// reader takes one path and cannot read a linked file, so the list can
-    /// only be one invocation each — but that is one thing the user asked for
-    /// and should be one row in the queue, one log, and one outcome.
+    /// For convertRaw over a chosen list of `.raw` files: one invocation per
+    /// file on its real path, shown as one row in the queue, one log, and one
+    /// outcome.
     Steps { steps: Vec<Vec<String>> },
 }
 
@@ -195,10 +194,8 @@ pub struct Started {
 ///
 /// A job is usually one child process, but not always: `Invocation::Steps` runs
 /// several in order under a single job id, streaming into one log and reporting
-/// one outcome. That exists because PioneerConverter's Thermo reader cannot be
-/// handed a list and cannot read a linked file, so converting a chosen set of
-/// `.raw` means one invocation per file — while the queue should still show the
-/// one thing the user asked for.
+/// one outcome. A chosen set of `.raw` files is converted this way, one
+/// invocation per file, while the queue shows the one thing the user asked for.
 pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, String> {
     let resolved = pioneer::resolve_command(&spec.home, spec.command)?;
 
@@ -229,7 +226,7 @@ pub fn start(app: AppHandle, jobs: Arc<Jobs>, spec: Spec) -> Result<Started, Str
     // JULIA_NUM_THREADS a direct bin/SearchDIA call defaults to a single thread.
     let mut env_summary = String::new();
     let mut envs: Vec<(String, String)> = Vec::new();
-    if spec.command.is_julia() && !resolved.via_wrapper {
+    if !resolved.via_wrapper {
         // `JULIA_NUM_GC_THREADS` is the variable Julia actually reads — it is
         // the env form of `--gcthreads=N,M` (N marking, M concurrent sweeper).
         // `JULIA_GC_THREADS` is not a Julia variable and is silently ignored,
@@ -398,7 +395,7 @@ fn step_failure_message(
     };
     match (code, signal) {
         (Some(c), _) => format!("{what} failed with exit code {c}."),
-        // A crashing .NET or Julia process on macOS/Linux ends on a signal
+        // A crashing Julia process on macOS/Linux ends on a signal
         // (SIGABRT for an unhandled exception), not an exit code.
         (None, Some(sig)) => match signal_name(sig) {
             Some(name) => format!("{what} crashed (signal {sig}, {name})."),

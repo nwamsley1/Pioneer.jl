@@ -166,7 +166,6 @@ function importScripts()
         [
             "scoreGroups.jl",
             "fdrUtilities.jl",
-            "ftrUtilities.jl",
             "probitRegression.jl",
             "piecewiseLinearFunction.jl",
             "wittakerHendersonSmoothing.jl",
@@ -184,10 +183,7 @@ function importScripts()
             "lightgbm_utils.jl",      # LightGBM API wrapper
             "global_oof_scoring.jl",  # Shared semi-supervised OOF scoring
             "model_training.jl",      # PSMScoringModel train/predict dispatch
-            "training_selection.jl",  # TrainingDataStrategy implementations
-            "feature_selection.jl",   # FeatureSelectionStrategy implementations
             "workspace.jl",           # AbstractScoringWorkspace, CV fold setup
-            "scoring.jl",             # percolator_scoring! entry point
         ]
     )
 
@@ -235,6 +231,8 @@ function importScripts()
     include_files!(joinpath(package_root, "src", "Routines", "SearchDIA", "ZT"),
                    ["geometry.jl", "transmission_model.jl"])
     safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "SearchMethods", "SearchTypes.jl"))
+    # Per-file acquisition mode (DDA / DIA), decided at search start; uses SearchContext.
+    safe_include!(joinpath(package_root, "src", "Routines", "SearchDIA", "acquisition_mode.jl"))
 
     # Include remaining files using safe import for directories
     safe_include_directory!(joinpath(package_root, "src", "Routines", "SearchDIA", "CommonSearchUtils"))
@@ -266,7 +264,6 @@ function importScripts()
     include_files!(
         joinpath(search_methods_dir, "PrecursorScoringSearch"),
         [
-            "utils.jl",                        # Arrow score calibration helpers
             "model_config.jl",                 # Model configuration
             "pass1_oom.jl",                    # Out-of-memory Pass-1 training (stream + reservoir sample + per-file predict)
             "score_psms.jl",                   # PSM scoring functions
@@ -332,7 +329,9 @@ function importScripts()
     include_files!(joinpath(search_methods_dir, "IntegrateChromatogramsSearch"), [
         "integrate_chrom.jl",
         "IntegrateChromatogramsSearch.jl",
-        "utils.jl"
+        "utils.jl",
+        "ms1_quant.jl",                # MS1-level quantitation for DDA (MS1CHROM build_chromatograms)
+        "ms1_mass_model.jl"            # per-file intensity-aware MS1 mass model for DDA MS1 quantification
     ])
 
     # Include remaining SearchMethods files (excluding explicitly loaded directories)
@@ -420,8 +419,6 @@ function importScripts()
     safe_include!(joinpath(root_path, "koina", "koina_batch_parse.jl"))
 
     # Utilities
-    safe_include!(joinpath(root_path, "utils", "io.jl"))
-    safe_include!(joinpath(root_path, "utils", "math.jl"))
     safe_include!(joinpath(root_path, "utils", "get_mz.jl"))
     safe_include!(joinpath(root_path, "utils", "provenance.jl"))
     safe_include!(joinpath(root_path, "utils", "check_params.jl"))
@@ -449,6 +446,7 @@ function importScripts()
     safe_include!(joinpath(package_root, "src", "Routines", "mzmlConverter", "convertMzML.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "BrukerConverter", "convertBruker.jl"))
     safe_include!(joinpath(package_root, "src", "Routines", "SciexConverter", "convertSciex.jl"))
+    safe_include!(joinpath(package_root, "src", "Routines", "RawConverter", "convertRaw.jl"))
 
     return files_loaded
 end

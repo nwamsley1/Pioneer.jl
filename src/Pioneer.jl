@@ -22,7 +22,6 @@ using Interpolations
 using JSON, JLD2
 using LinearAlgebra, LightXML, Logging
 using Measures
-using NumericalIntegration
 using Plots, Polynomials, ProgressBars, Printf
 using PooledArrays: PooledArray
 using Tables
@@ -35,7 +34,6 @@ ENV["LIGHTGBM_LOG_LIBRARY_DISCOVERY"] = "false"
 using LightGBM
 import MLJModelInterface: fit, predict
 using KernelDensity
-using FastGaussQuadrature
 using LaTeXStrings, Printf
 using Dates
 using InlineStrings
@@ -703,6 +701,8 @@ Random.seed!(1776);
 include(joinpath("vendor", "TimsSlices", "TimsSlices.jl"))
 # SCIEX .wiff/.wiff.scan reader and .wiff -> .scxs conversion (folded in from SciexWiff.jl, source commit e4d9097).
 include(joinpath("vendor", "SciexWiff", "SciexWiff.jl"))
+# Orbitrap-family acquisition reader and Pioneer `.arrow` writer, as the submodule Pioneer.SpectrumDecoder.
+include(joinpath("vendor", "SpectrumDecoder", "SpectrumDecoder.jl"))
 
 include("importScripts.jl")
 files_loaded = importScripts()
@@ -940,14 +940,14 @@ function __init__()
     ENV["PLOTS_DEFAULT_BACKEND"] = "GR"
     # Force GR's off-screen workstation so plot creation never opens a gksqt
     # window. Plots are rendered to in-memory bits and then combined into the
-    # multi-page PDFs by save_multipage_pdf — opening Qt windows here both
+    # multi-page PDFs — opening Qt windows here both
     # slows down PDF writes substantially and disrupts the user's desktop
     # during long searches. Set both legacy and modern env var names.
     get!(ENV, "GKSwstype", "100")
     get!(ENV, "GKS_WSTYPE", "100")
 end
 
-export SearchDIA, BuildSpecLib, DownloadSpecLib, ListSpecLibs, GetSearchParams, GetBuildLibParams, convertMzML, convertBruker, convertSciex,
+export SearchDIA, BuildSpecLib, DownloadSpecLib, ListSpecLibs, GetSearchParams, GetBuildLibParams, convertMzML, convertBruker, convertSciex, convertRaw,
        get_pioneer_version, setup_windows_lightgbm,
        @user_info, @user_warn, @user_error, @user_print, @debug_l1, @debug_l2, @debug_l3, @trace
 end

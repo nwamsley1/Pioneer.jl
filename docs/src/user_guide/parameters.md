@@ -30,6 +30,7 @@ Most parameters should remain at their defaults for most experiments, but a few 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `search.n_isotopes` | Int | `2` | Fragment isotopes considered in matching. Use `1` for non-Altimeter libraries. |
+| `search.acquisition_mode` | String | `"auto"` | `"auto"` decides DDA or DIA per file (converter label, else the data); `"dda"` or `"dia"` forces it. DDA files are quantified from MS1. A search mixing DDA and DIA files is refused. |
 
 ### Optimization (Machine Learning)
 
@@ -59,6 +60,25 @@ Most parameters should remain at their defaults for most experiments, but a few 
 | `maxLFQ.quantification_method` | String | `"sparsemaxlfq"` | Protein quantification method: `"sparsemaxlfq"` or `"maxlfq"`. |
 | `maxLFQ.run_to_run_normalization` | Bool | `true` | Apply between-run median-spline normalization to peak areas. |
 | `maxLFQ.max_chunk_size_mb` | Int | `1024` | Maximum chunk size (MB) for the chunked merge during protein quantification. |
+| `maxLFQ.ms1_quantification` | Bool | `false` | DIA only: also quantify every precursor from MS1, next to the MS2 quantification (see below). |
+
+**MS1 quantification for DIA (`maxLFQ.ms1_quantification = true`).** In the app: **Advanced parameters → MS1
+quantification (DIA)**. Intended for low-input (250 pg–1 ng) runs, where MS2 signal can be sparse. After the MS2 peaks are integrated, each MS1 scan is explained as a sum of the
+isotope patterns (M0-M2) of the precursors that elute there, and every precursor's MS1 trace is integrated with the same
+window, mobility band and smoothing as its MS2 trace. MS2 results are unchanged; MS1 values are added alongside:
+
+* `precursors_long`: `peak_area_ms1`, `peak_area_ms1_normalized` (empty where there is no MS1 signal), and
+  `quant_withheld_ms1` (true where the MS1 area was withheld because less than a fifth of it survived baseline
+  subtraction, the same rule as `quant_withheld` for MS2);
+* `protein_groups_long`: `abundance_ms1`, `total_peak_area_ms1`, `n_precursors_quantified_ms1` (MaxLFQ on the MS1
+  areas over the same precursors);
+* `precursors_wide_ms1` and `protein_groups_wide_ms1` (`.arrow`, and `.tsv` with `output.write_csv`): the wide tables
+  built from the MS1 values;
+* `run_summary.tsv`: `precursors_quantified_ms1`, `total_peak_area_ms1`, `protein_groups_quantified_ms1`.
+
+See [Search Results](outputs.md) for every output column.
+
+DDA files are always quantified from MS1 (`peak_area`), so the flag has no effect on them.
 
 Protein quantification defaults to sparse MaxLFQ with 16 partner proposals per
 run and a fixed seed, plus connections that preserve the full overlap graph's
@@ -175,7 +195,7 @@ predict; every other fragment model assumes carbamidomethyl-C.
 | `library_params.frag_mz_max` | Float | `2020.0` | Manual upper fragment m/z bound. |
 | `library_params.prec_mz_min` | Float | `390.0` | Manual lower precursor m/z bound. |
 | `library_params.prec_mz_max` | Float | `1010.0` | Manual upper precursor m/z bound. |
-| `library_params.im_model` | String | `""` | Koina ion-mobility model for timsTOF libraries (`"alphapept_ccs"` or `"im2deep"`); adds `ccs` / `inv_ion_mobility` precursor columns. Empty skips it. |
+| `library_params.im_model` | String | `"alphapept_ccs"` | Koina ion-mobility model for timsTOF libraries (`"alphapept_ccs"` or `"im2deep"`); adds `ccs` / `inv_ion_mobility` precursor columns. Empty skips it. |
 | `library_params.frag_index_local_id_type` | String | `"auto"` | Width of the fragment index's partition-local precursor IDs: `"auto"`, `"UInt16"` or `"UInt32"`. UInt16 partitions hold at most 65,535 precursors and a denser partition is split, so on large libraries the effective partition width drops below its nominal width (about 2.5 Da at 5 Da for a 10-million-precursor library). `"auto"` picks UInt32 only in that case. The choice is logged and recorded in the library's `config.json`. |
 
 ### Prediction Models

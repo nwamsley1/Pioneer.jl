@@ -225,10 +225,10 @@ function loadHistory(): Job[] {
 }
 
 const TITLES: Record<CommandId, string> = {
-  searchdia: 'SearchDIA',
-  buildspeclib: 'BuildSpecLib',
-  downloadspeclib: 'DownloadSpecLib',
-  convertraw: 'ConvertRAW',
+  searchdia: 'Search',
+  buildspeclib: 'Build',
+  downloadspeclib: 'Download',
+  convertraw: 'Convert',
 }
 
 /** What the overwrite confirmation says, per workflow.
@@ -248,10 +248,10 @@ const OVERWRITE_COPY: Record<CommandId, { title: string; confirm: string }> = {
 }
 
 const SUBTITLES: Record<CommandId, string> = {
-  searchdia: 'Find & quantify proteins',
+  searchdia: 'Identify & quantify proteins',
   buildspeclib: 'Predict a spectral library',
-  downloadspeclib: 'Download a prebuilt spectral library',
-  convertraw: 'Convert .raw or .mzML files to Arrow',
+  downloadspeclib: 'Fetch a prebuilt library',
+  convertraw: 'Convert vendor files for Pioneer',
 }
 
 /** Append one line of process output, emulating the bits of a terminal that
@@ -330,6 +330,7 @@ export default function App() {
   const [pioneerError, setPioneerError] = useState('')
 
   const [jsonOpen, setJsonOpen] = useState(false)
+  const [commandOpen, setCommandOpen] = useState(false)
   const [loadOpen, setLoadOpen] = useState(false)
   const [jobConfirm, setJobConfirm] = useState<{
     id: string
@@ -661,11 +662,11 @@ export default function App() {
         const info = await backend.inspectPath(path)
         const isDir = info.is_dir
         if (kind === 'dir' && !isDir) {
-          setRunError('That is a file — this field takes a folder.')
+          setRunError('That is a file. This field takes a folder.')
           return
         }
         if (kind === 'file' && isDir) {
-          setRunError('That is a folder — this field takes a file.')
+          setRunError('That is a folder. This field takes a file.')
           return
         }
         setRunError('')
@@ -835,7 +836,7 @@ export default function App() {
   // here left the note reading "switch the format to .mzML" after the format
   // had been switched. The deps lint that would have caught it is off (see
   // `info`, which is rebuilt every render), so nothing did. Recomputing when an
-  // unrelated field like batchSize changes costs two pure string comparisons.
+  // unrelated field like threadsPerFile changes costs two pure string comparisons.
   const convertNotes = useMemo(
     () => ({
       input: convertInputNote(convert, info('convertInput')),
@@ -879,7 +880,7 @@ export default function App() {
               logLines: [
                 ...j.logLines,
                 {
-                  text: `ERROR: no ${out} in ${dir}. The converter exited 0 but converted nothing — check the messages above for files it could not open.`,
+                  text: `ERROR: no ${out} in ${dir}. The converter exited 0 but converted nothing. Check the messages above for files it could not open.`,
                   stream: 'app' as const,
                   transient: false,
                 },
@@ -935,13 +936,10 @@ export default function App() {
           prev.map((j) => {
             if (j.id !== job_id) return j
             const status: JobStatus = cancelled ? 'cancelled' : success ? 'done' : 'failed'
-            // A conversion that exits 0 is not necessarily a conversion that
-            // happened: PioneerConverter reports every file it could not open
-            // and still exits 0, so a whole batch can fail while the queue says
-            // "done" and the output folder stays empty. Checked rather than
-            // trusted -- but only when the folder holds no .arrow at all, so a
-            // run that legitimately skipped everything (--skip-existing) or
-            // added to an existing folder is never called a failure.
+            // A finished conversion is also checked for output: a run whose
+            // output folder holds no .arrow at all is reported as failed. A run
+            // that skipped everything (--skip-existing) or added to an existing
+            // folder still has .arrow files there and is never called a failure.
             if (status === 'done' && j.cmd === 'convertraw') {
               void verifyConversionProduced(j)
             }
@@ -1211,13 +1209,13 @@ export default function App() {
   /** The destination note. Deliberately shows the size that is about to land:
    *  a 3 GiB fetch should say so before it starts, not once it is running. */
   const downloadDestNote: Note = !download.dest.trim()
-    ? { level: '', msg: 'Required — the library is written into this folder.' }
+    ? { level: '', msg: '' }
     : downloadTargetExists && download.selected
       ? {
           level: download.force ? 'warn' : 'error',
           msg: download.force
             ? `${download.selected} already exists here and will be replaced.`
-            : `${download.selected} already exists here. Turn on “Replace an existing copy” to overwrite it, or choose another folder.`,
+            : `${download.selected} already exists here. Turn on “Overwrite if already downloaded”, or choose another folder.`,
         }
       : (() => {
           const lib = libraries.find((l) => l.name === download.selected)
@@ -1354,7 +1352,7 @@ export default function App() {
       ...n,
       [kind]: '',
       ...(displaced.length
-        ? { variable: `Fixed modifications now cover ${displaced.join(', ')} — removed from variable.` }
+        ? { variable: `Fixed modifications now cover ${displaced.join(', ')}, so they were removed from variable.` }
         : null),
     }))
     setRunError('')
@@ -1400,7 +1398,7 @@ export default function App() {
       return { level: 'warn', msg: 'This rule finds no cleavage site in the sample sequence.' }
     }
     if (sites.length > SAMPLE_SEQUENCE.length / 2) {
-      return { level: 'warn', msg: 'This rule cleaves almost everywhere — check it is what you meant.' }
+      return { level: 'warn', msg: 'This rule cleaves almost everywhere. Check it is what you meant.' }
     }
     return { level: '', msg: '' }
   })()
@@ -1514,6 +1512,12 @@ export default function App() {
     // from it, so without it the command line goes stale when the stepper moves.
     [isConvert, isDownload, isSearch, previewSearch, build, convert, download, currentExtras, threads],
   )
+
+  /** Search and Build: the `pioneer` command that runs the .json, with a
+   *  placeholder for where the .json is saved. */
+  const paramsCommandText = isSearch
+    ? `pioneer --threads=${threads} search /path/to/search_parameters.json`
+    : `pioneer --threads=${threads} build /path/to/buildspeclib_params.json`
 
   const overwriteNote = isConvert
     ? convertNotes.output
@@ -1701,8 +1705,7 @@ export default function App() {
         taken.add(title)
 
         if (group.format === 'raw') {
-          // One invocation per file on its real path -- PioneerConverter's
-          // Thermo reader cannot open a linked .raw (see convertGroups) -- but
+          // One invocation per file on its real path (see convertGroups), as
           // one job, because one list is one thing the user asked for. `input`
           // on the snapshot is the first file, so recalling the run and the
           // "point SearchDIA at the output" step both still have a path.
@@ -1830,7 +1833,7 @@ export default function App() {
     if (isSearchConfig(obj)) {
       const patch = searchConfigToState(obj)
       if (!patch) return 'Unrecognized configuration.'
-      if (!switchCommand && !isSearch) return 'That is a SearchDIA config, not a BuildSpecLib one.'
+      if (!switchCommand && !isSearch) return 'That is a Search config, not a Build one.'
       setSearch((p) => ({ ...p, ...patch }))
       setExtras((e) => ({ ...e, searchdia: computeExtras(obj, SEARCH_OWNED_PATHS) }))
       if (switchCommand) setCommand('searchdia')
@@ -1841,7 +1844,7 @@ export default function App() {
     if (isBuildConfig(obj)) {
       const patch = buildConfigToState(obj)
       if (!patch) return 'Unrecognized configuration.'
-      if (!switchCommand && isSearch) return 'That is a BuildSpecLib config, not a SearchDIA one.'
+      if (!switchCommand && isSearch) return 'That is a Build config, not a Search one.'
       // A loaded config is outside the mod editor entirely, and older or
       // hand-written ones carry carbamidomethyl as variable, or not at all.
       setBuild((p) => {
@@ -1855,7 +1858,7 @@ export default function App() {
       return null
     }
 
-    return 'Unrecognized configuration — expected a SearchDIA or BuildSpecLib config.'
+    return 'Unrecognized configuration. Expected a Search or Build config.'
   }
 
   const applyLoad = (draft: string): string | null => {
@@ -1890,7 +1893,7 @@ export default function App() {
 
   // ---- keyboard ----------------------------------------------------------
 
-  const anyModalOpen = jsonOpen || loadOpen || overwriteOpen || uninstallOpen || !!jobConfirm || !!slowStorage
+  const anyModalOpen = jsonOpen || commandOpen || loadOpen || overwriteOpen || uninstallOpen || !!jobConfirm || !!slowStorage
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1937,7 +1940,6 @@ export default function App() {
         }[viewJob.status]
     : 'Ready'
   const extraKeys = extraLeafPaths(currentExtras)
-  const modKeyLabel = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl '
   const runLabel = `Run ${TITLES[command]}`
 
   return (
@@ -1963,7 +1965,6 @@ export default function App() {
         selected={command}
         jobs={jobs}
         viewJobId={viewJobId}
-        modKey={modKeyLabel}
         theme={theme}
         onTheme={setTheme}
         onSelect={(id) => {
@@ -2039,19 +2040,19 @@ export default function App() {
             <div style={{ fontSize: 12.5, color: '#667085', marginTop: 1 }}>{SUBTITLES[command]}</div>
           </div>
           <TopBar
-            // Neither converter wants a picker here. PioneerConverter is .NET
-            // and never reads JULIA_NUM_THREADS at all; convertMzML is Julia and
-            // does, but its own knob is files-at-a-time and a second control
-            // would just be the multiplying-knobs trap the RAW path already
-            // avoids. The backend sets JULIA_NUM_THREADS from this value
-            // regardless, so the mzML converter still gets threads to spawn on.
+            // No picker on the converter page: convertRaw takes threads per
+            // file and convertMzML files-at-a-time, and a second control would
+            // multiply with those. The backend sets JULIA_NUM_THREADS from this
+            // value regardless, so both converters have threads to spawn on.
             showThreads={!isConvert}
             threads={threads}
             maxThreads={maxThreads}
             runLabel={runLabel}
             previewLabel={isArgv ? 'View the command line' : 'Edit the .json directly'}
+            previewText={isArgv ? 'Command' : '.json'}
             onThreads={setThreads}
             onEditJson={() => setJsonOpen(true)}
+            onCommand={isArgv ? undefined : () => setCommandOpen(true)}
             onRun={() => run()}
           />
         </header>
@@ -2217,6 +2218,19 @@ export default function App() {
             onClose={() => setJsonOpen(false)}
             onApply={(draft) => applyConfig(draft, false)}
             onRevert={() => setExtras((e) => ({ ...e, [command]: null }))}
+          />
+        )}
+
+        {commandOpen && (
+          <JsonModal
+            fileName="command line"
+            editable={false}
+            text={paramsCommandText}
+            hasExtras={false}
+            extraKeys={[]}
+            onClose={() => setCommandOpen(false)}
+            onApply={() => null}
+            onRevert={() => {}}
           />
         )}
 

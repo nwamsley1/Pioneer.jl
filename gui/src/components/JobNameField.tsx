@@ -49,7 +49,7 @@ export function JobNameField({ value, resolved, onChange }: Props) {
         <p style={{ fontSize: 11.5, color: '#98A2B3', margin: '8px 0 0' }}>
           {resolved === trimmed
             ? `This run will be called ${resolved}.`
-            : `${trimmed} is already taken — this run will be called ${resolved}.`}
+            : `${trimmed} is already taken. This run will be called ${resolved}.`}
         </p>
       )}
     </div>

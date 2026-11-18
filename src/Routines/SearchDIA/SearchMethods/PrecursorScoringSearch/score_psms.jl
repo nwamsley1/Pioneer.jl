@@ -22,8 +22,9 @@ function score_precursor_isotope_traces(
     file_paths::Vector{String};
     match_between_runs::Bool = true,
     ion_mobility::Bool = true,
+    dda::Bool = false,
 )
-    features = model_features(ADVANCED_FEATURE_SET, ion_mobility)
+    features = model_features(ADVANCED_FEATURE_SET, ion_mobility; dda)
     pass1 = train_and_predict_pass1_oom!(
         file_paths;
         features        = features,

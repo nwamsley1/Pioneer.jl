@@ -59,6 +59,7 @@ function generate_build_params(
     params["library_params"]["prec_mz_min"] = prec_mz_min
     params["library_params"]["prec_mz_max"] = prec_mz_max
     params["library_params"]["max_frag_rank"] = 50
+    params["library_params"]["im_model"] = ""
 
     # Set calibration_raw_file to empty for testing (will trigger warning but that's expected)
     params["calibration_raw_file"] = ""
@@ -605,6 +606,7 @@ end
         params["max_koina_batch"] = 100
         params["include_contaminants"] = false  # Don't add contaminants for testing
         delete!(params["library_params"], "calibration_raw_file")
+        params["library_params"]["im_model"] = ""  # no ion-mobility fixtures recorded
         # Clear variable modifications for simpler testing
         params["variable_mods"] = Dict("pattern" => [], "mass" => [], "name" => [])
         
@@ -847,6 +849,7 @@ end
         params["max_koina_batch"] = 200
         params["include_contaminants"] = false  # Don't add contaminants for testing
         delete!(params["library_params"], "calibration_raw_file")
+        params["library_params"]["im_model"] = ""  # no ion-mobility fixtures recorded
         # Clear variable modifications for simpler testing
         params["variable_mods"] = Dict("pattern" => [], "mass" => [], "name" => [])
         

@@ -278,6 +278,23 @@ maybe_run("SearchDIA_yeast") do
     search_checked(joinpath(data_dir, "precompile", "search_yeast_altimeter.json"))
 end
 
+# The same yeast DIA search with MS1 quantification on (maxLFQ.ms1_quantification): MS1 chromatogram extraction,
+# deconvolution and integration next to MS2, and the MS1 columns of the protein and output tables. Off by default,
+# so no other target reaches it.
+maybe_run("SearchDIA_yeast_ms1") do
+    search_checked(joinpath(data_dir, "precompile", "search_yeast_altimeter_ms1.json"))
+end
+
+# DDA: quantification from MS1 (calibrated extraction window, MS1 mass model, second pass) and the DDA branches of
+# scoring and MBR. Fixture (temp/zenodo/dda_raw): two Astral DDA 5 min 50 ng runs of the PXD070049 three-proteome
+# samples, conditions A and B; all MS1 scans with peaks restricted to 490-615 m/z, MS2 scans with an isolation centre
+# in 500-600 m/z (the yeast library's band) keeping their 200 most intense peaks. ~2,200 / 1,550 precursors, enough
+# for the window calibration and the mass model to take their measured (not fallback) paths. The mode is set in the
+# config: a 100 m/z MS2 band is covered almost every cycle, so the data rule would call these runs DIA.
+maybe_run("SearchDIA_dda") do
+    search_checked(joinpath(data_dir, "precompile", "search_dda_altimeter.json"))
+end
+
 
 ##########################################
 # timsTOF: .d -> .tdfs conversion and search
@@ -336,6 +353,29 @@ maybe_run("SearchDIA_zt") do
     generate_synthetic_zt_runs(ZT_SYNTH_LIBRARY, joinpath(data_dir, "precompile", "synthetic_zt"))
     search_checked(joinpath(data_dir, "precompile", "search_ecoli_zt.json"))
     check_zt_search_ran(joinpath(data_dir, "precompile", "zt_results"))
+end
+
+
+##########################################
+# Thermo .raw -> .arrow conversion (convertRaw, SpectrumDecoder)
+##########################################
+# Synthetic files from write_synthetic_acquisition (no download): one with centroid scans, one with ion-trap
+# profile-only MS1 scans that are centroided on write. Compiles the reader, the consistency checks, convertRaw with the
+# threaded `.arrow` writer, and Pioneer's loading of its output.
+maybe_run("convertRaw") do
+    SD = Pioneer.SpectrumDecoder
+    dir = mktempdir()
+    for profile in (false, true)
+        raw = SD.write_synthetic_acquisition(joinpath(dir, "synthetic_$(profile).raw"); ms1_profile = profile)
+        SD.check_consistency(SD.open_acquisition(raw))
+    end
+    out = Pioneer.convertRaw(dir; output_dir = joinpath(dir, "arrow"))
+    length(out) == 2 || error("convertRaw: expected 2 .arrow runs, got $(length(out))")
+    for path in out
+        length(Pioneer.loadMassSpecData(path)) == 55 || error("convertRaw: written scan count differs in $path")
+    end
+    # The temporary directory is removed when Julia exits; the loaded .arrow files are still memory-mapped here,
+    # and Windows does not delete mapped files.
 end
 
 

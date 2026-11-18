@@ -10,7 +10,7 @@ interface Props {
 }
 const {
   title,
-  description = "Pioneer identifies and quantifies precursors and proteins from data-independent acquisition proteomics experiments. Free for non-commercial research.",
+  description = "Pioneer identifies and quantifies peptides and proteins from data-independent acquisition proteomics experiments. Free for non-commercial research.",
 } = Astro.props;
 
 const fullTitle = title ? `${title} | Pioneer` : "Pioneer: fast DIA proteomics analysis";
@@ -32,6 +32,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <meta property="og:type" content="website" />
     <meta property="og:url" content={canonical} />
     <meta name="theme-color" content="#193c55" />
+    <!-- Cloudflare Web Analytics: cookie-free page-view counts. is:inline keeps Astro from bundling it. -->
+    <script is:inline type="module" src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "f287c1e5f2cf4bb7a88bb61979f987ad"}'></script>
   </head>
   <body class="min-h-screen antialiased">
     <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-10 focus:rounded-md focus:bg-surface focus:px-3 focus:py-2">

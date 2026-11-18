@@ -1,0 +1,133 @@
+---
+import { site } from "../site.config";
+
+// Asks for basic details before the installers are shown. Once submitted, the
+// browser remembers it and returning visitors go straight to the downloads.
+const field =
+  "mt-1 block w-full rounded-lg border border-line bg-paper px-3 py-2 text-ink focus:border-action focus:outline-none";
+---
+<form
+  id="download-form"
+  data-endpoint={site.downloadFormEndpoint}
+  class="hidden rounded-xl border border-line bg-surface px-5 py-6 sm:px-6"
+  novalidate
+>
+  <div class="grid gap-4 sm:grid-cols-2">
+    <label class="block text-sm font-[560]">
+      First name
+      <input class={field} name="first_name" autocomplete="given-name" required />
+    </label>
+    <label class="block text-sm font-[560]">
+      Last name
+      <input class={field} name="last_name" autocomplete="family-name" required />
+    </label>
+    <label class="block text-sm font-[560] sm:col-span-2">
+      Email
+      <input class={field} name="email" type="email" autocomplete="email" required />
+    </label>
+    <label class="block text-sm font-[560] sm:col-span-2">
+      Institution
+      <input class={field} name="organization" autocomplete="organization" required />
+    </label>
+  </div>
+
+  <!-- Hidden from people; submissions that fill it are ignored. -->
+  <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" class="absolute -left-[9999px]" />
+
+  <label class="mt-5 flex items-start gap-2 text-sm">
+    <input type="checkbox" name="updates" class="mt-0.5 accent-[var(--action)]" />
+    <span>Subscribe to the Pioneer mailing list (optional)</span>
+  </label>
+
+  <p id="download-form-error" class="mt-4 hidden text-sm text-[var(--interferer)]" role="alert"></p>
+
+  <button
+    type="submit"
+    class="mt-5 rounded-lg bg-action px-4 py-2.5 text-[0.95rem] font-[600] text-action-ink hover:brightness-110 disabled:opacity-60"
+  >
+    Continue to downloads
+  </button>
+</form>
+
+<script>
+  const KEY = "pioneer-download-registered";
+  const form = document.getElementById("download-form") as HTMLFormElement;
+  const error = document.getElementById("download-form-error")!;
+
+  function unlock() {
+    form.classList.add("hidden");
+    for (const el of document.querySelectorAll("[data-after-form]")) el.classList.remove("hidden");
+  }
+
+  let registered = false;
+  try {
+    registered = localStorage.getItem(KEY) === "1";
+  } catch {}
+
+  if (registered) unlock();
+  else form.classList.remove("hidden");
+
+  async function submitRegistration(data: Record<string, string | boolean>) {
+    const endpoint = form.dataset.endpoint;
+    if (!endpoint) {
+      console.info("[download-form] no endpoint set, not sent:", data);
+      return;
+    }
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (res.status === 422) return "invalid_email";
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!form.checkValidity()) {
+      const emailInput = form.elements.namedItem("email") as HTMLInputElement;
+      const blank = ["first_name", "last_name", "email", "organization"].some(
+        (n) => !String(new FormData(form).get(n) ?? "").trim(),
+      );
+      error.textContent =
+        blank || emailInput.validity.valid
+          ? "Please fill in your name, email, and institution."
+          : "Please enter a valid email address.";
+      error.classList.remove("hidden");
+      form.reportValidity();
+      return;
+    }
+    error.classList.add("hidden");
+    const fd = new FormData(form);
+    const button = form.querySelector("button")!;
+    button.disabled = true;
+    let result;
+    try {
+      const firstName = String(fd.get("first_name")).trim();
+      const lastName = String(fd.get("last_name")).trim();
+      result = await submitRegistration({
+        first_name: firstName,
+        last_name: lastName,
+        // Kept for the form endpoint until it reads the two fields above.
+        name: `${firstName} ${lastName}`.trim(),
+        email: String(fd.get("email")).trim(),
+        organization: String(fd.get("organization")).trim(),
+        updates: fd.get("updates") === "on",
+        website: String(fd.get("website") ?? ""),
+      });
+    } catch (err) {
+      // A failed submission shouldn't stop anyone from downloading.
+      console.warn("[download-form] submission failed:", err);
+    }
+    if (result === "invalid_email") {
+      error.textContent = "Please enter a valid email address.";
+      error.classList.remove("hidden");
+      button.disabled = false;
+      return;
+    }
+    try {
+      localStorage.setItem(KEY, "1");
+    } catch {}
+    unlock();
+  });
+</script>

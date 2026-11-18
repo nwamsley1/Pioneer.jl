@@ -24,7 +24,6 @@ struct StandardFragmentLookup{T<:AbstractFloat} <: LibraryFragmentLookup
     prec_frag_ranges::Vector{UInt64}
 end
 
-getFrag(lfp::StandardFragmentLookup, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::StandardFragmentLookup) = lfp.frags
 getPrecFragRange(lfp::StandardFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} =
     range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))
@@ -61,7 +60,6 @@ struct SplineFragmentLookup{N,M,T<:AbstractFloat} <: LibraryFragmentLookup
 end
 
 getKnots(lfp::SplineFragmentLookup) = lfp.knots
-getFrag(lfp::SplineFragmentLookup, prec_idx::Integer) = lfp.frags[prec_idx]
 getFragments(lfp::SplineFragmentLookup) = lfp.frags
 getPrecFragRange(lfp::SplineFragmentLookup, prec_idx::Integer)::UnitRange{UInt64} =
     range(lfp.prec_frag_ranges[prec_idx], lfp.prec_frag_ranges[prec_idx+1]-one(UInt64))

@@ -125,7 +125,8 @@ function SearchDIA(params_path::String)
         @user_print repeat("=", 90)
         @user_info "\nStarting search at: $(Dates.now())"
         @user_info "Output directory: $(params.paths[:results])"
-        
+        log_memory_limit()
+
 
         # === Initialize performance tracking ===
         timings = Dict{String, Any}()
@@ -158,6 +159,13 @@ function SearchDIA(params_path::String)
 
             if length(MS_TABLE_PATHS) <= 0
                 @user_error "No .arrow files or .tdfs / .scxs directories found in ms_data directory: " * MS_DATA_DIR
+                return
+            end
+            n_found = length(MS_TABLE_PATHS)
+            MS_TABLE_PATHS = drop_not_searchable(MS_TABLE_PATHS)
+            if isempty(MS_TABLE_PATHS)
+                @user_error "None of the $n_found MS files in $MS_DATA_DIR can be searched: all are labelled " *
+                            "not_searchable (their methods request no MS2 scans)"
                 return
             end
             check_ms_data_vendors(MS_TABLE_PATHS)
@@ -196,6 +204,8 @@ function SearchDIA(params_path::String)
                 250000 # Default temp array batch size
             )
             setDataOutDir!(SEARCH_CONTEXT, params.paths[:results])
+            # DDA or DIA, per file, before any search phase (converter label, else the data rule)
+            detect_acquisition_modes!(SEARCH_CONTEXT, params)
 
             # Ensure temporary files are written to the results directory
             ENV["TMPDIR"] = params.paths[:results]
@@ -374,6 +384,8 @@ function print_summary_statistics(total_time, total_memory, peak_memory, total_g
     @user_print "Total alloc (cumulative):   $(round(total_memory/1024^3, digits=2)) GB"
     @user_print "Working set (peak RSS):     $(round(peak_memory/1024^3, digits=2)) GB"
     @user_print "System RAM:                 $(round(current_mem, digits=2)) GB"
+    mlim = memory_limit_info()
+    @user_print "Memory limit used:          $(round(mlim.bytes/1e9, digits=1)) GB (10^9 bytes; $(mlim.source))"
     if !isempty(rss_deltas)
         peak_step = argmax(rss_deltas)
         @user_print "Largest RSS jump:           +$(@sprintf("%.2f", rss_deltas[peak_step])) GB during $peak_step"

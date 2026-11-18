@@ -45,6 +45,8 @@ struct ProteinQuantificationSearchParameters <: SearchParameters
     # constants — n_rt_bins, spline_n_knots — are hardcoded below since they
     # have no shipping override).
     run_to_run_normalization::Bool
+    # DIA MS1 quantification (maxLFQ.ms1_quantification): normalize peak_area_ms1 and add protein abundance_ms1
+    ms1_quantification::Bool
 
     # LFQ parameters
     quantification_method::Symbol
@@ -68,6 +70,7 @@ struct ProteinQuantificationSearchParameters <: SearchParameters
 
         new(
             Bool(maxLFQ_params.run_to_run_normalization),
+            ms1_quantification_enabled(params),
             Symbol(get(maxLFQ_params, :quantification_method, "sparsemaxlfq")),
             _resolve_q_value_threshold(global_params),
             Int64(100000),  # Default batch size
@@ -231,6 +234,10 @@ function summarize_results!(
         apply_pipeline!(psm_refs, decoy_filter_pipeline)
     end
 
+    # DIA MS1 quantification: the tables carry peak_area_ms1 (DDA files and flag-off searches do not)
+    ms1_quant = params.ms1_quantification && !isempty(psm_refs) &&
+                has_column_anywhere(first(psm_refs), :peak_area_ms1)
+
     # Normalize the same integrated precursor tables that will feed MaxLFQ.
     # Only run when the result will actually be consumed: MaxLFQ's quant
     # column selector + WriteOutputs both gate on run_to_run_normalization.
@@ -247,6 +254,15 @@ function summarize_results!(
         normalizeQuant(
             [file_path(ref) for ref in psm_refs],
             :peak_area,
+            N = MAXLFQ_NORM_N_RT_BINS,
+            spline_n_knots = MAXLFQ_NORM_SPLINE_N_KNOTS,
+            run_ids = existing_passing_psm_run_ids,
+            run_similarity_atlas = run_similarity_atlas,
+        )
+        # MS1 areas get their own run-to-run correction (fitted on MS1 areas): peak_area_ms1_normalized
+        ms1_quant && normalizeQuant(
+            [file_path(ref) for ref in psm_refs],
+            :peak_area_ms1,
             N = MAXLFQ_NORM_N_RT_BINS,
             spline_n_knots = MAXLFQ_NORM_SPLINE_N_KNOTS,
             run_ids = existing_passing_psm_run_ids,
@@ -313,7 +329,9 @@ function summarize_results!(
         output_schema_policy = output_schema_policy,
         batch_size = params.batch_size,
         quantification_method = params.quantification_method,
-        protein_group_names = protein_group_names
+        protein_group_names = protein_group_names,
+        quant_col_ms1 = !ms1_quant ? nothing :
+                        params.run_to_run_normalization ? :peak_area_ms1_normalized : :peak_area_ms1
     )
     chunk_paths = [file_path(ref) for ref in chunk_refs]
 
