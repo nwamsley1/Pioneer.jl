@@ -10,10 +10,10 @@ interface Props {
 }
 const {
   title,
-  description = "Pioneer identifies and quantifies peptides and proteins from data-independent acquisition proteomics experiments. Free for non-commercial research.",
+  description = "Pioneer identifies and quantifies peptides and proteins from data-independent (DIA) and data-dependent (DDA) acquisition proteomics experiments. Free for non-commercial research.",
 } = Astro.props;
 
-const fullTitle = title ? `${title} | Pioneer` : "Pioneer: fast DIA proteomics analysis";
+const fullTitle = title ? `${title} | Pioneer` : "Pioneer: Rapid Analysis for Bottom-Up Proteomics";
 const canonical = new URL(Astro.url.pathname, site.url).toString();
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
