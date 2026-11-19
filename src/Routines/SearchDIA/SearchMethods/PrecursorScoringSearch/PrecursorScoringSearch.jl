@@ -338,6 +338,7 @@ function summarize_results!(
             match_between_runs = params.match_between_runs,
             ion_mobility = has_ion_mobility(search_context),
             dda = any_dda(search_context),
+            precursors = getPrecursors(getSpecLib(search_context)),
         )
     end
     _pmark(:scoring)

@@ -23,14 +23,18 @@ function score_precursor_isotope_traces(
     match_between_runs::Bool = true,
     ion_mobility::Bool = true,
     dda::Bool = false,
+    precursors::Union{Nothing, LibraryPrecursors} = nothing,
 )
     features = model_features(ADVANCED_FEATURE_SET, ion_mobility; dda)
+    mode = pg_max_mode()
+    pg_keys = mode == :off || precursors === nothing ? nothing : build_protein_group_keys(precursors, mode)
     pass1 = train_and_predict_pass1_oom!(
         file_paths;
         features        = features,
         compute_infold  = match_between_runs,
         lgbm_hp         = SCORING_LGBM_HP,
         semisupervised  = true,
+        pg_keys         = pg_keys,
     )
 
     if pass1.last_classifier !== nothing

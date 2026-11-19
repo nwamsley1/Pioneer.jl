@@ -265,6 +265,7 @@ function importScripts()
         joinpath(search_methods_dir, "PrecursorScoringSearch"),
         [
             "model_config.jl",                 # Model configuration
+            "protein_group_feature.jl",        # Experimental PG_MAX column (ENV PIONEER_PG_MAX)
             "pass1_oom.jl",                    # Out-of-memory Pass-1 training (stream + reservoir sample + per-file predict)
             "score_psms.jl",                   # PSM scoring functions
             "global_precursor_scoring.jl",     # Experiment-wide precursor scoring model

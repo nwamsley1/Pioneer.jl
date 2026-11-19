@@ -97,7 +97,7 @@ end
 # Selection preserves the serial RNG sequence and original reservoir slots.
 # Only the final occupant of each slot is copied: replaced rows never require
 # feature reads, and no Arrow columns remain referenced across files.
-function _sample_both_folds(
+function _sample_both_folds_with_plans(
     file_paths::Vector{String},
     features::Vector{Symbol},
     k_per_fold::Int,
@@ -133,8 +133,10 @@ function _sample_both_folds(
         _pass1_log_progress("sample gather", file_idx, n_files)
     end
     _pass1_log_phase("sample gather", t_gather_start)
-    return X0, y0, X1, y1
+    return X0, y0, X1, y1, plan0, plan1
 end
+
+_sample_both_folds(args...) = _sample_both_folds_with_plans(args...)[1:4]
 
 function _select_pass1_sample_plans(
     file_paths::Vector{String}, k0::Int, k1::Int, n0::Int, n1::Int,
@@ -373,11 +375,35 @@ function _predict_pass1_block(cls, X::Matrix{Float32})
     return clamp.(Float32.(scores), 1f-6, 1f0 - 1f-4)
 end
 
+# Feature matrices for one file's fold-0 and fold-1 rows, with optional extra
+# per-row columns (PG_MAX) appended after the Arrow features.
+function _pass1_fold_feature_matrices(tbl, features::Vector{Symbol},
+                                      idx0, idx1, extra::Union{Nothing, Matrix{Float32}})
+    X0, X1 = _pass1_fold_feature_matrices(tbl, features, idx0, idx1)
+    extra === nothing && return X0, X1
+    return hcat(X0, extra[idx0, :]), hcat(X1, extra[idx1, :])
+end
+
+# One file's out-of-fold scores, in row order, without writing a sidecar.
+function _pass1_file_oof_scores(tbl, features::Vector{Symbol}, cls_trained_on::NamedTuple,
+                                extra::Union{Nothing, Matrix{Float32}})
+    n = length(tbl.precursor_idx)
+    oof = Vector{Float32}(undef, n)
+    n == 0 && return oof
+    fold_rows = _pass1_fold_row_indices(tbl.cv_fold)
+    idx0, idx1 = fold_rows.fold0, fold_rows.fold1
+    X0, X1 = _pass1_fold_feature_matrices(tbl, features, idx0, idx1, extra)
+    oof[idx0] .= _predict_pass1_block(cls_trained_on.fold1, X0)
+    oof[idx1] .= _predict_pass1_block(cls_trained_on.fold0, X1)
+    return oof
+end
+
 # Each file keeps its original row order. OOF uses the opposite-fold model;
 # optional in-fold scores use the model trained on that row's fold.
 function _predict_pass1_to_sidecar(
     fpath::String, features::Vector{Symbol},
     cls_trained_on::NamedTuple, compute_infold::Bool,
+    extra::Union{Nothing, Matrix{Float32}} = nothing,
 )
     # Every column written to the sidecar is a copy, so the source can be unmapped after.
     with_arrow_table(fpath) do tbl
@@ -387,7 +413,7 @@ function _predict_pass1_to_sidecar(
         if n > 0
             fold_rows = _pass1_fold_row_indices(tbl.cv_fold)
             idx0, idx1 = fold_rows.fold0, fold_rows.fold1
-            X0, X1 = _pass1_fold_feature_matrices(tbl, features, idx0, idx1)
+            X0, X1 = _pass1_fold_feature_matrices(tbl, features, idx0, idx1, extra)
             oof[idx0] .= _predict_pass1_block(cls_trained_on.fold1, X0)
             oof[idx1] .= _predict_pass1_block(cls_trained_on.fold0, X1)
             if compute_infold
@@ -408,10 +434,12 @@ end
 function _predict_pass1_files(
     file_paths::Vector{String}, features::Vector{Symbol},
     cls_trained_on::NamedTuple, compute_infold::Bool,
+    extra_by_file::Union{Nothing, Vector{Matrix{Float32}}} = nothing,
 )
     # Keep native prediction on the main thread; each call already uses all cores.
     for (file_idx, path) in enumerate(file_paths)
-        _predict_pass1_to_sidecar(path, features, cls_trained_on, compute_infold)
+        extra = extra_by_file === nothing ? nothing : extra_by_file[file_idx]
+        _predict_pass1_to_sidecar(path, features, cls_trained_on, compute_infold, extra)
         _pass1_log_progress("full-data prediction", file_idx, length(file_paths))
     end
     return nothing
@@ -446,6 +474,11 @@ function _train_pass1_pool(
     semisupervised_stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
     semisupervised_min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
     semisupervised_max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
+    # Optional PG_MAX hook: (cls_trained_on, extra_by_file) -> (pool0, pool1, by_file), the
+    # extra columns for the pool rows and for every file's rows. Called after iteration 1,
+    # and after every iteration when `refresh`.
+    augment = nothing,
+    refresh::Bool = false,
 )
     n0, n1 = length(y0), length(y1)
     n_pool = n0 + n1
@@ -455,13 +488,17 @@ function _train_pass1_pool(
     best_state = nothing
     previous_target_q01 = -1
     max_iterations = semisupervised ? semisupervised_max_iterations : 1
+    # Training matrices: the base features, plus the extra columns once `augment` has run.
+    Xt0, Xt1 = X0, X1
+    extra_by_file = nothing
+    history = NamedTuple{(:iter, :target_q01, :n_extra), Tuple{Int, Int, Int}}[]
 
     for iter_idx in 1:max_iterations
         mask0 = training_mask === nothing ? nothing : @view training_mask[1:n0]
         mask1 = training_mask === nothing ? nothing : @view training_mask[(n0 + 1):n_pool]
         @debug_l1 "Pass-1 pool iter $iter_idx: fold 0 fit starting"
         started = time()
-        fit0 = _fit_pass1_pool_fold(X0, y0, mask0, lgbm_hp)
+        fit0 = _fit_pass1_pool_fold(Xt0, y0, mask0, lgbm_hp)
         # The filtered copy leaves scope only when the helper returns. Reclaim
         # it before the other fold allocates its own training subset.
         GC.gc()
@@ -469,7 +506,7 @@ function _train_pass1_pool(
 
         @debug_l1 "Pass-1 pool iter $iter_idx: fold 1 fit starting"
         started = time()
-        fit1 = _fit_pass1_pool_fold(X1, y1, mask1, lgbm_hp)
+        fit1 = _fit_pass1_pool_fold(Xt1, y1, mask1, lgbm_hp)
         GC.gc()
         _pass1_log_phase("pool iter $iter_idx fold 1 fit", started)
         cls_trained_on = (fold0 = fit0.classifier, fold1 = fit1.classifier)
@@ -478,8 +515,8 @@ function _train_pass1_pool(
 
         @debug_l1 "Pass-1 pool iter $iter_idx: OOF prediction starting; rows=$n_pool"
         started = time()
-        scores[1:n0] .= _predict_pass1_block(cls_trained_on.fold1, X0)
-        scores[(n0 + 1):n_pool] .= _predict_pass1_block(cls_trained_on.fold0, X1)
+        scores[1:n0] .= _predict_pass1_block(cls_trained_on.fold1, Xt0)
+        scores[(n0 + 1):n_pool] .= _predict_pass1_block(cls_trained_on.fold0, Xt1)
         _pass1_log_phase("pool iter $iter_idx OOF prediction", started)
 
         @debug_l1 "Pass-1 pool iter $iter_idx: q-value sorting and masks starting; rows=$n_pool"
@@ -506,7 +543,11 @@ function _train_pass1_pool(
             last_classifier = importance_classifier,
             target_q01 = metrics.target_q01,
             decoy_q01 = metrics.decoy_q01,
+            # The extra columns these models were trained on (needed to score with them).
+            extra_by_file = extra_by_file,
+            n_extra = size(Xt0, 2) - size(X0, 2),
         )
+        push!(history, (iter = iter_idx, target_q01 = metrics.target_q01, n_extra = state.n_extra))
         best_state = _scoring_better_iteration_state(best_state, state)
         if semisupervised && iter_idx > 1 && !_scoring_target_gain_sufficient(
             previous_target_q01, state.target_q01;
@@ -535,10 +576,29 @@ function _train_pass1_pool(
                        "using iter $(best_state.iter) with pool targets=$(best_state.target_q01)"
             break
         end
+        if augment !== nothing && (extra_by_file === nothing || refresh)
+            started = time()
+            new = augment(cls_trained_on, extra_by_file)
+            if extra_by_file !== nothing
+                # Refresh: stop once PG_MAX has settled (few pool rows move by more than the delta).
+                pg_col = size(X0, 2) + 1
+                moved = count(abs.(new.pool0[:, 1] .- Xt0[:, pg_col]) .> PG_MAX_VR_DELTA) +
+                        count(abs.(new.pool1[:, 1] .- Xt1[:, pg_col]) .> PG_MAX_VR_DELTA)
+                share = moved / max(n_pool, 1)
+                @user_info "PG_MAX refresh after iter $iter_idx: $(round(100 * share, digits = 2))% of pool rows moved"
+                if share < PG_MAX_VR_MIN_CHANGED
+                    @user_info "PG_MAX settled; stopping after iter $iter_idx (kept iter $(best_state.iter))"
+                    break
+                end
+            end
+            Xt0, Xt1 = hcat(X0, new.pool0), hcat(X1, new.pool1)
+            extra_by_file = new.by_file
+            _pass1_log_phase("PG_MAX columns after iter $iter_idx", started)
+        end
         previous_target_q01 = state.target_q01
         training_mask = metrics.training_mask
     end
-    return best_state
+    return merge(best_state, (history = history,))
 end
 
 """
@@ -563,6 +623,7 @@ function train_and_predict_pass1_oom!(
     semisupervised_stop_q_threshold::Float32 = SCORING_SEMISUPERVISED_STOP_QVALUE_THRESHOLD,
     semisupervised_min_gain::Float32 = SCORING_SEMISUPERVISED_MIN_TARGET_GAIN,
     semisupervised_max_iterations::Int = SCORING_SEMISUPERVISED_MAX_ITERATIONS,
+    pg_keys::Union{Nothing, ProteinGroupKeys} = nothing,
 )
     k_per_fold > 0 || throw(ArgumentError("k_per_fold must be positive"))
     semisupervised_max_iterations > 0 ||
@@ -588,10 +649,15 @@ function train_and_predict_pass1_oom!(
     @debug_l1 "  rows: total=$n_total  fold0=$total_n0  fold1=$total_n1"
     @debug_l1 "  fixed representative pool: k_per_fold=$k_per_fold"
     @debug_l1 "  features in use: $(length(available)) / $(length(features))"
-    X0, y0, X1, y1 = _sample_both_folds(
+    X0, y0, X1, y1, plan0, plan1 = _sample_both_folds_with_plans(
         file_paths, available, k_per_fold, total_n0, total_n1, rng,
     )
     n_pool_fold0, n_pool_fold1 = length(y0), length(y1)
+    augment = pg_keys === nothing ? nothing :
+        (cls_trained_on, extra_by_file) -> _pg_max_columns(
+            file_paths, available, cls_trained_on, extra_by_file, pg_keys,
+            plan0, plan1, n_pool_fold0, n_pool_fold1,
+        )
     best_state = _train_pass1_pool(
         X0, y0, X1, y1;
         lgbm_hp = lgbm_hp,
@@ -600,7 +666,14 @@ function train_and_predict_pass1_oom!(
         semisupervised_stop_q_threshold = semisupervised_stop_q_threshold,
         semisupervised_min_gain = semisupervised_min_gain,
         semisupervised_max_iterations = semisupervised_max_iterations,
+        augment = augment,
+        refresh = pg_keys !== nothing && pg_refresh(pg_keys),
     )
+    if pg_keys !== nothing
+        @user_info "PG_MAX mode=$(pg_keys.mode): pool targets@1% by iteration " *
+                   join(["$(h.iter)$(h.n_extra > 0 ? "+pg" : ""):$(h.target_q01)" for h in best_state.history], ", ") *
+                   "; kept iter $(best_state.iter) (PG_MAX used: $(best_state.n_extra > 0))"
+    end
     # No model retains training data. Drop the pool before allocating per-file
     # prediction matrices; the helper's scores and masks are already out of scope.
     X0 = nothing; X1 = nothing; y0 = nothing; y1 = nothing
@@ -611,10 +684,13 @@ function train_and_predict_pass1_oom!(
     started = time()
     _predict_pass1_files(
         file_paths, available, best_state.cls_trained_on, compute_infold,
+        best_state.n_extra > 0 ? best_state.extra_by_file : nothing,
     )
     _pass1_log_phase("full-data prediction", started)
     elapsed_total = time() - t_total_start
     @debug_l1 "Pass-1 OOM elapsed: total=$(round(elapsed_total, digits = 2))s"
+    # Feature names of the kept models, for importance reporting.
+    model_features = best_state.n_extra > 0 ? vcat(available, pg_feature_names(pg_keys)) : available
     return (
         n_total = n_total,
         n_fold0 = total_n0,
@@ -625,7 +701,7 @@ function train_and_predict_pass1_oom!(
         metric_scope = :training_pool,
         last_classifier = best_state.last_classifier,
         cls_trained_on = best_state.cls_trained_on,
-        available_features = available,
+        available_features = model_features,
         semisupervised_iter = best_state.iter,
         target_q01 = best_state.target_q01,
         decoy_q01 = best_state.decoy_q01,
