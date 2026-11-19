@@ -178,11 +178,22 @@ function _pg_max_columns(file_paths::Vector{String}, features::Vector{Symbol},
     by_file = Vector{Matrix{Float32}}(undef, length(file_paths))
     pool0 = Matrix{Float32}(undef, k0, ncol)
     pool1 = Matrix{Float32}(undef, k1, ncol)
+    dump_dir = get(ENV, "PIONEER_PG_MAX_DUMP", "")
     for (file_idx, path) in enumerate(file_paths)
         cols = with_arrow_table(path) do tbl
             extra = extra_by_file === nothing ? nothing : extra_by_file[file_idx]
             scores = _pass1_file_oof_scores(tbl, features, cls_trained_on, extra)
-            protein_group_columns(keys, tbl.precursor_idx, tbl.target, scores)
+            pg = protein_group_columns(keys, tbl.precursor_idx, tbl.target, scores)
+            # Diagnostic: the first computation's inputs and output, one file per fold file.
+            if !isempty(dump_dir) && extra_by_file === nothing
+                mkpath(dump_dir)
+                writeArrow(joinpath(dump_dir, basename(path)), DataFrame(
+                    precursor_idx = collect(UInt32.(tbl.precursor_idx)),
+                    target = collect(Bool.(tbl.target)),
+                    iter1_score = scores, pg_max = pg[:, 1],
+                ))
+            end
+            pg
         end
         by_file[file_idx] = cols
         for (src_i, dst_i) in plan0[file_idx]
