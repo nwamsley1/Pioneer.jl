@@ -9,7 +9,9 @@
  *  from the repository, which keeps one description of a library rather than
  *  two that can disagree.
  */
+import { useMemo, useState } from 'react'
 import { BROWSE, HINT, LABEL } from '../lib/styles'
+import { parseLibraryName } from '../lib/libraryName'
 import { InfoDot } from './InfoDot'
 import { Toggle } from './Toggle'
 import type { DownloadParams, RemoteLibrary } from '../lib/types'
@@ -111,6 +113,173 @@ function BusyBar() {
   )
 }
 
+/** What a row shows. A curated manifest title wins over the parsed name; a
+ *  name that follows no convention is shown whole. */
+interface Row {
+  library: RemoteLibrary
+  organism: string
+  latin: string
+  proteomes: string[]
+  model: string
+  release: string
+}
+
+function toRow(library: RemoteLibrary): Row {
+  const parsed = parseLibraryName(library.name)
+  const curated = library.title && library.title !== library.name ? library.title : ''
+  return {
+    library,
+    organism: curated || parsed?.common || library.name,
+    latin: parsed?.latin ?? '',
+    proteomes: parsed?.proteomes ?? [],
+    model: library.model || parsed?.model || '',
+    release: parsed ? parsed.release.replace('_', '-') : '',
+  }
+}
+
+type SortKey = 'organism' | 'model' | 'release' | 'size'
+
+const SORTERS: Record<SortKey, (a: Row, b: Row) => number> = {
+  organism: (a, b) => a.organism.localeCompare(b.organism),
+  model: (a, b) => a.model.localeCompare(b.model),
+  release: (a, b) => a.release.localeCompare(b.release),
+  size: (a, b) => a.library.total_bytes - b.library.total_bytes,
+}
+
+const TH: React.CSSProperties = {
+  textAlign: 'left',
+  padding: '7px 10px',
+  fontSize: 11.5,
+  fontWeight: 600,
+  color: '#667085',
+  borderBottom: '1px solid #E7EAEE',
+  whiteSpace: 'nowrap',
+  userSelect: 'none',
+}
+
+const TD: React.CSSProperties = {
+  padding: '8px 10px',
+  fontSize: 13,
+  color: '#1B2A4A',
+  borderBottom: '1px solid #F0F2F5',
+  verticalAlign: 'middle',
+}
+
+const MONO: React.CSSProperties = { fontFamily: '"IBM Plex Mono", monospace', fontSize: 12 }
+
+function LibraryTable({
+  libraries,
+  selected,
+  onSelect,
+}: {
+  libraries: RemoteLibrary[]
+  selected: string
+  onSelect: (name: string) => void
+}) {
+  const [filter, setFilter] = useState('')
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'organism', desc: false })
+
+  const rows = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    const all = libraries.map(toRow).filter(
+      (r) =>
+        !q ||
+        [r.organism, r.latin, r.model, r.library.name, ...r.proteomes].some((s) =>
+          s.toLowerCase().includes(q),
+        ),
+    )
+    all.sort(SORTERS[sort.key])
+    if (sort.desc) all.reverse()
+    return all
+  }, [libraries, filter, sort])
+
+  const header = (key: SortKey | null, label: string, align: 'left' | 'right' = 'left') => (
+    <th
+      style={{ ...TH, textAlign: align, cursor: key ? 'pointer' : 'default' }}
+      onClick={
+        key ? () => setSort((s) => ({ key, desc: s.key === key ? !s.desc : false })) : undefined
+      }
+    >
+      {label}
+      {key && sort.key === key ? (sort.desc ? ' ▾' : ' ▴') : ''}
+    </th>
+  )
+
+  return (
+    <>
+      <input
+        style={{ ...INPUT, width: '100%', marginTop: 12, boxSizing: 'border-box' }}
+        value={filter}
+        placeholder="Filter by organism, species or proteome ID"
+        onChange={(e) => setFilter(e.target.value)}
+      />
+      <div style={{ marginTop: 10, border: '1px solid #E7EAEE', borderRadius: 10, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead style={{ background: '#F8F9FB' }}>
+            <tr>
+              {header('organism', 'Organism')}
+              {header(null, 'Proteome')}
+              {header('model', 'Model')}
+              {header('release', 'UniProt')}
+              {header('size', 'Size', 'right')}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const active = r.library.name === selected
+              return (
+                <tr
+                  key={r.library.name}
+                  onClick={() => onSelect(r.library.name)}
+                  title={r.library.name}
+                  style={{ cursor: 'pointer', background: active ? '#F5F8FF' : undefined }}
+                >
+                  <td style={TD}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="library"
+                        checked={active}
+                        onChange={() => onSelect(r.library.name)}
+                        style={{ accentColor: '#2563EB', margin: 0 }}
+                      />
+                      <span>
+                        <span style={{ fontWeight: 600 }}>{r.organism}</span>
+                        {r.latin && r.latin !== r.organism && (
+                          <span style={{ display: 'block', fontSize: 11.5, color: '#667085', fontStyle: 'italic' }}>
+                            {r.latin}
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  </td>
+                  <td style={{ ...TD, ...MONO, color: '#475467' }}>
+                    {r.proteomes.map((p) => (
+                      <div key={p}>{p}</div>
+                    ))}
+                  </td>
+                  <td style={TD}>{r.model}</td>
+                  <td style={{ ...TD, ...MONO }}>{r.release}</td>
+                  <td style={{ ...TD, textAlign: 'right', whiteSpace: 'nowrap', color: '#475467' }}>
+                    {r.library.size_human}
+                  </td>
+                </tr>
+              )
+            })}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={5} style={{ ...TD, ...HINT }}>
+                  No library matches “{filter}”.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
 export function DownloadSpecLibForm({
   params,
   libraries,
@@ -124,6 +293,7 @@ export function DownloadSpecLibForm({
   onRefresh,
 }: Props) {
   const selected = libraries.find((l) => l.name === params.selected)
+  const selectedRow = selected && toRow(selected)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -155,46 +325,18 @@ export function DownloadSpecLibForm({
           </p>
         )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
-          {libraries.map((library) => {
-            const active = library.name === params.selected
-            return (
-              <button
-                key={library.name}
-                type="button"
-                onClick={() => onSelect(library.name)}
-                style={{
-                  textAlign: 'left',
-                  padding: '11px 13px',
-                  borderRadius: 10,
-                  cursor: 'pointer',
-                  border: active ? '1.5px solid #2563EB' : '1px solid #E7EAEE',
-                  background: active ? '#F5F8FF' : '#fff',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1B2A4A', minWidth: 0, overflowWrap: 'anywhere' }}>
-                    {library.title || library.name}
-                  </span>
-                  <span style={{ fontSize: 12, color: '#667085', whiteSpace: 'nowrap' }}>
-                    {library.size_human}
-                  </span>
-                </div>
-                {library.description && (
-                  <div style={{ ...HINT, marginTop: 4 }}>{library.description}</div>
-                )}
-                {library.model && (
-                  <div style={{ ...HINT, marginTop: 2 }}>model: {library.model}</div>
-                )}
-              </button>
-            )
-          })}
-        </div>
+        {libraries.length > 0 && (
+          <LibraryTable
+            libraries={libraries}
+            selected={params.selected}
+            onSelect={onSelect}
+          />
+        )}
       </section>
 
       {selected && (
         <section style={CARD}>
-          <h2 style={{ ...H2, overflowWrap: 'anywhere' }}>{selected.title || selected.name}</h2>
+          <h2 style={{ ...H2, overflowWrap: 'anywhere' }}>{selectedRow?.organism}</h2>
           <p style={{ ...HINT, marginTop: 6, overflowWrap: 'anywhere' }}>
             {selected.name} · {selected.size_human} in {selected.n_files} files
           </p>
