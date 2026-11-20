@@ -344,7 +344,19 @@ function run_protein_scoring!(
         )
     search_context.pg_name_to_global_pg_score[] = pg_name_to_global_pg_score
 
-    global_pg_qval_dict = build_protein_global_qval_dict(global_pg_score_dict)
+    pick_mode = protein_pick_mode()
+    global_pg_qval_dict = if pick_mode == :off
+        build_protein_global_qval_dict(global_pg_score_dict)
+    else
+        build_protein_global_qval_dict_picked(
+            global_pg_score_dict, pick_mode;
+            group_names = get_results(search_context, ProteinInferenceSearch).protein_group_names,
+            precursors = precursors,
+            precursor_global_prob = pick_mode == :mirror ?
+                get_results(search_context, PrecursorScoringSearch).precursor_global_prob_dict[] :
+                Dict{UInt32, Float32}(),
+        )
+    end
     search_context.global_pg_score_to_qval_dict[] = global_pg_qval_dict
 
     search_context.pg_score_to_qval[] = pg_qval_spline

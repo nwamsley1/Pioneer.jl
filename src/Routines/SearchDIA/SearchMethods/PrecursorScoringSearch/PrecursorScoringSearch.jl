@@ -32,6 +32,9 @@ struct PrecursorScoringSearchResults <: SearchResults
     precursor_pep_interp::Base.Ref{Any}   # Interpolation for experiment-wide PEPs
     run_similarity::Base.Ref{Union{Nothing, RunSimilarityAtlas}}
     merged_quant_path::String             # Path to merged quantification results
+    # precursor_idx → experiment-wide score, targets and decoys before any q-value filter.
+    # Kept only for the experimental Osprey-style picked protein FDR (PIONEER_PROTEIN_PICK=mirror).
+    precursor_global_prob_dict::Base.Ref{Dict{UInt32, Float32}}
 end
 
 """
@@ -71,7 +74,8 @@ function init_search_results(::PrecursorScoringSearchParameters, search_context:
         Ref(undef),  # precursor_qval_interp
         Ref(undef),  # precursor_pep_interp
         Ref{Union{Nothing, RunSimilarityAtlas}}(nothing),
-        joinpath(getDataOutDir(search_context), "temp_data", "merged_quant.arrow")
+        joinpath(getDataOutDir(search_context), "temp_data", "merged_quant.arrow"),
+        Ref(Dict{UInt32, Float32}()),  # precursor_global_prob_dict (picked protein FDR only)
     )
 end
 
@@ -482,6 +486,7 @@ function summarize_results!(
         global_pep_dict  = build_global_pep_dict_from_scores(global_prob_dict, target_dict, fdr_scale)
         @debug_l1 "Global precursor PEP complete: elapsed=$(round(time() - phase_started, digits=2))s"
         results.precursor_global_qval_dict[] = global_qval_dict
+        protein_pick_mode() == :mirror && (results.precursor_global_prob_dict[] = global_prob_dict)
 
         # A4-A5: Reuse the frozen run-level q-value spline + PEP interpolation.
         results.precursor_qval_interp[] = qval_spline
