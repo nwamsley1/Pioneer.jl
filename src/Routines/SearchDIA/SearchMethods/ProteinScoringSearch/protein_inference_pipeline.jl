@@ -1786,6 +1786,10 @@ function add_protein_features(
         shared_coverage_log_ratios = Vector{Float32}(undef, n_rows)
         has_ambiguous_peptide_count = hasproperty(df, :_ambiguous_peptide_count)
         has_common_peptide_count = hasproperty(df, :n_common_peptides)
+        # Mirrored decoy groups (PIONEER_PROTEIN_GROUPING=target) can hold more observed peptides
+        # than their library opportunities; raise the opportunity count instead of aborting.
+        relax_counts = protein_grouping_mode() == :target
+        n_relaxed = 0
 
         for i in 1:n_rows
             key = PGKey(
@@ -1808,7 +1812,10 @@ function add_protein_features(
                 Int(df.n_common_peptides[i]) : observed_unique
             observed_shared = has_ambiguous_peptide_count ?
                 Int(df._ambiguous_peptide_count[i]) : 0
-            if observed_unique > n_possible_unique[i]
+            if observed_unique > n_possible_unique[i] && relax_counts
+                n_possible_unique[i] = observed_unique
+                n_relaxed += 1
+            elseif observed_unique > n_possible_unique[i]
                 error(
                     "Unique protein feature count inconsistency: " *
                     "protein_name=$(repr(key.name)) " *
@@ -1818,7 +1825,10 @@ function add_protein_features(
                     "n_possible_unique_peptides=$(n_possible_unique[i])"
                 )
             end
-            if observed_common_unique > n_possible_common_unique[i]
+            if observed_common_unique > n_possible_common_unique[i] && relax_counts
+                n_possible_common_unique[i] = observed_common_unique
+                n_relaxed += 1
+            elseif observed_common_unique > n_possible_common_unique[i]
                 error(
                     "Common unique protein feature count inconsistency: " *
                     "protein_name=$(repr(key.name)) " *
@@ -1828,7 +1838,10 @@ function add_protein_features(
                     "n_possible_common_unique_peptides=$(n_possible_common_unique[i])"
                 )
             end
-            if observed_shared > n_possible_shared[i]
+            if observed_shared > n_possible_shared[i] && relax_counts
+                n_possible_shared[i] = observed_shared
+                n_relaxed += 1
+            elseif observed_shared > n_possible_shared[i]
                 error(
                     "Shared protein feature count inconsistency: " *
                     "protein_name=$(repr(key.name)) " *
@@ -1871,6 +1884,7 @@ function add_protein_features(
             )
         end
 
+        n_relaxed > 0 && @user_warn "Protein grouping (target): raised $n_relaxed peptide opportunity counts to the observed counts"
         df.n_possible_unique_peptides = n_possible_unique
         df.n_possible_common_unique_peptides = n_possible_common_unique
         df.n_possible_shared_peptides = n_possible_shared

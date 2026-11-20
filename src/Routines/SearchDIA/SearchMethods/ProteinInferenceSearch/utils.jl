@@ -323,6 +323,76 @@ function _infer_integer_proteins(inputs::IntegerInferenceInputs, keys)
     return infer_proteins(proteins, peptides; names = inputs.registry)
 end
 
+# Experimental protein grouping (ENV PIONEER_PROTEIN_GROUPING): `default` infers target and
+# decoy groups separately; `target` infers groups from targets only (entrapment targets included,
+# kept apart by entrap_id) and puts every decoy peptide in the group of the target peptide it was
+# made from, so each target group has one decoy mirror with the same pg_id. Global inference only.
+const PROTEIN_GROUPING_MODES = (:default, :target)
+
+function protein_grouping_mode()
+    mode = Symbol(lowercase(strip(get(ENV, "PIONEER_PROTEIN_GROUPING", "default"))))
+    mode in PROTEIN_GROUPING_MODES || throw(ArgumentError(
+        "PIONEER_PROTEIN_GROUPING must be one of $(join(PROTEIN_GROUPING_MODES, ", ")); got $mode"))
+    return mode
+end
+
+"""
+    _mirror_decoys(inputs, base_pep_id, target_result, target_keys, decoy_pids)
+
+Add every decoy peptide to `target_result` with the group of its source target peptide: the target
+sequence with the same `base_pep_id` and entrap_id (decoys keep their target's base peptide). If
+that target peptide has no group, use a target group holding a peptide with the decoy's accession
+set; otherwise the group of the decoy's own accession set.
+"""
+function _mirror_decoys(inputs::IntegerInferenceInputs, base_pep_id::AbstractVector,
+                        target_result::InferenceResult, target_keys, decoy_pids)
+    needed = Set{Tuple{UInt32, UInt8}}((UInt32(base_pep_id[p]), UInt8(inputs.entrap_id[p])) for p in decoy_pids)
+    seq_of_base = Dict{Tuple{UInt32, UInt8}, UInt32}()
+    @inbounds for p in eachindex(base_pep_id)
+        Bool(inputs.is_decoy[p]) && continue
+        key = (UInt32(base_pep_id[p]), UInt8(inputs.entrap_id[p]))
+        key in needed && get!(seq_of_base, key, inputs.sequence_id[p])
+    end
+    acc_group = Dict{Tuple{UInt32, UInt8}, UInt32}()
+    for (seq, acc, _, ent) in target_keys
+        protein = get(target_result.peptide_to_protein, PeptideKey(seq, true, ent), nothing)
+        protein === nothing || get!(acc_group, (acc, ent), protein.name)
+    end
+    assigned = copy(target_result.peptide_to_protein)
+    n_source = n_accession = n_own = 0
+    for p in decoy_pids
+        ent = UInt8(inputs.entrap_id[p])
+        key = PeptideKey(inputs.sequence_id[p], false, ent)
+        haskey(assigned, key) && continue
+        group = nothing
+        seq_t = get(seq_of_base, (UInt32(base_pep_id[p]), ent), nothing)
+        if seq_t !== nothing
+            protein = get(target_result.peptide_to_protein, PeptideKey(seq_t, true, ent), nothing)
+            protein === nothing || (group = protein.name; n_source += 1)
+        end
+        if group === nothing
+            group = get(acc_group, (inputs.accession_set_id[p], ent), nothing)
+            group === nothing || (n_accession += 1)
+        end
+        if group === nothing
+            group = inputs.set_group[inputs.accession_set_id[p]]
+            n_own += 1
+        end
+        insert!(assigned, key, ProteinKey(group, false, ent))
+    end
+    @user_info "Protein grouping (target): decoy peptides placed via source target $n_source, " *
+               "via accession $n_accession, own accession set $n_own"
+    return InferenceResult(assigned, target_result.ambiguous_peptide_to_proteins)
+end
+
+function _push_decoy_pids!(decoy_pids, inputs, pidx)
+    @inbounds for i in eachindex(pidx)
+        p = pidx[i]
+        Bool(inputs.is_decoy[p]) && push!(decoy_pids, UInt32(p))
+    end
+    return decoy_pids
+end
+
 """
     _protein_group_ids(results, inputs) -> (results, pg_names, pg_members)
 
@@ -483,6 +553,9 @@ function run_protein_inference!(
 
     precursors = getPrecursors(getSpecLib(search_context))
     inputs = IntegerInferenceInputs(precursors)
+    grouping = protein_grouping_mode()
+    grouping == :target && !global_inference &&
+        error("PIONEER_PROTEIN_GROUPING=target requires global protein inference")
 
     if !global_inference
         annotation_pipeline = TransformPipeline() |>
@@ -536,18 +609,26 @@ function run_protein_inference!(
     # (sequence ID, accession set ID, is_decoy, entrap_id) tuples from the library. No DataFrame
     # is materialized and no file is rewritten — peak per-file memory is one mmap'd UInt32 column.
     unique_set = Set{Tuple{UInt32, UInt32, Bool, UInt8}}()
+    decoy_pids = Set{UInt32}()
     for psm_ref in ProgressBar(passing_refs)
         exists(psm_ref) || continue
         # Only keys are kept, so the file is unmapped afterwards.
         with_arrow_table(file_path(psm_ref)) do table
             :precursor_idx in Tables.columnnames(table) || return nothing
             _push_inference_keys!(unique_set, inputs, Tables.getcolumn(table, :precursor_idx))
+            grouping == :target && _push_decoy_pids!(decoy_pids, inputs, Tables.getcolumn(table, :precursor_idx))
         end
     end
 
     # Pass 2: one InferenceResult from the global tuple set, with groups as pg_ids.
-    (inference_result,), pg_names, pg_members =
-        _protein_group_ids([_infer_integer_proteins(inputs, unique_set)], inputs)
+    raw_result = if grouping == :target
+        target_keys = filter(k -> !k[3], unique_set)
+        _mirror_decoys(inputs, getBasePepId(precursors), _infer_integer_proteins(inputs, target_keys),
+                       target_keys, decoy_pids)
+    else
+        _infer_integer_proteins(inputs, unique_set)
+    end
+    (inference_result,), pg_names, pg_members = _protein_group_ids([raw_result], inputs)
     _collect_final_protein_groups!(final_protein_groups, inference_result)
     peptide_to_ambiguity_id, _ = _register_protein_ambiguities!(
         protein_ambiguity_candidates,
